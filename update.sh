@@ -26,9 +26,10 @@ fi
 
 # Ensure git is available
 if ! command -v git &>/dev/null; then
-    warn "git not found — installing..."
-    sudo apt-get install -y git 2>/dev/null || sudo yum install -y git 2>/dev/null \
-        || { echo "Please install git manually: sudo apt install git"; exit 1; }
+    echo "git is not installed. Please ask your system administrator to run:"
+    echo "  sudo apt install git"
+    echo "then re-run this script."
+    exit 1
 fi
 
 # Ensure uv is available

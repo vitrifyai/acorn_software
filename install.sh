@@ -61,9 +61,7 @@ info "Installing AI-assisted annotation tools (SAM, YOLO, UNet)..."
 
 # Ensure git is available (required for git+ source installs)
 if ! command -v git &>/dev/null; then
-    warn "git not found — installing..."
-    sudo apt-get install -y git 2>/dev/null || sudo yum install -y git 2>/dev/null \
-        || die "Could not install git automatically. Please run: sudo apt install git"
+    die "git is not installed. Please ask your system administrator to run:\n  sudo apt install git\nthen re-run this installer."
 fi
 
 info "  SAM3 (Segment Anything Model 3)..."
