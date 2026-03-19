@@ -59,35 +59,39 @@ success "Core installation complete."
 echo ""
 info "Installing AI-assisted annotation tools (SAM, YOLO, UNet)..."
 
-info "  SAM3 (Segment Anything Model 3)..."
-# Use pip directly for git-source packages — more reliable than uv for git+ URLs
-VENV_PIP="$VENV_DIR/bin/pip"
+# Ensure git is available (required for git+ source installs)
+if ! command -v git &>/dev/null; then
+    warn "git not found — installing..."
+    sudo apt-get install -y git 2>/dev/null || sudo yum install -y git 2>/dev/null \
+        || die "Could not install git automatically. Please run: sudo apt install git"
+fi
 
-if "$VENV_PIP" install "git+https://github.com/facebookresearch/sam3.git"; then
+info "  SAM3 (Segment Anything Model 3)..."
+if uv pip install --python "$VENV_PYTHON" "git+https://github.com/facebookresearch/sam3.git"; then
     success "  SAM3 installed."
 else
-    warn "  SAM3 install failed.  To retry: .venv/bin/pip install git+https://github.com/facebookresearch/sam3.git"
+    warn "  SAM3 install failed.  To retry: uv pip install --python .venv/bin/python git+https://github.com/facebookresearch/sam3.git"
 fi
 
 info "  micro-SAM (biomedical checkpoints)..."
-if "$VENV_PIP" install "git+https://github.com/computational-cell-analytics/micro-sam.git"; then
+if uv pip install --python "$VENV_PYTHON" "git+https://github.com/computational-cell-analytics/micro-sam.git"; then
     success "  micro-SAM installed."
 else
-    warn "  micro-SAM install failed.  To retry: .venv/bin/pip install git+https://github.com/computational-cell-analytics/micro-sam.git"
+    warn "  micro-SAM install failed.  To retry: uv pip install --python .venv/bin/python git+https://github.com/computational-cell-analytics/micro-sam.git"
 fi
 
 info "  YOLO — object detection..."
-if "$VENV_PIP" install "ultralytics>=8.0"; then
+if uv pip install --python "$VENV_PYTHON" "ultralytics>=8.0"; then
     success "  YOLO installed."
 else
-    warn "  YOLO install failed.  To retry: .venv/bin/pip install ultralytics"
+    warn "  YOLO install failed.  To retry: uv pip install --python .venv/bin/python ultralytics"
 fi
 
 info "  UNet — semantic segmentation..."
-if "$VENV_PIP" install "segmentation-models-pytorch>=0.3"; then
+if uv pip install --python "$VENV_PYTHON" "segmentation-models-pytorch>=0.3"; then
     success "  UNet installed."
 else
-    warn "  UNet install failed.  To retry: .venv/bin/pip install segmentation-models-pytorch"
+    warn "  UNet install failed.  To retry: uv pip install --python .venv/bin/python segmentation-models-pytorch"
 fi
 
 success "AI tools installation complete."
