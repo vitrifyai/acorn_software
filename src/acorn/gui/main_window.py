@@ -2605,6 +2605,9 @@ class MainWindow(QMainWindow):
 
         def _err(msg):
             self._sam_panel.set_model_status(f"Load failed: {msg}", loaded=False)
+            QMessageBox.critical(self, "SAM model failed to load",
+                f"The model could not be loaded:\n\n{msg}\n\n"
+                "Check that the model file exists and you have read access to it.")
 
         self._sam_thread = SAMThread(_run, self)
         if backend == "usam":
