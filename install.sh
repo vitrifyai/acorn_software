@@ -60,18 +60,29 @@ echo ""
 info "Installing AI-assisted annotation tools (SAM, YOLO, UNet)..."
 
 info "  SAM — Segment Anything Model..."
-uv pip install --python "$VENV_PYTHON" "micro-sam>=1.7" "sam3>=0.1" \
-    || warn "  SAM install had issues — SAM tab may be limited."
+if uv pip install --python "$VENV_PYTHON" "micro-sam>=1.7" "sam3>=0.1"; then
+    success "  SAM installed."
+else
+    warn "  SAM install failed.  To retry manually:"
+    warn "    .venv/bin/pip install 'micro-sam>=1.7' 'sam3>=0.1'"
+    warn "  SAM and micro-SAM tabs will be unavailable until this is resolved."
+fi
 
 info "  YOLO — object detection..."
-uv pip install --python "$VENV_PYTHON" "ultralytics>=8.0" \
-    || warn "  YOLO install failed — YOLO tab will be unavailable."
+if uv pip install --python "$VENV_PYTHON" "ultralytics>=8.0"; then
+    success "  YOLO installed."
+else
+    warn "  YOLO install failed.  To retry: .venv/bin/pip install ultralytics"
+fi
 
 info "  UNet — semantic segmentation..."
-uv pip install --python "$VENV_PYTHON" "segmentation-models-pytorch>=0.3" \
-    || warn "  UNet install failed — UNet tab will be unavailable."
+if uv pip install --python "$VENV_PYTHON" "segmentation-models-pytorch>=0.3"; then
+    success "  UNet installed."
+else
+    warn "  UNet install failed.  To retry: .venv/bin/pip install segmentation-models-pytorch"
+fi
 
-success "AI tools installed."
+success "AI tools installation complete."
 
 # ── 5. Pre-download model checkpoints ────────────────────────────────────────
 echo ""
