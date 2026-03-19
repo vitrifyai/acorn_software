@@ -1,0 +1,86 @@
+[build-system]
+requires = ["hatchling>=1.21"]
+build-backend = "hatchling.build"
+
+[project]
+name = "acorn"
+version = "0.1.0"
+description = "Annotate, Curate, Observe, Review, Navigate — microscopy image analysis and annotation suite"
+readme = "README.md"
+requires-python = ">=3.10"
+authors = [{ name = "CNMS Low-Dose CryoEM Lab" }]
+keywords = ["cryo-em", "dm4", "electron-microscopy", "image-processing", "ncempy"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Science/Research",
+    "Programming Language :: Python :: 3",
+    "Topic :: Scientific/Engineering :: Visualization",
+]
+
+dependencies = [
+    "numpy>=1.24",
+    "scipy>=1.10",
+    "scikit-image>=0.21",
+    "matplotlib>=3.7",
+    "ncempy>=1.10",
+    "tifffile>=2023.1",
+    "Pillow>=10.0",
+    "h5py>=3.8",
+    "roifile>=2023.5",    # ImageJ ROI import
+]
+
+[project.optional-dependencies]
+gui = [
+    "PyQt6>=6.5",
+    "PyQt6-Qt6>=6.5",
+]
+mrc = [
+    "mrcfile>=1.4",
+]
+hub = [
+    "datasets>=2.18",
+    "huggingface_hub>=0.22",
+]
+sam = [
+    "sam3>=0.1",          # SAM 3 (recommended)
+    "micro-sam>=1.7",     # micro-SAM for biomedical checkpoints
+]
+usam = [
+    "micro-sam>=1.7",     # micro-SAM standalone extra
+]
+sam2 = [
+    "sam2>=1.0",          # SAM 2 fallback if sam3 not available
+]
+yolo = [
+    "ultralytics>=8.0",
+]
+unet = [
+    "segmentation-models-pytorch>=0.3",
+    "torch>=2.0",
+]
+dev = [
+    "pytest>=8.0",
+    "pytest-cov",
+    "ruff",
+]
+full = ["acorn[gui,mrc,sam,yolo,unet,hub]"]
+all  = ["acorn[full,dev]"]
+
+[project.scripts]
+acorn = "acorn.cli.main:main"
+
+[project.gui-scripts]
+acorn-gui = "acorn.gui.main_window:launch"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/acorn"]
+
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+src = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "--tb=short -q"
