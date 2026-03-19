@@ -59,13 +59,18 @@ success "Core installation complete."
 echo ""
 info "Installing AI-assisted annotation tools (SAM, YOLO, UNet)..."
 
-info "  SAM — Segment Anything Model..."
-if uv pip install --python "$VENV_PYTHON" "micro-sam>=1.7" "sam3>=0.1"; then
-    success "  SAM installed."
+info "  SAM3 (Segment Anything Model 3)..."
+if uv pip install --python "$VENV_PYTHON" "git+https://github.com/facebookresearch/sam3.git"; then
+    success "  SAM3 installed."
 else
-    warn "  SAM install failed.  To retry manually:"
-    warn "    .venv/bin/pip install 'micro-sam>=1.7' 'sam3>=0.1'"
-    warn "  SAM and micro-SAM tabs will be unavailable until this is resolved."
+    warn "  SAM3 install failed.  To retry: .venv/bin/pip install git+https://github.com/facebookresearch/sam3.git"
+fi
+
+info "  micro-SAM (biomedical checkpoints)..."
+if uv pip install --python "$VENV_PYTHON" "git+https://github.com/computational-cell-analytics/micro-sam.git"; then
+    success "  micro-SAM installed."
+else
+    warn "  micro-SAM install failed.  To retry: .venv/bin/pip install git+https://github.com/computational-cell-analytics/micro-sam.git"
 fi
 
 info "  YOLO — object detection..."
