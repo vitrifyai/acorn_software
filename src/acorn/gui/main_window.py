@@ -3908,7 +3908,8 @@ def launch(files: list[str] | None = None) -> None:
         os.environ.setdefault("HUGGINGFACE_HUB_CACHE", f"{_shared_models}/huggingface/hub")
         os.environ.setdefault("ACORN_MODELS_DIR",       _shared_models)
         # Ultralytics (YOLO) settings and weight cache
-        os.environ.setdefault("YOLO_CONFIG_DIR",        f"{_shared_models}/ultralytics")
+        # YOLO_CONFIG_DIR intentionally not set — each user keeps their own
+        # ~/.config/Ultralytics settings; only model weights are shared.
 
     _log("setting matplotlib backend")
     matplotlib.use("QtAgg")
