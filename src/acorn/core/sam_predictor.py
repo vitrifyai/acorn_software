@@ -249,16 +249,27 @@ class SAMPredictor:
                 "orig_hw":  p._orig_hw,
             }
 
+    @staticmethod
+    def _to_device_recursive(obj, device):
+        """Recursively move all tensors in a nested structure to device."""
+        import torch
+        if isinstance(obj, torch.Tensor):
+            return obj.to(device)
+        if isinstance(obj, dict):
+            return {k: SAMPredictor._to_device_recursive(v, device) for k, v in obj.items()}
+        if isinstance(obj, (list, tuple)):
+            moved = [SAMPredictor._to_device_recursive(v, device) for v in obj]
+            return type(obj)(moved)
+        return obj
+
     def _restore_from_cache(self, payload: dict) -> None:
         """Restore predictor state from a cached payload dict."""
         import torch
         backend = payload.get("backend")
         if backend == "sam3":
             state = payload["state"]
-            if isinstance(state, dict):
-                device = next(self._sam3_model.parameters()).device
-                state  = {k: v.to(device) if hasattr(v, "to") else v
-                          for k, v in state.items()}
+            device = next(self._sam3_model.parameters()).device
+            state = self._to_device_recursive(state, device)
             self._cached_state = state
         else:
             # SAM2
