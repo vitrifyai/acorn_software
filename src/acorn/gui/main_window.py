@@ -7,6 +7,7 @@ import os
 os.environ.setdefault("MPLBACKEND", "QtAgg")
 
 import json
+import subprocess
 import sys
 from dataclasses import asdict
 from pathlib import Path
@@ -1075,6 +1076,7 @@ class MainWindow(QMainWindow):
         self._train_panel.load_yolo_requested.connect(self._on_train_load_yolo)
         self._train_panel.load_unet_requested.connect(self._on_train_load_unet)
         self._train_thread: Optional[SAMThread] = None
+        self._train_proc = None
 
         # Analysis panel signals
         self._analysis_panel.analysis_requested.connect(self._on_analysis_requested)
@@ -1245,20 +1247,32 @@ class MainWindow(QMainWindow):
         anns = list(self._canvas_widget.canvas.store)
         self._ann_states[idx] = anns
         try:
-            data = [asdict(a) for a in anns]
+            data = {
+                "version": 2,
+                "annotations": [asdict(a) for a in anns],
+                "pixel_size_nm": self._px_overrides.get(idx),
+            }
             path.write_text(json.dumps(data))
         except OSError:
             pass  # NAS write failure — silently skip, in-memory state is preserved
 
-    def _autoload_sidecar(self, idx: int) -> Optional[list]:
-        """Load sidecar file for idx if it exists. Returns annotation list or None."""
+    def _autoload_sidecar(self, idx: int) -> Optional[tuple]:
+        """Load sidecar file for idx. Returns (annotations, pixel_size_nm_or_None) or None."""
         path = self._autosave_path(idx)
         if path is None or not path.exists():
             return None
         try:
+            raw = json.loads(path.read_text())
             from acorn.core.annotations import AnnotationStore
-            store = AnnotationStore.from_json(path.read_text())
-            return list(store)
+            if isinstance(raw, list):
+                # old format — plain annotation list, no pixel size
+                ann_data = raw
+                px_nm = None
+            else:
+                ann_data = raw.get("annotations", [])
+                px_nm = raw.get("pixel_size_nm")
+            store = AnnotationStore.from_json(json.dumps(ann_data))
+            return (list(store), px_nm)
         except Exception:
             return None
 
@@ -1280,10 +1294,13 @@ class MainWindow(QMainWindow):
         )
         if not path:
             return
-        data: dict = {"version": 1, "images": {}}
+        data: dict = {"version": 2, "images": {}}
         for idx, img_path in enumerate(self._image_paths):
             anns = self._ann_states.get(idx, [])
-            data["images"][str(img_path)] = [asdict(a) for a in anns]
+            data["images"][str(img_path)] = {
+                "annotations": [asdict(a) for a in anns],
+                "pixel_size_nm": self._px_overrides.get(idx),
+            }
         try:
             Path(path).write_text(json.dumps(data, indent=2))
             n = sum(1 for v in data["images"].values() if v)
@@ -1310,18 +1327,26 @@ class MainWindow(QMainWindow):
         except Exception as e:
             QMessageBox.critical(self, "Load error", str(e))
             return
-        if data.get("version") != 1:
+        if data.get("version") not in (1, 2):
             QMessageBox.warning(self, "Session error",
-                                "Unknown session format — expected version 1.")
+                                "Unknown session format — expected version 1 or 2.")
             return
         images_data: dict = data.get("images", {})
         restored = 0
         for idx, img_path in enumerate(self._image_paths):
             key = str(img_path)
             if key in images_data:
-                ann_list = images_data[key]
+                entry = images_data[key]
+                if isinstance(entry, list):
+                    ann_list = entry
+                    px_nm = None
+                else:
+                    ann_list = entry.get("annotations", [])
+                    px_nm = entry.get("pixel_size_nm")
                 store = AnnotationStore.from_json(json.dumps(ann_list))
                 self._ann_states[idx] = list(store)
+                if px_nm is not None:
+                    self._px_overrides[idx] = px_nm
                 restored += 1
         # Refresh what's currently on screen
         saved = self._ann_states.get(self._img_idx)
@@ -1466,9 +1491,15 @@ class MainWindow(QMainWindow):
             canvas.store.clear()
             saved_anns = self._ann_states.get(idx)
             if saved_anns is None:
-                saved_anns = self._autoload_sidecar(idx)
-                if saved_anns is not None:
+                sidecar = self._autoload_sidecar(idx)
+                if sidecar is not None:
+                    saved_anns, px_nm = sidecar
                     self._ann_states[idx] = saved_anns
+                    if px_nm is not None and idx not in self._px_overrides:
+                        self._px_overrides[idx] = px_nm
+                        img.meta.pixel_size = px_nm
+                        self._engine = MeasurementEngine(pixel_size=px_nm)
+                        self._analysis_panel.set_pixel_size(px_nm)
                     self._statusbar.showMessage(
                         f"Auto-saved annotations restored for {self._image_paths[idx].name}"
                     )
@@ -3368,59 +3399,103 @@ class MainWindow(QMainWindow):
     # ── training ──────────────────────────────────────────────────────────────
 
     def _on_train_requested(self, config: dict) -> None:
-        if self._train_thread is not None and self._train_thread.isRunning():
-            self._train_panel.append_log("Training already in progress.")
+        if getattr(self, "_train_proc", None) is not None:
+            import os
+            try:
+                os.kill(self._train_proc.pid, 0)
+                self._train_panel.append_log("Training already in progress.")
+                return
+            except (ProcessLookupError, PermissionError):
+                self._train_proc = None
+
+        import json as _json
+        import subprocess as _sp
+        import sys as _sys
+        from pathlib import Path as _Path
+
+        dataset_dir = _Path(config["dataset_dir"])
+        config_path = dataset_dir / "_training_config.json"
+        log_path    = dataset_dir / "_training.log"
+        config_path.write_text(_json.dumps(config))
+        log_path.write_text("")   # clear / create
+
+        self._train_panel.append_log(
+            f"Launching training as a detached background process.\n"
+            f"Training will continue even if this window is closed.\n"
+            f"Log file: {log_path}"
+        )
+
+        self._train_proc = _sp.Popen(
+            [_sys.executable, "-m", "acorn.core._train_worker", str(config_path)],
+            stdout=open(log_path, "w"),
+            stderr=_sp.STDOUT,
+            start_new_session=True,   # detach — survives GUI close
+        )
+        self._train_log_path = log_path
+        self._train_log_pos  = 0
+        self._train_model_type = config["model_type"]
+
+        self._train_tail_timer = QTimer(self)
+        self._train_tail_timer.setInterval(500)
+        self._train_tail_timer.timeout.connect(self._tail_train_log)
+        self._train_tail_timer.start()
+
+    def _tail_train_log(self) -> None:
+        """Read new lines from training log file and update the UI."""
+        import os
+        try:
+            with open(self._train_log_path) as f:
+                f.seek(self._train_log_pos)
+                new_text = f.read()
+                self._train_log_pos = f.tell()
+        except OSError:
             return
 
-        model_type = config["model_type"]
+        for line in new_text.splitlines():
+            if line.startswith("PROGRESS:"):
+                try:
+                    ep, total = line[9:].split("/")
+                    self._train_panel.set_progress(int(ep), int(total))
+                except Exception:
+                    pass
+            elif line.startswith("METRIC:"):
+                try:
+                    ep, loss, metric = line[7:].split(",")
+                    self._train_panel.update_loss_curve(int(ep), float(loss), float(metric))
+                except Exception:
+                    pass
+            elif line.startswith("DONE:"):
+                model_path = line[5:]
+                self._train_tail_timer.stop()
+                self._train_proc = None
+                self._train_panel.training_finished(self._train_model_type, model_path)
+            elif line.startswith("ERROR:"):
+                self._train_tail_timer.stop()
+                self._train_proc = None
+                self._train_panel.training_failed(line[6:])
+            elif line.strip():
+                self._train_panel.append_log(line)
 
-        def _run():
-            if model_type == "yolo":
-                from acorn.core.yolo_trainer import YOLOTrainer
-                trainer = YOLOTrainer(
-                    dataset_dir=config["dataset_dir"],
-                    base_model=config["base_model"],
-                    epochs=config["epochs"],
-                    batch=config["batch"],
-                    imgsz=config["imgsz"],
-                    devices=config["devices"],
-                    log_cb=lambda m: self._train_panel.append_log(m),
-                    progress_cb=lambda e, t: self._train_panel.set_progress(e, t),
-                    metrics_cb=lambda e, tl, m: self._train_panel.update_loss_curve(e, tl, m),
-                )
-                return str(trainer.train())
-            else:
-                from acorn.core.unet_trainer import UNetTrainer
-                trainer = UNetTrainer(
-                    dataset_dir=config["dataset_dir"],
-                    arch=config["arch"],
-                    encoder=config["encoder"],
-                    epochs=config["epochs"],
-                    batch=config["batch"],
-                    lr=config["lr"],
-                    imgsz=config["imgsz"],
-                    devices=config["devices"],
-                    log_cb=lambda m: self._train_panel.append_log(m),
-                    progress_cb=lambda e, t: self._train_panel.set_progress(e, t),
-                    metrics_cb=lambda e, tl, m: self._train_panel.update_loss_curve(e, tl, m),
-                )
-                return str(trainer.train())
-
-        def _done(model_path: str) -> None:
-            self._train_panel.training_finished(model_type, model_path)
-
-        def _err(msg: str) -> None:
-            self._train_panel.training_failed(msg)
-
-        self._train_thread = SAMThread(_run, self)
-        self._train_thread.finished.connect(_done)
-        self._train_thread.error.connect(_err)
-        self._train_thread.start()
+        # Also check if process died without writing DONE/ERROR
+        if self._train_proc is not None:
+            try:
+                os.kill(self._train_proc.pid, 0)
+            except (ProcessLookupError, PermissionError):
+                self._train_tail_timer.stop()
+                self._train_proc = None
+                self._train_panel.set_training(False)
+                self._train_panel.append_log("Training process ended.")
 
     def _on_train_cancel(self) -> None:
-        if self._train_thread is not None and self._train_thread.isRunning():
-            self._train_thread.terminate()
-            self._train_thread.wait()
+        import os, signal
+        if getattr(self, "_train_proc", None) is not None:
+            try:
+                os.kill(self._train_proc.pid, signal.SIGTERM)
+            except (ProcessLookupError, PermissionError):
+                pass
+            self._train_proc = None
+        if hasattr(self, "_train_tail_timer"):
+            self._train_tail_timer.stop()
         self._train_panel.set_training(False)
         self._train_panel.append_log("Training cancelled.")
 

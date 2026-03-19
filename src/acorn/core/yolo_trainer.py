@@ -268,10 +268,14 @@ class YOLOTrainer:
 
         self.log_cb(
             f"Starting YOLO training\n"
-            f"  model:  {self.base_model}\n"
-            f"  epochs: {self.epochs}  batch: {self.batch}  imgsz: {self.imgsz}\n"
-            f"  device: {device_str}\n"
-            f"  metrics CSV: {metrics_csv_path}"
+            f"  Base model  : {self.base_model}\n"
+            f"  Epochs      : {self.epochs}\n"
+            f"  Batch size  : {self.batch}\n"
+            f"  Image size  : {self.imgsz}px\n"
+            f"  Device      : {device_str}\n"
+            f"  Progress log: {metrics_csv_path}\n"
+            f"Training will continue in the background — the GUI will remain responsive.\n"
+            f"Do not close this window until training is complete."
         )
 
         try:
@@ -319,11 +323,11 @@ class YOLOTrainer:
                 return f"{v:.3f}" if v == v else "n/a"   # nan check
 
             self.log_cb(
-                f"Epoch {ep}/{self.epochs}  "
-                f"loss={loss_val:.4f}  "
-                f"box_mAP50={_fmt(box_map50)}  seg_mAP50={_fmt(seg_map50)}  "
-                f"seg_mAP50-95={_fmt(seg_map5095)}  "
-                f"P={_fmt(precision)}  R={_fmt(recall)}"
+                f"Epoch {ep}/{self.epochs}"
+                f"  |  loss {loss_val:.4f}"
+                f"  |  detection accuracy (mAP50) {_fmt(seg_map50)}"
+                f"  |  precision {_fmt(precision)}"
+                f"  |  recall {_fmt(recall)}"
             )
             self.progress_cb(ep, self.epochs)
             self.metrics_cb(ep, loss_val, seg_map50)
