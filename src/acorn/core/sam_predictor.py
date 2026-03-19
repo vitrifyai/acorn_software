@@ -342,12 +342,14 @@ class SAMPredictor:
         collected_masks: list[np.ndarray] = []
         collected_scores: list[float]     = []
 
+        import torch
+        device = next(self._sam3_model.parameters()).device
         for px, py in [(float(x), float(y)) for y in ys for x in xs]:
             try:
                 masks, scores, _ = self._sam3_model.predict_inst(
                     state,
-                    point_coords     = np.array([[px, py]], dtype=np.float32),
-                    point_labels     = np.array([1],        dtype=np.int32),
+                    point_coords     = torch.as_tensor([[px, py]], dtype=torch.float32, device=device),
+                    point_labels     = torch.as_tensor([1],        dtype=torch.int32,   device=device),
                     multimask_output = True,
                 )
                 for m, s in zip(masks, scores):
@@ -384,10 +386,12 @@ class SAMPredictor:
         state = self._get_or_encode(img8)
 
         if self._active_backend == "sam3":
+            import torch
+            device = next(self._sam3_model.parameters()).device
             masks, scores, _ = self._sam3_model.predict_inst(
                 state,
-                point_coords     = coords,
-                point_labels     = lbls,
+                point_coords     = torch.as_tensor(coords, dtype=torch.float32, device=device),
+                point_labels     = torch.as_tensor(lbls,   dtype=torch.int32,   device=device),
                 multimask_output = multimask_output,
             )
         else:
@@ -414,9 +418,11 @@ class SAMPredictor:
         state = self._get_or_encode(img8)
 
         if self._active_backend == "sam3":
+            import torch
+            device = next(self._sam3_model.parameters()).device
             masks, scores, _ = self._sam3_model.predict_inst(
                 state,
-                box              = box_arr,
+                box              = torch.as_tensor(box_arr, dtype=torch.float32, device=device),
                 multimask_output = False,
             )
         else:
