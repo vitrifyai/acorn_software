@@ -242,8 +242,8 @@ class AnalysisPanel(QWidget):
         unit_row = QHBoxLayout()
         unit_row.addWidget(QLabel("Display units:"))
         self._unit_combo = QComboBox()
-        self._unit_combo.addItem("nm\u00b2", userData="nm2")
         self._unit_combo.addItem("\u03bcm\u00b2", userData="um2")
+        self._unit_combo.addItem("nm\u00b2", userData="nm2")
         self._unit_combo.setFixedWidth(70)
         self._unit_combo.currentIndexChanged.connect(self._on_unit_changed)
         unit_row.addWidget(self._unit_combo)
@@ -344,6 +344,7 @@ class AnalysisPanel(QWidget):
         self._results_tabs.setVisible(True)
         self._output_dir = output_dir
         self._particles_df = particles_df  # kept for unit toggle re-render
+        self._stats_dict = stats_dict      # kept for unit toggle re-render
 
         self._populate_particles_table(particles_df)
         self._populate_groups_text(stats_dict)
@@ -401,6 +402,8 @@ class AnalysisPanel(QWidget):
         df = getattr(self, "_particles_df", None)
         if df is not None:
             self._populate_particles_table(df)
+        stats = getattr(self, "_stats_dict", None)
+        self._populate_groups_text(stats)
 
     def _populate_particles_table(self, df) -> None:
         use_um2 = self._unit_combo.currentData() == "um2"
@@ -476,6 +479,10 @@ class AnalysisPanel(QWidget):
             )
             return
 
+        use_um2 = self._unit_combo.currentData() == "um2"
+        sa_unit = "\u03bcm\u00b2" if use_um2 else "nm\u00b2"
+        sa_scale = 1e-6 if use_um2 else 1.0
+
         lines: list[str] = []
         test = stats_dict.get("test_used", "none")
         n_groups = stats_dict.get("n_groups", 0)
@@ -507,13 +514,13 @@ class AnalysisPanel(QWidget):
                 continue
             lines.append(f"[{grp}]")
             lines.append(f"  n           = {s['n']}")
-            lines.append(f"  mean SA     = {s.get('mean', float('nan')):.2f} nm\u00b2")
-            lines.append(f"  median SA   = {s.get('median', float('nan')):.2f} nm\u00b2")
-            lines.append(f"  std         = {s.get('std', float('nan')):.2f} nm\u00b2")
-            lines.append(f"  IQR         = {s.get('iqr', float('nan')):.2f} nm\u00b2")
-            ci_lo = s.get("ci95_lo", float("nan"))
-            ci_hi = s.get("ci95_hi", float("nan"))
-            lines.append(f"  95% CI      = [{ci_lo:.2f}, {ci_hi:.2f}] nm\u00b2")
+            lines.append(f"  mean SA     = {s.get('mean', float('nan')) * sa_scale:.4g} {sa_unit}")
+            lines.append(f"  median SA   = {s.get('median', float('nan')) * sa_scale:.4g} {sa_unit}")
+            lines.append(f"  std         = {s.get('std', float('nan')) * sa_scale:.4g} {sa_unit}")
+            lines.append(f"  IQR         = {s.get('iqr', float('nan')) * sa_scale:.4g} {sa_unit}")
+            ci_lo = s.get("ci95_lo", float("nan")) * sa_scale
+            ci_hi = s.get("ci95_hi", float("nan")) * sa_scale
+            lines.append(f"  95% CI      = [{ci_lo:.4g}, {ci_hi:.4g}] {sa_unit}")
             lines.append("")
 
         pairwise = stats_dict.get("pairwise")
