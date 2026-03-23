@@ -1829,11 +1829,13 @@ class MainWindow(QMainWindow):
             return
 
         if tool == "scalebar":
-            if img is not None:
-                h, w = img.shape[:2]
+            ax = self._canvas_widget.canvas.ax
+            w_ax = abs(ax.get_xlim()[1] - ax.get_xlim()[0])
+            h_ax = abs(ax.get_ylim()[0] - ax.get_ylim()[1])
+            if w_ax > 1 and h_ax > 1:
                 store.add(ScalebarAnnotation(
                     nm=self._ann_panel.scalebar_nm,
-                    x_frac=x / w, y_frac=y / h,
+                    x_frac=x / w_ax, y_frac=y / h_ax,
                     color=col, linewidth=lw, fontsize=fs,
                 ))
             return
