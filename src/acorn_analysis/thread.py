@@ -174,10 +174,12 @@ class AnalysisThread(QThread):
             pct = 5 + int(85 * i / max(n, 1))
             self.progress.emit(pct, f"Estimating SA {i + 1}/{n}  [{label}]...")
 
+            px_nm  = float(item.get("pixel_size_nm",  self._px_nm))
+            px_unc = float(item.get("pixel_size_uncertainty_nm", self._px_unc_nm))
             result = estimate_surface_area(
                 mask,
-                pixel_size_nm=self._px_nm,
-                pixel_size_uncertainty_nm=self._px_unc_nm,
+                pixel_size_nm=px_nm,
+                pixel_size_uncertainty_nm=px_unc,
                 particle_id=i,
                 method=self._method,
                 raw_image=raw_crop,

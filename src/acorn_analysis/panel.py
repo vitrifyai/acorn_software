@@ -1,20 +1,7 @@
-"""Analysis panel — surface area estimation and population statistics.
-
-Displayed as the "Analysis" tab in the main QTabWidget.  The panel owns its
-own UI; the heavy computation runs in AnalysisThread (main_window.py) so the
-GUI stays responsive.
-
-Public API (called by MainWindow)
-----------------------------------
-refresh_labels(labels)      -- rebuild label checkbox list from annotation store
-set_pixel_size(ps_nm)       -- update pixel-size spinbox when image changes
-set_running(bool)           -- toggle progress / disable run button
-show_progress(pct, msg)     -- update progress bar + status label
-show_results(df, stats, dir)-- populate results tabs after analysis completes
-"""
-
+"""Analysis panel — surface area estimation and population statistics."""
 from __future__ import annotations
 
+import json
 import os
 from pathlib import Path
 from typing import Optional
@@ -55,6 +42,11 @@ class AnalysisPanel(QWidget):
         super().__init__(parent)
         self._label_checks: dict[str, QCheckBox] = {}
         self._particles_df = None
+        self._stats_dict = None
+        self._output_dir: Optional[Path] = None
+        self._fig = None           # current matplotlib Figure
+        self._fig_canvas = None    # FigureCanvasQTAgg
+        self._folder_items: list[dict] = []   # [{path, pixel_size_nm, n_rois, labels}]
         self._build_ui()
 
     # ── UI construction ───────────────────────────────────────────────────────
@@ -64,6 +56,7 @@ class AnalysisPanel(QWidget):
         outer.setContentsMargins(8, 8, 8, 8)
         outer.setSpacing(8)
 
+        outer.addWidget(self._build_input_source_group())
         outer.addWidget(self._build_label_group())
         outer.addWidget(self._build_param_group())
         outer.addWidget(self._build_output_group())
@@ -86,6 +79,57 @@ class AnalysisPanel(QWidget):
         self._results_tabs.setVisible(False)
         outer.addWidget(self._results_tabs, 1)
 
+    def _build_input_source_group(self) -> QGroupBox:
+        box = QGroupBox("Input Source")
+        layout = QVBoxLayout(box)
+        layout.setSpacing(6)
+
+        radio_row = QHBoxLayout()
+        self._src_session = QRadioButton("Session (loaded images)")
+        self._src_folder  = QRadioButton("Folder")
+        self._src_session.setChecked(True)
+        self._src_session.toggled.connect(self._on_src_changed)
+        radio_row.addWidget(self._src_session)
+        radio_row.addWidget(self._src_folder)
+        radio_row.addStretch()
+        layout.addLayout(radio_row)
+
+        # Folder controls (hidden by default)
+        self._folder_widget = QWidget()
+        folder_layout = QVBoxLayout(self._folder_widget)
+        folder_layout.setContentsMargins(0, 0, 0, 0)
+        folder_layout.setSpacing(4)
+
+        picker_row = QHBoxLayout()
+        self._folder_edit = QLineEdit()
+        self._folder_edit.setPlaceholderText("Select folder containing annotated images...")
+        browse_btn = QPushButton("Browse")
+        browse_btn.setFixedWidth(70)
+        browse_btn.clicked.connect(self._browse_folder)
+        scan_btn = QPushButton("Scan")
+        scan_btn.setFixedWidth(55)
+        scan_btn.clicked.connect(self._on_scan_folder)
+        picker_row.addWidget(self._folder_edit)
+        picker_row.addWidget(browse_btn)
+        picker_row.addWidget(scan_btn)
+        folder_layout.addLayout(picker_row)
+
+        self._folder_table = QTableWidget()
+        self._folder_table.setColumnCount(4)
+        self._folder_table.setHorizontalHeaderLabels(["Image", "Pixel size (nm/px)", "ROIs", "Labels found"])
+        self._folder_table.setFixedHeight(130)
+        self._folder_table.setAlternatingRowColors(True)
+        self._folder_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
+        self._folder_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
+        self._folder_table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
+        self._folder_table.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeMode.Stretch)
+        self._folder_table.itemChanged.connect(self._on_folder_table_item_changed)
+        folder_layout.addWidget(self._folder_table)
+
+        self._folder_widget.setVisible(False)
+        layout.addWidget(self._folder_widget)
+        return box
+
     def _build_label_group(self) -> QGroupBox:
         box = QGroupBox("Labels to Analyze")
         layout = QVBoxLayout(box)
@@ -104,7 +148,6 @@ class AnalysisPanel(QWidget):
         btn_row.addStretch()
         layout.addLayout(btn_row)
 
-        # Scrollable checkbox container
         self._label_container = QWidget()
         self._label_container_layout = QVBoxLayout(self._label_container)
         self._label_container_layout.setSpacing(2)
@@ -122,7 +165,6 @@ class AnalysisPanel(QWidget):
         self._no_labels_label.setWordWrap(True)
         layout.addWidget(self._no_labels_label)
 
-        # Initial state: no images loaded
         self._label_scroll.setVisible(False)
         return box
 
@@ -131,7 +173,6 @@ class AnalysisPanel(QWidget):
         form = QFormLayout(box)
         form.setSpacing(6)
 
-        # Mode
         mode_widget = QWidget()
         mode_row = QHBoxLayout(mode_widget)
         mode_row.setContentsMargins(0, 0, 0, 0)
@@ -149,10 +190,10 @@ class AnalysisPanel(QWidget):
         self._px_spin.setDecimals(4)
         self._px_spin.setSuffix(" nm/px")
         self._px_spin.setToolTip(
-            "Pixel size in nm per pixel. Set automatically from image header; "
-            "override here if needed."
+            "Default pixel size in nm/px — used as fallback when per-image pixel size\n"
+            "is not set. In session mode, each image uses its own saved pixel size automatically."
         )
-        form.addRow("Pixel size:", self._px_spin)
+        form.addRow("Default pixel size:", self._px_spin)
 
         self._px_unc_spin = QDoubleSpinBox()
         self._px_unc_spin.setRange(0.0, 100.0)
@@ -180,16 +221,15 @@ class AnalysisPanel(QWidget):
                 self._method_combo.count() - 1, tip,
                 Qt.ItemDataRole.ToolTipRole,
             )
-        self._method_combo.setToolTip("Surface area estimation method.\n'Auto' selects the best method per particle based on circularity, convexity, and fractal dimension.")
+        self._method_combo.setToolTip("Surface area estimation method.")
         form.addRow("SA method:", self._method_combo)
 
-        # Compound mask controls
         self._compound_check = QCheckBox("Combine same-label annotations into one mask")
         self._compound_check.setToolTip(
             "When multiple ROI annotations share a label on the same image,\n"
             "combine them into a single compound mask before estimating SA.\n"
             "Use this for hollow particles (draw outer + inner boundary)\n"
-            "or particles with separate dense regions (draw each region separately)."
+            "or particles with separate dense regions."
         )
         self._compound_check.toggled.connect(self._on_compound_toggled)
         form.addRow("Compound:", self._compound_check)
@@ -202,9 +242,9 @@ class AnalysisPanel(QWidget):
         self._cm_sub    = QRadioButton("Subtract inner (donut / hole)")
         self._cm_union  = QRadioButton("Add / union (stacked regions)")
         self._cm_auto.setChecked(True)
-        self._cm_auto.setToolTip("If a smaller polygon is fully inside a larger one: subtract it.\nIf polygons overlap or are adjacent: union them.")
-        self._cm_sub.setToolTip("Always subtract smaller polygons from the largest — use for hollow particles, donuts, liposomes.")
-        self._cm_union.setToolTip("Always union all polygons — use for particles with dark internal regions or overlapping/touching particles.")
+        self._cm_auto.setToolTip("If a smaller polygon is fully inside a larger one: subtract it.")
+        self._cm_sub.setToolTip("Always subtract smaller polygons from the largest.")
+        self._cm_union.setToolTip("Always union all polygons.")
         cm_row.addWidget(self._cm_auto)
         cm_row.addWidget(self._cm_sub)
         cm_row.addWidget(self._cm_union)
@@ -233,7 +273,7 @@ class AnalysisPanel(QWidget):
     def _build_results_tabs(self) -> QTabWidget:
         tabs = QTabWidget()
 
-        # Particles tab — unit toggle + scrollable table
+        # Particles tab
         particles_widget = QWidget()
         particles_layout = QVBoxLayout(particles_widget)
         particles_layout.setContentsMargins(4, 4, 4, 4)
@@ -253,49 +293,151 @@ class AnalysisPanel(QWidget):
         self._particles_table = QTableWidget()
         self._particles_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         self._particles_table.setAlternatingRowColors(True)
-        self._particles_table.setSelectionBehavior(
-            QTableWidget.SelectionBehavior.SelectRows
-        )
-        self._particles_table.horizontalHeader().setSectionResizeMode(
-            QHeaderView.ResizeMode.ResizeToContents
-        )
+        self._particles_table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
+        self._particles_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents)
         self._particles_table.setSortingEnabled(True)
         particles_layout.addWidget(self._particles_table)
         tabs.addTab(particles_widget, "Particles")
 
-        # Groups tab — formatted plain text
+        # Groups tab
         self._groups_text = QTextEdit()
         self._groups_text.setReadOnly(True)
         self._groups_text.setFontFamily("Monospace")
         self._groups_text.setFontPointSize(10)
         tabs.addTab(self._groups_text, "Groups")
 
-        # Figures tab — file list + open folder button
+        # Figures tab — embedded matplotlib canvas
         figures_widget = QWidget()
         figures_layout = QVBoxLayout(figures_widget)
         figures_layout.setSpacing(4)
         figures_layout.setContentsMargins(4, 4, 4, 4)
-        self._open_folder_btn = QPushButton("Open Output Folder")
-        self._open_folder_btn.clicked.connect(self._on_open_output_folder)
-        figures_layout.addWidget(self._open_folder_btn)
+
+        ctrl_row = QHBoxLayout()
+        ctrl_row.addWidget(QLabel("Plot:"))
+        self._fig_type_combo = QComboBox()
+        self._fig_type_combo.addItems(["Histogram (KDE)", "Violin / Box", "ECDF", "Summary panel"])
+        self._fig_type_combo.currentIndexChanged.connect(self._refresh_figure)
+        ctrl_row.addWidget(self._fig_type_combo)
+        ctrl_row.addStretch()
+        for fmt in ("PNG", "SVG", "PDF"):
+            btn = QPushButton(fmt)
+            btn.setFixedWidth(46)
+            btn.clicked.connect(lambda _, f=fmt.lower(): self._export_figure(f))
+            ctrl_row.addWidget(btn)
+        figures_layout.addLayout(ctrl_row)
+
+        # Matplotlib canvas placeholder — real canvas created on first use
+        self._fig_placeholder = QLabel("Run analysis to generate figures.")
+        self._fig_placeholder.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._fig_placeholder.setStyleSheet("color: palette(mid); font-size: 11px;")
+        figures_layout.addWidget(self._fig_placeholder, 1)
+        self._fig_canvas_widget = self._fig_placeholder   # updated when canvas is created
+
         self._figures_text = QTextEdit()
         self._figures_text.setReadOnly(True)
         self._figures_text.setFontFamily("Monospace")
-        self._figures_text.setFontPointSize(10)
-        figures_layout.addWidget(self._figures_text, 1)
+        self._figures_text.setFontPointSize(9)
+        self._figures_text.setMaximumHeight(60)
+        figures_layout.addWidget(self._figures_text)
+
+        self._figures_layout = figures_layout
         tabs.addTab(figures_widget, "Figures")
 
         return tabs
 
+    # ── input source ──────────────────────────────────────────────────────────
+
+    def _on_src_changed(self) -> None:
+        self._folder_widget.setVisible(not self._src_session.isChecked())
+
+    def _browse_folder(self) -> None:
+        start = self._folder_edit.text().strip() or str(Path.home())
+        d = QFileDialog.getExistingDirectory(self, "Select folder of annotated images", start)
+        if d:
+            self._folder_edit.setText(d)
+
+    def _on_scan_folder(self) -> None:
+        folder = self._folder_edit.text().strip()
+        if not folder or not Path(folder).exists():
+            return
+
+        from acorn.core.dm4_loader import scan_folder as _scan
+        image_paths = _scan(Path(folder))
+
+        self._folder_items = []
+        all_labels: set[str] = set()
+
+        self._folder_table.blockSignals(True)
+        self._folder_table.setRowCount(0)
+
+        for img_path in image_paths:
+            sidecar = img_path.parent / f".{img_path.stem}.acorn.json"
+            px_nm = 0.0
+            n_rois = 0
+            labels: list[str] = []
+
+            if sidecar.exists():
+                try:
+                    raw = json.loads(sidecar.read_text())
+                    if isinstance(raw, dict):
+                        px_nm = float(raw.get("pixel_size_nm") or 0.0)
+                        for ann in raw.get("annotations", []):
+                            if ann.get("type") == "roi":
+                                n_rois += 1
+                                lbl = ann.get("label", "")
+                                if lbl:
+                                    labels.append(lbl)
+                    all_labels.update(labels)
+                except Exception:
+                    pass
+
+            self._folder_items.append({
+                "path":          str(img_path),
+                "pixel_size_nm": px_nm,
+                "n_rois":        n_rois,
+                "labels":        labels,
+            })
+
+            row = self._folder_table.rowCount()
+            self._folder_table.insertRow(row)
+
+            name_item = QTableWidgetItem(img_path.name)
+            name_item.setFlags(name_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+            self._folder_table.setItem(row, 0, name_item)
+
+            px_item = QTableWidgetItem(f"{px_nm:.4f}" if px_nm > 0 else "")
+            px_item.setToolTip("Double-click to edit pixel size for this image")
+            self._folder_table.setItem(row, 1, px_item)
+
+            roi_item = QTableWidgetItem(str(n_rois))
+            roi_item.setFlags(roi_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+            self._folder_table.setItem(row, 2, roi_item)
+
+            lbl_item = QTableWidgetItem(", ".join(sorted(set(labels))))
+            lbl_item.setFlags(lbl_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+            self._folder_table.setItem(row, 3, lbl_item)
+
+        self._folder_table.blockSignals(False)
+
+        if all_labels:
+            self.refresh_labels(sorted(all_labels))
+
+    def _on_folder_table_item_changed(self, item: QTableWidgetItem) -> None:
+        if item.column() != 1:
+            return
+        row = item.row()
+        if row >= len(self._folder_items):
+            return
+        try:
+            val = float(item.text().strip())
+            self._folder_items[row]["pixel_size_nm"] = val
+        except (ValueError, TypeError):
+            self._folder_items[row]["pixel_size_nm"] = 0.0
+
     # ── public API ────────────────────────────────────────────────────────────
 
     def refresh_labels(self, labels: list[str]) -> None:
-        """Rebuild label checkboxes. Previously checked labels stay checked."""
-        previously_checked = {
-            lbl for lbl, cb in self._label_checks.items() if cb.isChecked()
-        }
-
-        # Clear existing checkboxes (leave the trailing stretch)
+        previously_checked = {lbl for lbl, cb in self._label_checks.items() if cb.isChecked()}
         for cb in list(self._label_checks.values()):
             self._label_container_layout.removeWidget(cb)
             cb.deleteLater()
@@ -309,16 +451,13 @@ class AnalysisPanel(QWidget):
         for lbl in unique:
             display = lbl if lbl else "(unlabeled)"
             cb = QCheckBox(display)
-            # Default: checked if previously checked, or if this is a fresh load (nothing was checked before)
             cb.setChecked(lbl in previously_checked or not previously_checked)
             self._label_checks[lbl] = cb
-            # Insert before the stretch (last item)
             self._label_container_layout.insertWidget(
                 self._label_container_layout.count() - 1, cb
             )
 
     def set_pixel_size(self, ps_nm: float) -> None:
-        """Called by MainWindow when the current image changes."""
         if ps_nm > 0:
             self._px_spin.setValue(ps_nm)
 
@@ -340,17 +479,204 @@ class AnalysisPanel(QWidget):
         stats_dict: dict | None,
         output_dir: Path | None,
     ) -> None:
-        """Populate the three results tabs and make them visible."""
         self._results_tabs.setVisible(True)
         self._output_dir = output_dir
-        self._particles_df = particles_df  # kept for unit toggle re-render
-        self._stats_dict = stats_dict      # kept for unit toggle re-render
+        self._particles_df = particles_df
+        self._stats_dict = stats_dict
 
         self._populate_particles_table(particles_df)
         self._populate_groups_text(stats_dict)
         self._populate_figures_text(output_dir)
+        self._refresh_figure()
 
-        self._results_tabs.setCurrentIndex(0)
+        self._results_tabs.setCurrentIndex(2)  # jump to Figures tab
+
+    # ── figure ────────────────────────────────────────────────────────────────
+
+    def _refresh_figure(self) -> None:
+        if self._particles_df is None:
+            return
+        plot_type = self._fig_type_combo.currentText()
+        try:
+            fig = self._generate_inline_figure(plot_type)
+        except Exception:
+            return
+        if fig is None:
+            return
+        self._fig = fig
+        self._install_canvas(fig)
+
+    def _install_canvas(self, fig) -> None:
+        from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg
+        old = self._fig_canvas_widget
+        canvas = FigureCanvasQTAgg(fig)
+        canvas.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+        idx = self._figures_layout.indexOf(old)
+        self._figures_layout.removeWidget(old)
+        old.hide()
+        old.deleteLater()
+        self._figures_layout.insertWidget(idx, canvas, 1)
+        self._fig_canvas_widget = canvas
+        self._fig_canvas = canvas
+        canvas.draw()
+
+    def _generate_inline_figure(self, plot_type: str):
+        df = self._particles_df
+        if df is None or "SA_nm2" not in df.columns:
+            return None
+
+        use_um2 = self._unit_combo.currentData() == "um2"
+        scale   = 1e-6 if use_um2 else 1.0
+        unit    = "\u03bcm\u00b2" if use_um2 else "nm\u00b2"
+
+        import pandas as _pd
+        plot_df = df.copy()
+        plot_df["_sa"] = plot_df["SA_nm2"] * scale
+
+        groups = sorted(plot_df["label"].dropna().unique().tolist())
+        palette = ["#4878D0", "#EE854A", "#6ACC65", "#D65F5F",
+                   "#956CB4", "#8C613C", "#DC7EC0", "#797979"]
+        colors = {g: palette[i % len(palette)] for i, g in enumerate(groups)}
+
+        import matplotlib
+        matplotlib.use("QtAgg")
+        import matplotlib.pyplot as plt
+        import matplotlib.ticker as mticker
+        from matplotlib.lines import Line2D
+
+        if plot_type == "Histogram (KDE)":
+            fig, ax = plt.subplots(figsize=(5.5, 3.8))
+            all_vals = plot_df["_sa"].dropna().values
+            if len(all_vals) == 0:
+                plt.close(fig)
+                return None
+            bin_edges = _smart_bins(all_vals, n=30)
+            for name in groups:
+                data = plot_df[plot_df["label"] == name]["_sa"].dropna().values
+                color = colors[name]
+                ax.hist(data, bins=bin_edges, alpha=0.38, color=color, density=True)
+                if len(data) > 3 and data.std() > 1e-12:
+                    try:
+                        from scipy.stats import gaussian_kde
+                        kde = gaussian_kde(data)
+                        xs = _np_linspace(all_vals.min(), all_vals.max(), 300)
+                        ax.plot(xs, kde(xs), color=color, lw=1.8, label=f"{name} (n={len(data)})")
+                    except Exception:
+                        ax.plot([], [], color=color, lw=1.8, label=f"{name} (n={len(data)})")
+                else:
+                    ax.plot([], [], color=color, lw=1.8, label=f"{name} (n={len(data)})")
+                m = float(data.mean()) if len(data) > 0 else 0
+                med = float(_np_median(data)) if len(data) > 0 else 0
+                ax.axvline(m,   color=color, lw=1.2, ls="-")
+                ax.axvline(med, color=color, lw=1.2, ls="--")
+
+            legend_handles = [
+                *[plt.Rectangle((0,0),1,1, color=colors[g], alpha=0.5, label=g) for g in groups],
+                Line2D([0],[0], color="k", lw=1.2, ls="-",  label="mean"),
+                Line2D([0],[0], color="k", lw=1.2, ls="--", label="median"),
+            ]
+            ax.legend(handles=legend_handles, fontsize=7, frameon=False)
+            ax.set_xlabel(f"Surface area ({unit})", fontsize=9)
+            ax.set_ylabel("Density", fontsize=9)
+            _pub_style(ax)
+            fig.tight_layout(pad=0.8)
+
+        elif plot_type == "Violin / Box":
+            fig, ax = plt.subplots(figsize=(5.5, 3.8))
+            box_data = [plot_df[plot_df["label"] == g]["_sa"].dropna().values for g in groups]
+            valid = [(g, d) for g, d in zip(groups, box_data) if len(d) > 1]
+            if not valid:
+                plt.close(fig)
+                return None
+            v_groups, v_data = zip(*valid)
+            parts = ax.violinplot(v_data, positions=range(1, len(v_data)+1),
+                                  showmedians=True, showextrema=True)
+            for i, (pc, g) in enumerate(zip(parts["bodies"], v_groups)):
+                pc.set_facecolor(colors[g])
+                pc.set_alpha(0.65)
+            for key in ("cmedians", "cmins", "cmaxes", "cbars"):
+                if key in parts:
+                    parts[key].set_color("#333333")
+                    parts[key].set_linewidth(0.8)
+            ax.set_xticks(range(1, len(v_groups)+1))
+            ax.set_xticklabels(v_groups, rotation=30, ha="right", fontsize=8)
+            ax.set_ylabel(f"Surface area ({unit})", fontsize=9)
+            # Annotate n
+            for i, (g, d) in enumerate(zip(v_groups, v_data), start=1):
+                ax.text(i, ax.get_ylim()[0], f"n={len(d)}", ha="center", va="bottom",
+                        fontsize=7, color="#555555")
+            _pub_style(ax)
+            fig.tight_layout(pad=0.8)
+
+        elif plot_type == "ECDF":
+            fig, ax = plt.subplots(figsize=(5.5, 3.8))
+            import numpy as _np
+            for name in groups:
+                data = _np.sort(plot_df[plot_df["label"] == name]["_sa"].dropna().values)
+                if len(data) == 0:
+                    continue
+                y = _np.arange(1, len(data)+1) / len(data)
+                ax.step(data, y, where="post", color=colors[name], lw=1.8,
+                        label=f"{name} (n={len(data)})")
+            ax.set_xlabel(f"Surface area ({unit})", fontsize=9)
+            ax.set_ylabel("Cumulative fraction", fontsize=9)
+            ax.set_ylim(0, 1.05)
+            ax.legend(fontsize=7, frameon=False)
+            _pub_style(ax)
+            fig.tight_layout(pad=0.8)
+
+        elif plot_type == "Summary panel":
+            fig, axes = plt.subplots(1, 2, figsize=(7.5, 3.8))
+            import numpy as _np
+            # Left: bar chart of mean +/- std
+            means = [plot_df[plot_df["label"]==g]["_sa"].mean() for g in groups]
+            stds  = [plot_df[plot_df["label"]==g]["_sa"].std()  for g in groups]
+            ns    = [int((plot_df["label"]==g).sum()) for g in groups]
+            x = range(len(groups))
+            axes[0].bar(x, means, yerr=stds, color=[colors[g] for g in groups],
+                        alpha=0.75, capsize=4, error_kw={"lw": 1.2})
+            axes[0].set_xticks(x)
+            axes[0].set_xticklabels(groups, rotation=30, ha="right", fontsize=8)
+            axes[0].set_ylabel(f"Mean SA ({unit})", fontsize=9)
+            axes[0].set_title("Mean +/- SD", fontsize=9)
+            for xi, (m, n) in enumerate(zip(means, ns)):
+                axes[0].text(xi, 0, f"n={n}", ha="center", va="bottom", fontsize=7, color="#555")
+            # Right: box
+            box_data = [plot_df[plot_df["label"]==g]["_sa"].dropna().values for g in groups]
+            bp = axes[1].boxplot(box_data, patch_artist=True, widths=0.5,
+                                 medianprops={"color": "#333", "lw": 1.5})
+            for patch, g in zip(bp["boxes"], groups):
+                patch.set_facecolor(colors[g])
+                patch.set_alpha(0.7)
+            axes[1].set_xticks(range(1, len(groups)+1))
+            axes[1].set_xticklabels(groups, rotation=30, ha="right", fontsize=8)
+            axes[1].set_ylabel(f"Surface area ({unit})", fontsize=9)
+            axes[1].set_title("Distribution", fontsize=9)
+            for ax in axes:
+                _pub_style(ax)
+            fig.tight_layout(pad=0.8)
+
+        else:
+            return None
+
+        return fig
+
+    def _export_figure(self, fmt: str) -> None:
+        if self._fig is None:
+            return
+        ext = fmt.lower()
+        path, _ = QFileDialog.getSaveFileName(
+            self, f"Export figure as {ext.upper()}",
+            str(Path.home() / f"figure.{ext}"),
+            f"{ext.upper()} files (*.{ext});;All files (*)",
+        )
+        if not path:
+            return
+        try:
+            self._fig.savefig(path, dpi=300, bbox_inches="tight")
+        except Exception as exc:
+            from PyQt6.QtWidgets import QMessageBox
+            QMessageBox.critical(self, "Export failed", str(exc))
 
     # ── private helpers ───────────────────────────────────────────────────────
 
@@ -382,14 +708,23 @@ class AnalysisPanel(QWidget):
         else:
             compound_mode = "separate"
 
+        if self._src_folder.isChecked():
+            mode = "folder"
+        elif self._mode_batch.isChecked():
+            mode = "batch"
+        else:
+            mode = "single"
+
         self.analysis_requested.emit({
-            "mode": "batch" if self._mode_batch.isChecked() else "single",
-            "selected_labels": selected,
-            "pixel_size_nm": self._px_spin.value(),
-            "pixel_size_uncertainty_nm": self._px_unc_spin.value(),
-            "output_dir": self._out_edit.text().strip(),
-            "method": self._method_combo.currentData(),
-            "compound_mode": compound_mode,
+            "mode":                       mode,
+            "selected_labels":            selected,
+            "pixel_size_nm":              self._px_spin.value(),
+            "pixel_size_uncertainty_nm":  self._px_unc_spin.value(),
+            "output_dir":                 self._out_edit.text().strip(),
+            "method":                     self._method_combo.currentData(),
+            "compound_mode":              compound_mode,
+            "folder_items":               list(self._folder_items),
+            "folder_path":                self._folder_edit.text().strip(),
         })
 
     def _on_open_output_folder(self) -> None:
@@ -404,13 +739,12 @@ class AnalysisPanel(QWidget):
             self._populate_particles_table(df)
         stats = getattr(self, "_stats_dict", None)
         self._populate_groups_text(stats)
+        self._refresh_figure()
 
     def _populate_particles_table(self, df) -> None:
         use_um2 = self._unit_combo.currentData() == "um2"
         sa_unit = "\u03bcm\u00b2" if use_um2 else "nm\u00b2"
         sa_scale = 1e-6 if use_um2 else 1.0
-
-        # SA columns that need unit conversion
         _SA_COLS = {"SA_nm2", "SA_nm2_uncertainty", "SA_outer_nm2", "SA_inner_nm2"}
 
         COLS = [
@@ -453,7 +787,7 @@ class AnalysisPanel(QWidget):
                         v = val * sa_scale
                     else:
                         v = val
-                    if v != v:          # NaN
+                    if v != v:
                         text = ""
                     elif v == 0.0:
                         text = "0"
@@ -464,9 +798,7 @@ class AnalysisPanel(QWidget):
                 else:
                     text = str(val) if val != "" else ""
                 item = QTableWidgetItem(text)
-                item.setTextAlignment(
-                    Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
-                )
+                item.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
                 self._particles_table.setItem(row_i, col_i, item)
 
         self._particles_table.setSortingEnabled(True)
@@ -474,9 +806,7 @@ class AnalysisPanel(QWidget):
 
     def _populate_groups_text(self, stats_dict: dict | None) -> None:
         if stats_dict is None:
-            self._groups_text.setPlainText(
-                "Single group — no between-group statistics computed."
-            )
+            self._groups_text.setPlainText("Single group — no between-group statistics computed.")
             return
 
         use_um2 = self._unit_combo.currentData() == "um2"
@@ -495,17 +825,6 @@ class AnalysisPanel(QWidget):
             eta2 = omnibus.get("eta_squared", float("nan"))
             stars = _p_stars(p)
             lines.append(f"Omnibus: statistic={stat:.4f}, p={p:.4g} ({stars}), eta2={eta2:.4f}")
-        else:
-            pairwise = stats_dict.get("pairwise")
-            if pairwise is not None and hasattr(pairwise, "iterrows"):
-                for _, pw_row in pairwise.iterrows():
-                    p = pw_row.get("p_fdr", pw_row.get("p_raw", float("nan")))
-                    eff = pw_row.get("effect_size", float("nan"))
-                    stars = _p_stars(p)
-                    lines.append(
-                        f"{pw_row.get('group_a','?')} vs {pw_row.get('group_b','?')}: "
-                        f"p={p:.4g} ({stars}), effect size={eff:.4f}"
-                    )
 
         lines.append("")
         group_stats = stats_dict.get("group_stats", {})
@@ -539,27 +858,18 @@ class AnalysisPanel(QWidget):
 
     def _populate_figures_text(self, output_dir: Path | None) -> None:
         if output_dir is None or not Path(output_dir).exists():
-            self._figures_text.setPlainText("No output folder.")
+            self._figures_text.setPlainText("No output folder set — figures not saved to disk.")
             return
-
-        figs = sorted(Path(output_dir).glob("*.png"))
-        csvs = sorted(Path(output_dir).glob("*.csv"))
-
-        lines = [f"Saved to: {output_dir}", ""]
-        if figs:
-            lines.append("Figures (PNG + SVG):")
-            for f in figs:
-                lines.append(f"  {f.name}")
-        if csvs:
-            lines.append("")
-            lines.append("Tables (CSV):")
-            for f in csvs:
-                lines.append(f"  {f.name}")
-
+        figs = sorted(Path(output_dir).glob("*.png")) + sorted(Path(output_dir).glob("*.svg"))
+        lines = [f"Saved: {output_dir}"]
+        for f in figs[:8]:
+            lines.append(f"  {f.name}")
+        if len(figs) > 8:
+            lines.append(f"  ... and {len(figs)-8} more")
         self._figures_text.setPlainText("\n".join(lines))
 
 
-# ── module-level helper ───────────────────────────────────────────────────────
+# ── module-level helpers ──────────────────────────────────────────────────────
 
 def _p_stars(p: float) -> str:
     if p < 0.001:
@@ -569,3 +879,29 @@ def _p_stars(p: float) -> str:
     if p < 0.05:
         return "*"
     return "ns"
+
+
+def _pub_style(ax) -> None:
+    ax.spines["top"].set_visible(False)
+    ax.spines["right"].set_visible(False)
+    ax.spines["left"].set_linewidth(0.8)
+    ax.spines["bottom"].set_linewidth(0.8)
+    ax.tick_params(direction="out", length=3, width=0.8, labelsize=8)
+
+
+def _smart_bins(vals, n: int = 30):
+    import numpy as _np
+    lo, hi = vals.min(), vals.max()
+    if hi <= lo:
+        return n
+    return _np.linspace(lo, hi, n + 1)
+
+
+def _np_linspace(a, b, n):
+    import numpy as _np
+    return _np.linspace(a, b, n)
+
+
+def _np_median(arr):
+    import numpy as _np
+    return _np.median(arr)

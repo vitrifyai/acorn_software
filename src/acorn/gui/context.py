@@ -85,6 +85,20 @@ class AcornContext(QObject):
         w = self._w()
         return w._img_idx if w else -1
 
+    def pixel_size_for_index(self, idx: int) -> float:
+        """Return pixel size for image at idx — manual override takes priority."""
+        w = self._w()
+        if w is None:
+            return 1.0
+        override = w._px_overrides.get(idx)
+        if override is not None and override > 0:
+            return float(override)
+        if idx == w._img_idx:
+            img = w._canvas_widget.canvas.dm4
+            if img is not None and img.pixel_size > 0:
+                return float(img.pixel_size)
+        return 1.0
+
     @property
     def current_contrast_params(self) -> Optional["ContrastParams"]:
         w = self._w()

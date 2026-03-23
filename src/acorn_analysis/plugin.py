@@ -1,5 +1,6 @@
 """Analysis plugin — surface area estimation and population statistics."""
 from __future__ import annotations
+import json
 from pathlib import Path
 from typing import Optional, TYPE_CHECKING
 
@@ -57,7 +58,7 @@ class AnalysisPlugin(AcornPlugin):
         pixel_size_unc   = config["pixel_size_uncertainty_nm"]
         out_dir_str      = config["output_dir"]
 
-        if pixel_size_nm <= 0:
+        if mode not in ("folder",) and pixel_size_nm <= 0:
             QMessageBox.warning(
                 None, "Analysis",
                 "Pixel size is 0. Set a valid pixel size before running analysis."
@@ -66,7 +67,7 @@ class AnalysisPlugin(AcornPlugin):
 
         items: list[dict] = []
 
-        def _collect(store, img_name: str, img_path: str) -> None:
+        def _collect(store, img_name: str, img_path: str, px_nm: float) -> None:
             for ann in store:
                 if getattr(ann, "type", None) != "roi":
                     continue
@@ -80,6 +81,7 @@ class AnalysisPlugin(AcornPlugin):
                         "label": lbl,
                         "image_name": img_name,
                         "image_path": img_path,
+                        "pixel_size_nm": px_nm,
                     })
 
         paths = self._context.image_paths
@@ -87,16 +89,38 @@ class AnalysisPlugin(AcornPlugin):
         store = self._context.annotation_store
 
         if mode == "single":
+            px = self._context.pixel_size_for_index(idx)
             if idx >= 0 and store is not None:
-                _collect(store, paths[idx].stem, str(paths[idx]))
-        else:
+                _collect(store, paths[idx].stem, str(paths[idx]), px)
+
+        elif mode == "batch":
             if idx >= 0 and store is not None:
-                _collect(store, paths[idx].stem, str(paths[idx]))
+                px = self._context.pixel_size_for_index(idx)
+                _collect(store, paths[idx].stem, str(paths[idx]), px)
             for i, state_list in self._context.all_annotation_states.items():
                 if i == idx:
                     continue
                 if i < len(paths):
-                    _collect(state_list, paths[i].stem, str(paths[i]))
+                    px = self._context.pixel_size_for_index(i)
+                    _collect(state_list, paths[i].stem, str(paths[i]), px)
+
+        elif mode == "folder":
+            from pathlib import Path as _Path
+            from acorn.core.annotations import AnnotationStore
+            folder_items = config.get("folder_items", [])
+            for fi in folder_items:
+                fpath = _Path(fi["path"])
+                px = float(fi.get("pixel_size_nm") or pixel_size_nm or 1.0)
+                sidecar = fpath.parent / f".{fpath.stem}.acorn.json"
+                if not sidecar.exists():
+                    continue
+                try:
+                    raw = json.loads(sidecar.read_text())
+                    ann_data = raw.get("annotations", raw) if isinstance(raw, dict) else raw
+                    s = AnnotationStore.from_json(json.dumps(ann_data))
+                    _collect(list(s), fpath.stem, str(fpath), px)
+                except Exception:
+                    continue
 
         if not items:
             QMessageBox.information(
@@ -106,11 +130,16 @@ class AnalysisPlugin(AcornPlugin):
             )
             return
 
-        if not out_dir_str and idx >= 0:
+        if not out_dir_str and idx >= 0 and mode != "folder":
             from datetime import datetime
             ts       = datetime.now().strftime("%Y%m%d_%H%M%S")
             img_path = paths[idx]
             out_dir_str = str(img_path.parent / "acorn_analysis" / f"{img_path.stem}_{ts}")
+        elif not out_dir_str and mode == "folder":
+            from datetime import datetime
+            folder_path = config.get("folder_path", "")
+            ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+            out_dir_str = str(_Path(folder_path) / "acorn_analysis" / ts) if folder_path else ""
 
         self._panel.set_running(True)
         self._thread = AnalysisThread(

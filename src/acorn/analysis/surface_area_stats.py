@@ -1133,7 +1133,6 @@ def export_stats_report(
     stats dict from compare_groups() (same structure).
     """
     import matplotlib
-    matplotlib.use("Agg")  # non-interactive backend for batch export
 
     out = Path(output_dir)
     out.mkdir(parents=True, exist_ok=True)
