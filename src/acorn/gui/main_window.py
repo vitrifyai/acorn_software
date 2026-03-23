@@ -233,8 +233,8 @@ class BatchExportThread(QThread):
             # that would produce zero output. Override skip_empty_tiles for them.
             n_rois = sum(1 for a in store if getattr(a, "type", None) == "roi")
             if n_rois == 0 and self._config.skip_empty_tiles:
-                import copy
-                cfg = copy.replace(self._config, skip_empty_tiles=False)
+                from dataclasses import replace as _dc_replace
+                cfg = _dc_replace(self._config, skip_empty_tiles=False)
                 self.image_status.emit(
                     f"[{i + 1}/{n}] {stem} — no annotations, exporting as negative tiles…"
                 )
