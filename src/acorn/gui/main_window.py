@@ -1013,6 +1013,8 @@ class MainWindow(QMainWindow):
         self._contrast_panel.contrast_changed.connect(self._on_contrast_changed)
         self._ann_panel.undo_requested.connect(self._on_undo)
         self._ann_panel.clear_requested.connect(self._on_clear_annotations)
+        self._ann_panel.delete_selected_requested.connect(self._on_delete_selected)
+        self._ann_panel.relabel_requested.connect(self._on_relabel_selected)
         self._ann_panel.tool_changed.connect(self._canvas_widget.set_tool)
         self._ann_panel.tool_changed.connect(self._on_tool_changed)
         self._canvas_widget.click_event.connect(self._on_canvas_click)
@@ -1022,6 +1024,7 @@ class MainWindow(QMainWindow):
         self._canvas_widget.prev_requested.connect(self._on_prev)
         self._canvas_widget.next_requested.connect(self._on_next)
         self._canvas_widget.annotation_selected.connect(self._on_annotation_selected)
+        self._canvas_widget.annotation_selected.connect(self._ann_panel.set_selected_annotation)
         self._canvas_widget.annotation_delete_requested.connect(self._on_annotation_delete)
         self._export_panel.export_requested.connect(self._on_export)
         self._export_panel.raw_export_requested.connect(self._on_export_raw)
@@ -1770,11 +1773,32 @@ class MainWindow(QMainWindow):
 
     def _on_annotation_delete(self, ann) -> None:
         self._canvas_widget.canvas.store.remove(ann)
+        self._ann_panel.set_selected_annotation(None)
         # Keep pending SAM/UNet lists in sync if a pending mask is deleted individually
         for lst in (self._pending_sam_masks, self._pending_unet_masks):
             if ann in lst:
                 lst.remove(ann)
                 break
+
+    def _on_delete_selected(self) -> None:
+        """Delete whichever annotation is currently selected on the canvas."""
+        renderer = self._canvas_widget.canvas.renderer
+        if renderer is None:
+            return
+        ann = renderer.selected_annotation()
+        if ann is not None:
+            self._on_annotation_delete(ann)
+
+    def _on_relabel_selected(self, new_label: str) -> None:
+        """Rename the label of the currently selected annotation."""
+        renderer = self._canvas_widget.canvas.renderer
+        if renderer is None:
+            return
+        ann = renderer.selected_annotation()
+        if ann is not None and hasattr(ann, "label"):
+            ann.label = new_label
+            self._canvas_widget.canvas.store._notify()
+            self._statusbar.showMessage(f"Renamed to: {new_label}")
 
     # ── contrast ──────────────────────────────────────────────────────────────
 

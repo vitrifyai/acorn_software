@@ -33,9 +33,11 @@ class AnnotationPanel(QWidget):
     Emits ``tool_changed(str)`` when the active tool changes.
     """
 
-    tool_changed = pyqtSignal(str)
-    undo_requested = pyqtSignal()
-    clear_requested = pyqtSignal()
+    tool_changed             = pyqtSignal(str)
+    undo_requested           = pyqtSignal()
+    clear_requested          = pyqtSignal()
+    delete_selected_requested = pyqtSignal()
+    relabel_requested        = pyqtSignal(str)   # new label for selected annotation
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -127,9 +129,37 @@ class AnnotationPanel(QWidget):
         self._hint.setStyleSheet("color: #6c7086; font-size: 11px;")
         layout.addWidget(self._hint)
 
+        # ── selected annotation ───────────────────────────────────────────────
+        self._selected_box = QGroupBox("Selected Annotation")
+        sel_layout = QVBoxLayout(self._selected_box)
+        sel_layout.setSpacing(4)
+
+        self._sel_type_label = QLabel("None selected")
+        self._sel_type_label.setStyleSheet("font-size: 11px; color: #6c7086;")
+        sel_layout.addWidget(self._sel_type_label)
+
+        label_row = QHBoxLayout()
+        self._sel_label_edit = QLineEdit()
+        self._sel_label_edit.setPlaceholderText("annotation label…")
+        self._sel_label_edit.setEnabled(False)
+        rename_btn = QPushButton("Rename")
+        rename_btn.setFixedWidth(60)
+        rename_btn.clicked.connect(self._on_rename)
+        self._sel_label_edit.returnPressed.connect(self._on_rename)
+        label_row.addWidget(self._sel_label_edit, 1)
+        label_row.addWidget(rename_btn)
+        sel_layout.addLayout(label_row)
+
+        del_sel_btn = QPushButton("Delete Selected")
+        del_sel_btn.setStyleSheet("background:#8b0000;color:white;")
+        del_sel_btn.clicked.connect(self.delete_selected_requested)
+        sel_layout.addWidget(del_sel_btn)
+
+        layout.addWidget(self._selected_box)
+
         # ── actions ───────────────────────────────────────────────────────────
         btn_row = QHBoxLayout()
-        undo_btn = QPushButton("Undo")
+        undo_btn = QPushButton("Undo Last")
         undo_btn.setStyleSheet("background:#c0392b;color:white;")
         clear_btn = QPushButton("Clear All")
         clear_btn.setStyleSheet("background:#c0392b;color:white;")
@@ -154,6 +184,28 @@ class AnnotationPanel(QWidget):
         _outer.addWidget(_scroll)
 
     # ── helpers ───────────────────────────────────────────────────────────────
+
+    def set_selected_annotation(self, ann) -> None:
+        """Update the Selected Annotation section when user clicks an annotation."""
+        if ann is None:
+            self._sel_type_label.setText("None selected")
+            self._sel_label_edit.setText("")
+            self._sel_label_edit.setEnabled(False)
+            return
+        t = ann.type
+        label = getattr(ann, "label", None)
+        self._sel_type_label.setText(f"Type: {t}")
+        if label is not None:
+            self._sel_label_edit.setText(label)
+            self._sel_label_edit.setEnabled(True)
+        else:
+            self._sel_label_edit.setText("")
+            self._sel_label_edit.setEnabled(False)
+
+    def _on_rename(self) -> None:
+        new_label = self._sel_label_edit.text().strip()
+        if new_label:
+            self.relabel_requested.emit(new_label)
 
     def _pick_color(self) -> None:
         c = QColorDialog.getColor(self._color, self, "Pick annotation colour")
