@@ -41,8 +41,6 @@ from acorn.gui.sam_panel import SAMPanel
 from acorn.gui.yolo_panel import YOLOPanel
 from acorn.gui.unet_panel import UNetPanel
 from acorn.gui.train_panel import TrainPanel
-from acorn.gui.analysis_panel import AnalysisPanel
-from acorn.gui.tracking_panel import TrackingPanel
 
 
 # ── folder file-picker dialog ─────────────────────────────────────────────────
@@ -322,228 +320,6 @@ class ImageLoadThread(QThread):
             self.finished.emit(self._idx, img, norm)
         except Exception as exc:
             self.error.emit(self._idx, str(exc))
-
-
-# ── analysis worker ───────────────────────────────────────────────────────────
-
-class AnalysisThread(QThread):
-    """
-    Background thread that converts ROI polygon annotations to binary masks,
-    runs per-particle surface area estimation, and saves publication figures.
-
-    Input: list of dicts with keys  vertices, label, image_name.
-    Emits: progress(int, str) and finished(object, object, str).
-    """
-
-    progress = pyqtSignal(int, str)
-    finished = pyqtSignal(object, object, str)  # (particles_df, stats_dict|None, out_dir_str)
-    error    = pyqtSignal(str)
-
-    def __init__(
-        self,
-        items: list[dict],
-        pixel_size_nm: float,
-        pixel_size_uncertainty_nm: float,
-        output_dir: str,
-        method: str = "auto",
-        compound_mode: str = "separate",
-        parent=None,
-    ) -> None:
-        super().__init__(parent)
-        self._items          = items
-        self._px_nm          = pixel_size_nm
-        self._px_unc_nm      = pixel_size_uncertainty_nm
-        self._output_dir     = output_dir
-        self._method         = method
-        self._compound_mode  = compound_mode
-
-    def run(self) -> None:
-        try:
-            self._run()
-        except Exception as exc:
-            import traceback
-            self.error.emit(f"{exc}\n{traceback.format_exc()}")
-
-    def _run(self) -> None:
-        import numpy as np
-        import pandas as pd
-
-        try:
-            import cv2
-        except ImportError as exc:
-            self.error.emit(
-                f"opencv-python is required for surface area analysis:\n  pip install opencv-python\n\n{exc}"
-            )
-            return
-
-        from acorn.analysis.surface_area import estimate_surface_area
-        from acorn.analysis.surface_area_stats import compare_groups, export_stats_report
-        from acorn.core.dm4_loader import DM4Image
-
-        self.progress.emit(5, "Preparing masks...")
-
-        # ── compound mask grouping ─────────────────────────────────────────────
-        if self._compound_mode != "separate":
-            from collections import defaultdict
-            groups: dict = defaultdict(list)
-            for item in self._items:
-                groups[(item["label"], item["image_name"])].append(item)
-
-            merged_items: list[dict] = []
-            for (lbl, img_name), group in groups.items():
-                if len(group) == 1:
-                    merged_items.append(group[0])
-                    continue
-
-                # Build all masks in a shared coordinate space
-                all_pts = [np.array(it["vertices"], dtype=np.float32) for it in group]
-                stacked = np.vstack(all_pts)
-                gx_min, gy_min = stacked.min(axis=0)
-                gx_max, gy_max = stacked.max(axis=0)
-                gpad = 4
-                gW = int(gx_max - gx_min) + 2 * gpad + 1
-                gH = int(gy_max - gy_min) + 2 * gpad + 1
-                offset = np.array([gx_min - gpad, gy_min - gpad])
-
-                poly_masks = []
-                for pts in all_pts:
-                    m = np.zeros((gH, gW), dtype=np.uint8)
-                    cv2.fillPoly(m, [(pts - offset).astype(np.int32)], 1)
-                    poly_masks.append(m)
-
-                areas = [int(m.sum()) for m in poly_masks]
-                order = sorted(range(len(poly_masks)), key=lambda i: areas[i], reverse=True)
-
-                if self._compound_mode == "union":
-                    compound = poly_masks[0].astype(bool)
-                    for m in poly_masks[1:]:
-                        compound = compound | m.astype(bool)
-                else:
-                    # subtract_inner or auto
-                    compound = poly_masks[order[0]].astype(bool)
-                    for j in order[1:]:
-                        inner = poly_masks[j].astype(bool)
-                        contained = float(np.sum(inner & compound)) / max(float(np.sum(inner)), 1)
-                        if self._compound_mode == "subtract_inner" or contained > 0.8:
-                            compound = compound & ~inner
-                        else:
-                            compound = compound | inner
-
-                merged_items.append({
-                    "label":       lbl,
-                    "image_name":  img_name,
-                    "image_path":  group[0].get("image_path", ""),
-                    "vertices":    group[order[0]]["vertices"],  # largest polygon vertices kept for reference
-                    "_mask":       compound,
-                    "_mask_offset": offset,
-                })
-
-            self._items = merged_items
-
-        n = len(self._items)
-        rows: list[dict] = []
-
-        _cached_path: str = ""
-        _cached_raw: Optional[np.ndarray] = None
-
-        for i, item in enumerate(self._items):
-            vertices  = item.get("vertices", [])
-            label     = item.get("label", "")
-            img_name  = item.get("image_name", "")
-            img_path  = item.get("image_path", "")
-
-            # Use pre-built compound mask if available, otherwise build from vertices
-            if "_mask" in item:
-                mask = item["_mask"]
-                mask_offset = item.get("_mask_offset", np.zeros(2))
-                x_min = float(mask_offset[0])
-                y_min = float(mask_offset[1])
-            else:
-                if not vertices or len(vertices) < 3:
-                    continue
-                pts = np.array(vertices, dtype=np.float32)
-                x_min, y_min = pts.min(axis=0)
-                x_max, y_max = pts.max(axis=0)
-                pad = 2
-                w   = int(x_max - x_min) + 2 * pad + 1
-                h   = int(y_max - y_min) + 2 * pad + 1
-                shifted = pts - np.array([x_min - pad, y_min - pad])
-                mask = np.zeros((h, w), dtype=np.uint8)
-                cv2.fillPoly(mask, [shifted.astype(np.int32)], 1)
-                mask = mask.astype(bool)
-
-            # Load raw image crop for hollow detection via radial intensity profile
-            raw_crop: Optional[np.ndarray] = None
-            if img_path:
-                if img_path != _cached_path:
-                    try:
-                        _cached_raw = DM4Image.from_file(img_path).raw
-                        _cached_path = img_path
-                    except Exception:
-                        _cached_raw = None
-                if _cached_raw is not None:
-                    h_mask, w_mask = mask.shape[:2]
-                    ry0 = max(0, int(y_min))
-                    ry1 = min(_cached_raw.shape[0], ry0 + h_mask)
-                    rx0 = max(0, int(x_min))
-                    rx1 = min(_cached_raw.shape[1], rx0 + w_mask)
-                    raw_crop = _cached_raw[ry0:ry1, rx0:rx1].astype(np.float32)
-
-            pct = 5 + int(85 * i / max(n, 1))
-            self.progress.emit(pct, f"Estimating SA {i + 1}/{n}  [{label}]...")
-
-            result = estimate_surface_area(
-                mask,
-                pixel_size_nm=self._px_nm,
-                pixel_size_uncertainty_nm=self._px_unc_nm,
-                particle_id=i,
-                method=self._method,
-                raw_image=raw_crop,
-            )
-            row = {"label": label, "image": img_name}
-            row.update(vars(result))
-            row["particle_id"] = i
-            rows.append(row)
-
-        if not rows:
-            self.error.emit(
-                "No valid ROI annotations found for the selected labels.\n"
-                "Make sure annotations are ROI polygons with a matching label."
-            )
-            return
-
-        df = pd.DataFrame(rows)
-
-        self.progress.emit(92, "Running statistical analysis...")
-
-        stats_dict = None
-        if df["label"].nunique() >= 2:
-            try:
-                stats_dict = compare_groups(df, group_col="label")
-            except Exception as exc:
-                import logging
-                logging.getLogger(__name__).warning("compare_groups failed: %s", exc)
-
-        self.progress.emit(95, "Saving figures and tables...")
-
-        out_dir = self._output_dir or ""
-        if out_dir:
-            from pathlib import Path as _Path
-            try:
-                export_stats_report(
-                    df,
-                    group_col="label",
-                    output_dir=out_dir,
-                    sample_name="acorn_sa",
-                )
-                # Also save the raw per-particle CSV
-                df.to_csv(str(_Path(out_dir) / "per_particle.csv"), index=False)
-            except Exception as exc:
-                import logging
-                logging.getLogger(__name__).warning("export_stats_report failed: %s", exc)
-
-        self.progress.emit(100, "Done.")
-        self.finished.emit(df, stats_dict, out_dir)
 
 
 # ── main window ───────────────────────────────────────────────────────────────
@@ -920,9 +696,12 @@ class MainWindow(QMainWindow):
         self._sam_prompt_labels: list = []     # [1|0, ...]
         self._sam_current_preview = None       # ROIAnnotation currently shown as preview
         self._sam_point_artists: list = []     # matplotlib dot artists for visual feedback
-        # region state
+        # region state — current image (live)
         self._sam_exclude_zone: Optional[tuple] = None   # (x0, y0, x1, y1) full image px
         self._sam_crop_region: Optional[tuple] = None    # (x0, y0, x1, y1) full image px
+        # region state — persisted per image index
+        self._sam_exclude_zones: dict[int, tuple] = {}
+        self._sam_crop_regions_saved: dict[int, tuple] = {}
 
         # YOLO state
         self._yolo_predictor = None     # YOLOPredictor, loaded on demand
@@ -955,8 +734,6 @@ class MainWindow(QMainWindow):
         self._yolo_panel = YOLOPanel()
         self._unet_panel = UNetPanel()
         self._train_panel    = TrainPanel()
-        self._analysis_panel = AnalysisPanel()
-        self._tracking_panel = TrackingPanel()
 
         control.addTab(self._contrast_panel,  "Contrast")
         control.addTab(self._ann_panel,       "Annotate")
@@ -966,8 +743,21 @@ class MainWindow(QMainWindow):
         control.addTab(self._yolo_panel,      "YOLO")
         control.addTab(self._unet_panel,      "UNet")
         control.addTab(self._train_panel,     "Train")
-        control.addTab(self._analysis_panel,  "Analysis")
-        control.addTab(self._tracking_panel,  "Track")
+
+        # ── plugin tabs ────────────────────────────────────────────────────────────
+        from acorn.gui.context import AcornContext
+        from acorn.plugin_loader import discover_plugins
+        self._context = AcornContext(self)
+        self._plugins = discover_plugins(self._context)
+        for plugin in self._plugins:
+            try:
+                panel = plugin.create_panel()
+                control.addTab(panel, plugin.TAB_LABEL)
+            except Exception as _plugin_exc:
+                import logging as _logging
+                _logging.getLogger(__name__).warning(
+                    "Plugin %s failed to create panel: %s", plugin.PLUGIN_ID, _plugin_exc
+                )
 
         splitter.addWidget(control)
         splitter.setStretchFactor(0, 1)
@@ -996,6 +786,8 @@ class MainWindow(QMainWindow):
         self._image_list = QListWidget()
         self._image_list.setFixedWidth(220)
         self._image_list.currentRowChanged.connect(self._on_image_list_select)
+        self._image_list.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self._image_list.customContextMenuRequested.connect(self._on_image_list_context_menu)
         dock = QDockWidget("Images", self)
         dock.setWidget(self._image_list)
         dock.setFeatures(
@@ -1008,6 +800,15 @@ class MainWindow(QMainWindow):
 
         # ── menus ─────────────────────────────────────────────────────────────
         self._build_menus()
+        # Let plugins register menu items after core menus are built
+        for plugin in self._plugins:
+            try:
+                plugin.setup_menus(self.menuBar())
+            except Exception as _plugin_exc:
+                import logging as _logging
+                _logging.getLogger(__name__).warning(
+                    "Plugin %s menu setup failed: %s", plugin.PLUGIN_ID, _plugin_exc
+                )
 
         # ── signals ───────────────────────────────────────────────────────────
         self._contrast_panel.contrast_changed.connect(self._on_contrast_changed)
@@ -1080,14 +881,6 @@ class MainWindow(QMainWindow):
         self._train_panel.load_unet_requested.connect(self._on_train_load_unet)
         self._train_thread: Optional[SAMThread] = None
         self._train_proc = None
-
-        # Analysis panel signals
-        self._analysis_panel.analysis_requested.connect(self._on_analysis_requested)
-        self._analysis_thread: Optional[AnalysisThread] = None
-
-        # Tracking panel signals
-        self._tracking_panel.track_requested.connect(self._on_track_requested)
-        self._tracking_panel.export_requested.connect(self._on_track_export)
 
         # Intercept key events from all child widgets (e.g. matplotlib canvas
         # consumes key events and never lets them reach MainWindow.keyPressEvent)
@@ -1239,7 +1032,9 @@ class MainWindow(QMainWindow):
         """Called on every store change — arms the debounce timer."""
         if self._img_idx >= 0:
             self._autosave_timer.start()
-        self._refresh_analysis_labels()
+        if hasattr(self, "_context"):
+            store = self._canvas_widget.canvas.store
+            self._context.annotations_changed.emit(store)
 
     def _do_autosave(self) -> None:
         """Write current annotations to the sidecar file (debounced)."""
@@ -1250,10 +1045,14 @@ class MainWindow(QMainWindow):
         anns = list(self._canvas_widget.canvas.store)
         self._ann_states[idx] = anns
         try:
+            ez = self._sam_exclude_zones.get(idx)
+            cr = self._sam_crop_regions_saved.get(idx)
             data = {
-                "version": 2,
+                "version": 3,
                 "annotations": [asdict(a) for a in anns],
                 "pixel_size_nm": self._px_overrides.get(idx),
+                "exclude_zone": list(ez) if ez else None,
+                "crop_region": list(cr) if cr else None,
             }
             path.write_text(json.dumps(data))
         except OSError:
@@ -1268,14 +1067,19 @@ class MainWindow(QMainWindow):
             raw = json.loads(path.read_text())
             from acorn.core.annotations import AnnotationStore
             if isinstance(raw, list):
-                # old format — plain annotation list, no pixel size
                 ann_data = raw
                 px_nm = None
+                ez = None
+                cr = None
             else:
                 ann_data = raw.get("annotations", [])
                 px_nm = raw.get("pixel_size_nm")
+                ez_raw = raw.get("exclude_zone")
+                cr_raw = raw.get("crop_region")
+                ez = tuple(ez_raw) if ez_raw else None
+                cr = tuple(cr_raw) if cr_raw else None
             store = AnnotationStore.from_json(json.dumps(ann_data))
-            return (list(store), px_nm)
+            return (list(store), px_nm, ez, cr)
         except Exception:
             return None
 
@@ -1483,7 +1287,6 @@ class MainWindow(QMainWindow):
         if idx in self._px_overrides:
             img.meta.pixel_size = self._px_overrides[idx]
         self._engine = MeasurementEngine(pixel_size=img.pixel_size)
-        self._analysis_panel.set_pixel_size(img.pixel_size)
 
         canvas = self._canvas_widget.canvas
 
@@ -1496,13 +1299,16 @@ class MainWindow(QMainWindow):
             if saved_anns is None:
                 sidecar = self._autoload_sidecar(idx)
                 if sidecar is not None:
-                    saved_anns, px_nm = sidecar
+                    saved_anns, px_nm, ez, cr = sidecar
                     self._ann_states[idx] = saved_anns
                     if px_nm is not None and idx not in self._px_overrides:
                         self._px_overrides[idx] = px_nm
                         img.meta.pixel_size = px_nm
                         self._engine = MeasurementEngine(pixel_size=px_nm)
-                        self._analysis_panel.set_pixel_size(px_nm)
+                    if ez is not None:
+                        self._sam_exclude_zones[idx] = ez
+                    if cr is not None:
+                        self._sam_crop_regions_saved[idx] = cr
                     self._statusbar.showMessage(
                         f"Auto-saved annotations restored for {self._image_paths[idx].name}"
                     )
@@ -1522,12 +1328,23 @@ class MainWindow(QMainWindow):
             self._sam_predictor.invalidate_cache()
             self._sam_warmup_encode()
 
-        # Clear region overlays on image switch unless user opted to keep them
-        if not self._sam_panel.keep_regions_across_images:
-            if self._sam_exclude_zone is not None:
+        # Restore per-image exclude/crop zones, or clear if none saved
+        if self._sam_panel.keep_regions_across_images:
+            # keep whatever is currently drawn — don't touch it
+            pass
+        else:
+            ez = self._sam_exclude_zones.get(idx)
+            if ez:
+                self._sam_exclude_zone = ez
+                self._canvas_widget.set_exclude_zone(*ez)
+            else:
                 self._sam_exclude_zone = None
                 self._canvas_widget.clear_exclude_zone()
-            if self._sam_crop_region is not None:
+            cr = self._sam_crop_regions_saved.get(idx)
+            if cr:
+                self._sam_crop_region = cr
+                self._canvas_widget.set_crop_region(*cr)
+            else:
                 self._sam_crop_region = None
                 self._canvas_widget.clear_crop_region()
 
@@ -1549,7 +1366,10 @@ class MainWindow(QMainWindow):
         self._update_px_btn(ps, img.meta.pixel_size_from_header)
 
         self._canvas_widget.set_nav_enabled(len(self._image_paths) > 1)
-        self._tracking_panel_status()
+
+        if hasattr(self, "_context"):
+            self._context.image_loaded.emit(img)
+            self._context.pixel_size_changed.emit(img.pixel_size)
 
     # ── pixel size helpers ────────────────────────────────────────────────────
 
@@ -1705,6 +1525,28 @@ class MainWindow(QMainWindow):
     def _on_image_list_select(self, row: int) -> None:
         if row >= 0 and row != self._img_idx:
             self._switch_to(row)
+
+    def _on_image_list_context_menu(self, pos) -> None:
+        """Right-click menu on the image list — clear annotations for any image."""
+        from PyQt6.QtWidgets import QMenu
+        item = self._image_list.itemAt(pos)
+        if item is None:
+            return
+        row = self._image_list.row(item)
+        menu = QMenu(self)
+        clear_act = menu.addAction(f"Clear all annotations for: {item.text()}")
+        action = menu.exec(self._image_list.mapToGlobal(pos))
+        if action == clear_act:
+            reply = QMessageBox.question(
+                self, "Clear annotations",
+                f"Clear all annotations for {item.text()}?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            )
+            if reply == QMessageBox.StandardButton.Yes:
+                self._ann_states[row] = []
+                if row == self._img_idx:
+                    self._canvas_widget.canvas.store.clear()
+                self._autosave_timer.start()
 
     def _on_prev(self) -> None:
         if self._image_paths:
@@ -2681,6 +2523,9 @@ class MainWindow(QMainWindow):
     def _on_sam_exclude_clear(self) -> None:
         self._sam_exclude_zone = None
         self._canvas_widget.clear_exclude_zone()
+        if self._img_idx >= 0:
+            self._sam_exclude_zones.pop(self._img_idx, None)
+            self._autosave_timer.start()
         self._sam_panel.reset_region_btns()
         if self._sam_mode == "exclude_zone":
             self._sam_mode = None
@@ -2696,6 +2541,9 @@ class MainWindow(QMainWindow):
     def _on_sam_crop_clear(self) -> None:
         self._sam_crop_region = None
         self._canvas_widget.clear_crop_region()
+        if self._img_idx >= 0:
+            self._sam_crop_regions_saved.pop(self._img_idx, None)
+            self._autosave_timer.start()
         self._sam_panel.reset_region_btns()
         if self._sam_mode == "crop_region":
             self._sam_mode = None
@@ -3071,6 +2919,9 @@ class MainWindow(QMainWindow):
         if self._sam_mode == "exclude_zone":
             self._sam_exclude_zone = (min(x0, x1), min(y0, y1), max(x0, x1), max(y0, y1))
             self._canvas_widget.set_exclude_zone(*self._sam_exclude_zone)
+            if self._img_idx >= 0:
+                self._sam_exclude_zones[self._img_idx] = self._sam_exclude_zone
+                self._autosave_timer.start()
             self._sam_panel.reset_region_btns()
             self._sam_mode = None
             self._canvas_widget.set_tool("none")
@@ -3083,6 +2934,9 @@ class MainWindow(QMainWindow):
         if self._sam_mode == "crop_region":
             self._sam_crop_region = (min(x0, x1), min(y0, y1), max(x0, x1), max(y0, y1))
             self._canvas_widget.set_crop_region(*self._sam_crop_region)
+            if self._img_idx >= 0:
+                self._sam_crop_regions_saved[self._img_idx] = self._sam_crop_region
+                self._autosave_timer.start()
             self._sam_panel.reset_region_btns()
             self._sam_mode = None
             self._canvas_widget.set_tool("none")
@@ -3592,217 +3446,13 @@ class MainWindow(QMainWindow):
         t.error.connect(_err)
         t.start()
 
-    # ── analysis panel ────────────────────────────────────────────────────────
+    # ── application quit ──────────────────────────────────────────────────────
 
-    def _refresh_analysis_labels(self) -> None:
-        """Collect all unique ROI labels from current + saved annotation states."""
-        labels: list[str] = []
-        # Current image store
-        for ann in self._canvas_widget.canvas.store:
-            if getattr(ann, "type", None) == "roi":
-                labels.append(getattr(ann, "label", ""))
-        # All other saved states
-        for idx, state_list in self._ann_states.items():
-            if idx == self._img_idx:
-                continue
-            for ann in state_list:
-                if getattr(ann, "type", None) == "roi":
-                    labels.append(getattr(ann, "label", ""))
-        self._analysis_panel.refresh_labels(labels)
-
-    def _on_analysis_requested(self, config: dict) -> None:
-        mode             = config["mode"]
-        selected_labels  = set(config["selected_labels"])
-        pixel_size_nm    = config["pixel_size_nm"]
-        pixel_size_unc   = config["pixel_size_uncertainty_nm"]
-        out_dir_str      = config["output_dir"]
-
-        if pixel_size_nm <= 0:
-            QMessageBox.warning(
-                self, "Analysis",
-                "Pixel size is 0. Set a valid pixel size before running analysis."
-            )
-            return
-
-        items: list[dict] = []
-
-        def _collect_store(store, img_name: str, img_path: str) -> None:
-            for ann in store:
-                if getattr(ann, "type", None) != "roi":
-                    continue
-                lbl = getattr(ann, "label", "")
-                if lbl not in selected_labels:
-                    continue
-                verts = getattr(ann, "vertices", [])
-                if len(verts) >= 3:
-                    items.append({
-                        "vertices": [list(v) for v in verts],
-                        "label": lbl,
-                        "image_name": img_name,
-                        "image_path": img_path,
-                    })
-
-        def _collect_state(state_list, img_name: str, img_path: str) -> None:
-            for ann in state_list:
-                if getattr(ann, "type", None) != "roi":
-                    continue
-                lbl = getattr(ann, "label", "")
-                if lbl not in selected_labels:
-                    continue
-                verts = getattr(ann, "vertices", [])
-                if len(verts) >= 3:
-                    items.append({
-                        "vertices": [list(v) for v in verts],
-                        "label": lbl,
-                        "image_name": img_name,
-                        "image_path": img_path,
-                    })
-
-        if mode == "single":
-            if self._img_idx >= 0:
-                _collect_store(
-                    self._canvas_widget.canvas.store,
-                    self._image_paths[self._img_idx].stem,
-                    str(self._image_paths[self._img_idx]),
-                )
-        else:
-            # Batch: current image + all images that have saved annotation states
-            if self._img_idx >= 0:
-                _collect_store(
-                    self._canvas_widget.canvas.store,
-                    self._image_paths[self._img_idx].stem,
-                    str(self._image_paths[self._img_idx]),
-                )
-            for idx, state_list in self._ann_states.items():
-                if idx == self._img_idx:
-                    continue
-                if idx < len(self._image_paths):
-                    _collect_state(
-                        state_list,
-                        self._image_paths[idx].stem,
-                        str(self._image_paths[idx]),
-                    )
-
-        if not items:
-            QMessageBox.information(
-                self, "Analysis",
-                "No ROI annotations found for the selected label(s).\n"
-                "Add polygon annotations via the Annotate, SAM, YOLO, or UNet tabs."
-            )
-            return
-
-        # Auto-generate timestamped output folder if none specified
-        if not out_dir_str and self._img_idx >= 0:
-            from datetime import datetime
-            ts       = datetime.now().strftime("%Y%m%d_%H%M%S")
-            img_path = self._image_paths[self._img_idx]
-            out_dir_str = str(img_path.parent / "acorn_analysis" / f"{img_path.stem}_{ts}")
-
-        self._analysis_panel.set_running(True)
-        self._analysis_thread = AnalysisThread(
-            items=items,
-            pixel_size_nm=pixel_size_nm,
-            pixel_size_uncertainty_nm=pixel_size_unc,
-            output_dir=out_dir_str,
-            method=config.get("method", "auto"),
-            compound_mode=config.get("compound_mode", "separate"),
-            parent=self,
-        )
-        self._analysis_thread.progress.connect(self._analysis_panel.show_progress)
-        self._analysis_thread.finished.connect(self._on_analysis_finished)
-        self._analysis_thread.error.connect(self._on_analysis_error)
-        self._analysis_thread.start()
-
-    def _on_analysis_finished(self, df, stats_dict, out_dir_str: str) -> None:
-        self._analysis_panel.set_running(False)
-        out = Path(out_dir_str) if out_dir_str else None
-        self._analysis_panel.show_results(df, stats_dict, out)
-        msg = f"Analysis complete — {len(df)} particles"
-        if out:
-            msg += f"  |  results saved to {out}"
-        self._statusbar.showMessage(msg)
-
-    def _on_analysis_error(self, msg: str) -> None:
-        self._analysis_panel.set_running(False)
-        QMessageBox.critical(self, "Analysis error", msg)
-
-    # ── particle tracking ────────────────────────────────────────────────────
-
-    def _tracking_panel_status(self) -> None:
-        """Refresh the tracking panel's frame/annotation count."""
-        n = len(self._image_paths)
-        annotated = 0
-        # current image
-        if self._img_idx >= 0:
-            if len(list(self._canvas_widget.canvas.store)) > 0:
-                annotated += 1
-        for idx, state in self._ann_states.items():
-            if idx == self._img_idx:
-                continue
-            if state:
-                annotated += 1
-        self._tracking_panel.update_status(n, annotated)
-
-    def _collect_stores_for_tracking(self) -> list:
-        """Return one AnnotationStore per loaded image, in index order."""
-        from acorn.core.annotations import AnnotationStore
-        stores = []
-        for idx in range(len(self._image_paths)):
-            if idx == self._img_idx:
-                stores.append(self._canvas_widget.canvas.store)
-            elif idx in self._ann_states:
-                s = AnnotationStore()
-                s.replace_all(self._ann_states[idx])
-                stores.append(s)
-            else:
-                stores.append(AnnotationStore())
-        return stores
-
-    def _on_track_requested(self, params: dict) -> None:
-        from acorn.analysis.tracking import track_annotations, track_statistics
-
-        if len(self._image_paths) < 2:
-            from PyQt6.QtWidgets import QMessageBox
-            QMessageBox.information(
-                self, "Tracking",
-                "Load at least two images before tracking."
-            )
-            return
-
-        # Use the pixel size of the current image
-        px = self._engine.pixel_size if self._engine.pixel_size > 0 else 1.0
-
-        stores = self._collect_stores_for_tracking()
-        try:
-            df = track_annotations(
-                stores,
-                pixel_size_nm=px,
-                max_displacement_nm=params["max_displacement_nm"],
-                min_frames=params["min_frames"],
-                max_gap=params["max_gap"],
-            )
-            stats = track_statistics(df)
-        except Exception as exc:
-            from PyQt6.QtWidgets import QMessageBox
-            QMessageBox.critical(self, "Tracking error", str(exc))
-            return
-
-        self._tracking_df = df
-        self._tracking_panel.set_tracks(df, stats)
-
-        n = 0 if df.empty else df["track_id"].nunique()
-        self._statusbar.showMessage(f"Tracking complete — {n} track(s) found.")
-
-    def _on_track_export(self, path: str) -> None:
-        df = getattr(self, "_tracking_df", None)
-        if df is None or df.empty:
-            return
-        try:
-            df.to_csv(path, index=False)
-            self._statusbar.showMessage(f"Tracks exported to {path}")
-        except Exception as exc:
-            from PyQt6.QtWidgets import QMessageBox
-            QMessageBox.critical(self, "Export error", str(exc))
+    def closeEvent(self, event) -> None:
+        """Tear down plugins on quit."""
+        for plugin in getattr(self, "_plugins", []):
+            plugin.teardown()
+        super().closeEvent(event)
 
     # ── keyboard shortcuts ────────────────────────────────────────────────────
 

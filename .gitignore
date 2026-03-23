@@ -41,7 +41,6 @@ htmlcov/
 *.tiff
 
 # Output / results
-acorn_analysis/
 *.log
 
 # Secrets

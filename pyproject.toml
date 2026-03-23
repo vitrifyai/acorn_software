@@ -63,7 +63,10 @@ dev = [
     "pytest-cov",
     "ruff",
 ]
-full = ["acorn[gui,mrc,sam,yolo,unet,hub]"]
+analysis = ["opencv-python>=4.8", "pandas>=1.5"]
+tracking = ["pandas>=1.5", "scipy>=1.10"]
+volume   = ["mrcfile>=1.4", "tifffile>=2023.1"]
+full = ["acorn[gui,mrc,sam,yolo,unet,hub,analysis,tracking,volume]"]
 all  = ["acorn[full,dev]"]
 
 [project.scripts]
@@ -72,8 +75,18 @@ acorn = "acorn.cli.main:main"
 [project.gui-scripts]
 acorn-gui = "acorn.gui.main_window:launch"
 
+[project.entry-points."acorn.plugins"]
+acorn_analysis = "acorn_analysis.plugin:AnalysisPlugin"
+acorn_tracking = "acorn_tracking.plugin:TrackingPlugin"
+acorn_3d       = "acorn_3d.plugin:VolumePlugin"
+
 [tool.hatch.build.targets.wheel]
-packages = ["src/acorn"]
+packages = [
+    "src/acorn",
+    "src/acorn_analysis",
+    "src/acorn_tracking",
+    "src/acorn_3d",
+]
 
 
 [tool.ruff]
