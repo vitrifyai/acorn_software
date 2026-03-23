@@ -1500,6 +1500,7 @@ class MainWindow(QMainWindow):
 
         # Persist so this survives cache eviction and reload
         self._px_overrides[img_idx] = ps_nm
+        self._autosave_timer.start()
 
         img.meta.pixel_size = ps_nm
         img.meta.pixel_size_from_header = False
