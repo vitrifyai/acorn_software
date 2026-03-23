@@ -586,7 +586,7 @@ class CanvasWidget(QWidget):
                 dy = y - self._move_start[1]
                 renderer = self.canvas.renderer
                 if renderer is not None:
-                    self._translate_ann(self._moving_ann, dx, dy, self.canvas.dm4, self.canvas.norm_image)
+                    self._translate_ann(self._moving_ann, dx, dy, self.canvas.dm4)
                     renderer.update_inplace(self._moving_ann)
                     renderer._update_selection_geometry(self._moving_ann)
                     self.canvas.blit_annotations()
@@ -691,7 +691,7 @@ class CanvasWidget(QWidget):
         self._mpl_canvas.draw_idle()
 
     @staticmethod
-    def _translate_ann(ann, dx: float, dy: float, dm4=None, norm=None) -> None:
+    def _translate_ann(ann, dx: float, dy: float, dm4=None) -> None:
         """Translate annotation coordinates in-place by (dx, dy) pixels."""
         t = ann.type
         if t in ("arrow", "line", "distance"):
@@ -709,10 +709,8 @@ class CanvasWidget(QWidget):
             ann.x += dx
             ann.y += dy
         elif t == "scalebar":
-            # dx/dy are in display-image pixel coords — divide by display dims
-            src = norm if norm is not None else (dm4 if dm4 is not None else None)
-            if src is not None and src.shape:
-                h, w = src.shape[:2]
+            if dm4 is not None and dm4.shape:
+                h, w = dm4.shape[:2]
                 if w > 0:
                     ann.x_frac += dx / w
                 if h > 0:
