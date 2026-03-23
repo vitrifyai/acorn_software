@@ -1829,8 +1829,8 @@ class MainWindow(QMainWindow):
             return
 
         if tool == "scalebar":
-            if img is not None:
-                h, w = img.shape[:2]
+            if norm is not None:
+                h, w = norm.shape[:2]
                 store.add(ScalebarAnnotation(
                     nm=self._ann_panel.scalebar_nm,
                     x_frac=x / w, y_frac=y / h,
