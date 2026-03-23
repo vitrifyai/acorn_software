@@ -1032,7 +1032,9 @@ class MainWindow(QMainWindow):
         """Called on every store change — arms the debounce timer."""
         if self._img_idx >= 0:
             self._autosave_timer.start()
-        if hasattr(self, "_context"):
+        # Skip plugin notifications during image loading (canvas._loading guards renders;
+        # plugins get a single image_loaded emit at the end of _finish_switch instead).
+        if hasattr(self, "_context") and not self._canvas_widget.canvas._loading:
             store = self._canvas_widget.canvas.store
             self._context.annotations_changed.emit(store)
 
@@ -1370,6 +1372,7 @@ class MainWindow(QMainWindow):
         if hasattr(self, "_context"):
             self._context.image_loaded.emit(img)
             self._context.pixel_size_changed.emit(img.pixel_size)
+            self._context.annotations_changed.emit(self._canvas_widget.canvas.store)
 
     # ── pixel size helpers ────────────────────────────────────────────────────
 
