@@ -248,12 +248,23 @@ class ExportPanel(QWidget):
         self._train_status.setWordWrap(True)
         train_layout.addWidget(self._train_status)
 
+        # Overall image progress (Image N / M)
+        self._image_progress = QProgressBar()
+        self._image_progress.setRange(0, 1)
+        self._image_progress.setValue(0)
+        self._image_progress.setTextVisible(True)
+        self._image_progress.setFormat("Image %v / %m")
+        self._image_progress.setFixedHeight(18)
+        self._image_progress.setVisible(False)
+        train_layout.addWidget(self._image_progress)
+
+        # Per-image tile progress
         self._train_progress = QProgressBar()
         self._train_progress.setRange(0, 100)
         self._train_progress.setValue(0)
         self._train_progress.setTextVisible(True)
         self._train_progress.setFormat("Tile %v / %m")
-        self._train_progress.setFixedHeight(16)
+        self._train_progress.setFixedHeight(14)
         self._train_progress.setVisible(False)
         train_layout.addWidget(self._train_progress)
 
@@ -369,6 +380,12 @@ class ExportPanel(QWidget):
     def set_train_status(self, msg: str) -> None:
         self._train_status.setText(msg)
 
+    def set_image_progress(self, current: int, total: int) -> None:
+        self._image_progress.setRange(0, total)
+        self._image_progress.setValue(current)
+        self._image_progress.setFormat(f"Image {current} / {total}")
+        self._image_progress.setVisible(True)
+
     def set_train_progress(self, current: int, total: int) -> None:
         self._train_progress.setRange(0, total)
         self._train_progress.setValue(current)
@@ -376,6 +393,8 @@ class ExportPanel(QWidget):
         self._train_progress.setVisible(True)
 
     def reset_train_progress(self) -> None:
+        self._image_progress.setValue(0)
+        self._image_progress.setVisible(False)
         self._train_progress.setValue(0)
         self._train_progress.setVisible(False)
 

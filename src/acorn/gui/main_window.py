@@ -194,11 +194,12 @@ class TrainingThread(QThread):
 class BatchExportThread(QThread):
     """Process a queue of annotated images into a training dataset sequentially."""
 
-    image_status = pyqtSignal(str)        # human-readable status per image
-    tile_progress = pyqtSignal(int, int)  # (current_tile, total_tiles) within image
-    item_done    = pyqtSignal(int, str)   # (item_idx, stem) when one image finishes
-    finished     = pyqtSignal(list)       # list of result dicts (one per image)
-    error        = pyqtSignal(int, str)   # (item_idx, error message) — continues
+    image_status    = pyqtSignal(str)        # human-readable status per image
+    image_progress  = pyqtSignal(int, int)  # (current_image, total_images) overall
+    tile_progress   = pyqtSignal(int, int)  # (current_tile, total_tiles) within image
+    item_done       = pyqtSignal(int, str)  # (item_idx, stem) when one image finishes
+    finished        = pyqtSignal(list)      # list of result dicts (one per image)
+    error           = pyqtSignal(int, str)  # (item_idx, error message) — continues
 
     def __init__(self, items: list[dict], dataset_dir: str, config, parent=None):
         super().__init__(parent)
@@ -215,6 +216,7 @@ class BatchExportThread(QThread):
 
         for i, item in enumerate(self._items):
             stem = item["stem"]
+            self.image_progress.emit(i + 1, n)
             self.image_status.emit(f"[{i + 1}/{n}] {stem} — preparing…")
 
             # Negative images imported by path are loaded on demand here
@@ -2174,6 +2176,7 @@ class MainWindow(QMainWindow):
             parent=self,
         )
         self._batch_export_thread.image_status.connect(self._export_panel.set_train_status)
+        self._batch_export_thread.image_progress.connect(self._export_panel.set_image_progress)
         self._batch_export_thread.tile_progress.connect(self._export_panel.set_train_progress)
         self._batch_export_thread.item_done.connect(
             lambda idx, stem: self._statusbar.showMessage(
