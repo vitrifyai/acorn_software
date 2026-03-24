@@ -20,9 +20,11 @@ from __future__ import annotations
 
 import io
 import json
+import os
 import shutil
 import sys
 import threading
+import time
 from pathlib import Path
 from typing import Callable
 
@@ -347,8 +349,19 @@ class YOLOTrainer:
 
         model.add_callback("on_train_epoch_end", _on_epoch_end)
 
+        # Use a timestamped run name so each training starts in a clean
+        # directory — avoids YOLO confusing a completed run with a resume target.
+        run_name = f"run_{time.strftime('%Y%m%d_%H%M%S')}"
+
+        # Only redirect stdout for single-GPU training.  With DDP (multi-GPU),
+        # PyTorch spawns worker processes that inherit the current sys.stdout.
+        # If _TeeToLog's threading.Lock happens to be held at fork time the
+        # child processes deadlock waiting for it.  The on_train_epoch_end
+        # callback still fires in the main process so progress is reported.
+        _is_ddp = isinstance(self.devices, list) and len(self.devices) > 1
         _orig_stdout = sys.stdout
-        sys.stdout = _TeeToLog(_orig_stdout, self.log_cb)
+        if not _is_ddp:
+            sys.stdout = _TeeToLog(_orig_stdout, self.log_cb)
         try:
             model.train(
                 data=str(yaml_path),
@@ -357,14 +370,15 @@ class YOLOTrainer:
                 imgsz=self.imgsz,
                 device=device_str,
                 project=str(self.project_dir),
-                name="run",
-                exist_ok=True,
+                name=run_name,
+                exist_ok=False,
+                resume=False,
                 verbose=False,
             )
         finally:
             sys.stdout = _orig_stdout
 
-        best_pt = self.project_dir / "run" / "weights" / "best.pt"
+        best_pt = self.project_dir / run_name / "weights" / "best.pt"
 
         # ── final per-class validation on best weights ─────────────────────────
         self.log_cb("Running final validation on best weights...")
