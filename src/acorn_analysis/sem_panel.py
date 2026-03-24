@@ -25,8 +25,9 @@ class SEMPanel(QWidget):
          then SA = integral sqrt(1 + p^2 + q^2) * px^2.
     """
 
-    sem_requested   = pyqtSignal(dict)   # run SA estimation
-    train_requested = pyqtSignal(dict)   # train U-Net on synthetic data
+    sem_requested              = pyqtSignal(dict)   # run SA estimation
+    train_requested            = pyqtSignal(dict)   # train U-Net on synthetic data
+    pick_flat_region_requested = pyqtSignal()       # ask plugin to start canvas rect pick
 
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
@@ -113,12 +114,29 @@ class SEMPanel(QWidget):
         )
         det_form.addRow("λ asymmetry:", self._lam)
 
-        calib_btn = QPushButton("Auto-calibrate from image")
-        calib_btn.setToolTip(
-            "Estimates I_bg and η₀ from the current image intensity distribution."
+        calib_row = QHBoxLayout()
+        pick_btn = QPushButton("Pick flat region…")
+        pick_btn.setToolTip(
+            "Draw a rectangle on a flat substrate area between particles.\n"
+            "Gives the most accurate I_bg and η₀ estimate."
         )
-        calib_btn.clicked.connect(self._on_auto_calibrate)
-        det_form.addRow("", calib_btn)
+        pick_btn.clicked.connect(self._on_pick_flat_region)
+        calib_row.addWidget(pick_btn, 1)
+
+        auto_btn = QPushButton("Auto from image")
+        auto_btn.setToolTip(
+            "Estimate I_bg and η₀ from global image intensity percentiles.\n"
+            "Less accurate than picking a flat region manually."
+        )
+        auto_btn.clicked.connect(self._on_auto_calibrate)
+        calib_row.addWidget(auto_btn, 1)
+        det_form.addRow("Calibrate:", calib_row)
+
+        self._calib_hint = QLabel("")
+        self._calib_hint.setStyleSheet("color:#2e86c1; font-size:11px;")
+        self._calib_hint.setWordWrap(True)
+        self._calib_hint.setVisible(False)
+        det_form.addRow("", self._calib_hint)
 
         self._learn_det = QCheckBox("Alternating optimisation (experimental)")
         self._learn_det.setToolTip(
@@ -321,10 +339,16 @@ class SEMPanel(QWidget):
     # Internal callbacks
     # ------------------------------------------------------------------
 
+    def _on_pick_flat_region(self) -> None:
+        """Ask the plugin to activate canvas rect-pick mode."""
+        self._calib_hint.setText(
+            "Draw a rectangle on a flat substrate region between particles, then release."
+        )
+        self._calib_hint.setVisible(True)
+        self.pick_flat_region_requested.emit()
+
     def _on_auto_calibrate(self) -> None:
-        """Estimate I_bg and eta0 from current image via context signal (no-op if no image)."""
-        # The plugin will call _do_calibrate(image_array) when it receives this request.
-        # For now, emit a dummy request; the plugin overrides this after construction.
+        """Estimate I_bg and eta0 from current image via global percentiles."""
         if hasattr(self, "_calibrate_cb") and self._calibrate_cb:
             self._calibrate_cb()
 
@@ -334,6 +358,10 @@ class SEMPanel(QWidget):
     def apply_calibration(self, I_bg: float, eta0: float) -> None:
         self._I_bg.setValue(I_bg)
         self._eta0.setValue(eta0)
+        self._calib_hint.setText(
+            f"Calibrated: I_bg = {I_bg:.4g},  η₀ = {eta0:.4g}"
+        )
+        self._calib_hint.setVisible(True)
 
     def _on_browse_ckpt(self) -> None:
         path, _ = QFileDialog.getOpenFileName(

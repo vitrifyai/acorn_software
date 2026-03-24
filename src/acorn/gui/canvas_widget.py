@@ -45,6 +45,7 @@ class CanvasWidget(QWidget):
     drag_commit               = pyqtSignal(str, float, float, float, float, bool)
     freehand_commit           = pyqtSignal(object)   # list of (x, y) tuples
     sam_box_commit            = pyqtSignal(float, float, float, float)  # drag-drawn SAM box
+    flat_region_picked        = pyqtSignal(float, float, float, float)  # one-shot rect pick
     prev_requested            = pyqtSignal()
     next_requested            = pyqtSignal()
     annotation_selected       = pyqtSignal(object)   # AnyAnnotation or None
@@ -108,6 +109,10 @@ class CanvasWidget(QWidget):
         self._sam_press: Optional[tuple[float, float]] = None
         self._sam_box_anchor: Optional[tuple[float, float]] = None
         self._sam_box_artists: list = []
+
+        # ── flat-region pick (one-shot rect for SEM calibration) ──────────────
+        self._flat_pick_active: bool = False
+        self._flat_pick_press: Optional[tuple[float, float]] = None
 
         # ── persistent region overlays ────────────────────────────────────────
         self._exclude_artists: list = []
@@ -194,6 +199,25 @@ class CanvasWidget(QWidget):
         """Remove rubber-band preview and clear anchors."""
         self._rubber_band_pts.clear()
         self._clear_rubber_band_artists()
+
+    def start_flat_region_pick(self) -> None:
+        """Activate one-shot flat-region rectangle pick mode.
+
+        The next drag on the canvas emits flat_region_picked(x0, y0, x1, y1)
+        and automatically cancels the mode.  Any ongoing SAM state is cleared.
+        """
+        self._flat_pick_active = True
+        self._flat_pick_press  = None
+        self.clear_sam_box_anchor()
+        self._mpl_canvas.setCursor(
+            Qt.CursorShape.CrossCursor
+        )
+
+    def cancel_flat_region_pick(self) -> None:
+        """Cancel flat-region pick mode without emitting a signal."""
+        self._flat_pick_active = False
+        self._flat_pick_press  = None
+        self._sync_cursor()
 
     def set_sam_box_anchor(self, x: float, y: float) -> None:
         """Record first corner of a SAM box and start showing a live preview rectangle."""
@@ -535,6 +559,9 @@ class CanvasWidget(QWidget):
         else:
             # Single-click tools (text, scalebar, angle, roi, distance, …)
             # Also passes right-click (button=3) for ROI polygon closing
+            if self._flat_pick_active and btn == 1:
+                self._flat_pick_press = (x, y)
+                return   # consume event — don't start any other interaction
             if btn == 1 and self._tool == "sam":
                 self._sam_press = (x, y)
             self.click_event.emit(x, y, btn)
@@ -623,6 +650,22 @@ class CanvasWidget(QWidget):
             self._update_drag_preview(self._tool, x1, y1, x2, y2)
 
     def _on_release(self, event) -> None:
+        # ── flat-region one-shot pick ─────────────────────────────────────────
+        if (self._flat_pick_press is not None
+                and self._flat_pick_active
+                and event.inaxes is not None
+                and event.xdata is not None):
+            x0, y0 = self._flat_pick_press
+            x1, y1 = float(event.xdata), float(event.ydata)
+            self._flat_pick_press  = None
+            self._flat_pick_active = False
+            self._sync_cursor()
+            if math.hypot(x1 - x0, y1 - y0) > 4.0:
+                self.flat_region_picked.emit(
+                    min(x0, x1), min(y0, y1), max(x0, x1), max(y0, y1)
+                )
+            return
+
         # ── SAM box drag-to-draw ───────────────────────────────────────────────
         if (self._sam_press is not None
                 and self._tool == "sam"

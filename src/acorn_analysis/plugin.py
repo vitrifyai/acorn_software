@@ -60,6 +60,7 @@ class AnalysisPlugin(AcornPlugin):
         self._sem_panel.sem_requested.connect(self._on_sem_requested)
         self._sem_panel.train_requested.connect(self._on_sem_train_requested)
         self._sem_panel.set_calibrate_callback(self._do_sem_calibrate)
+        self._sem_panel.pick_flat_region_requested.connect(self._on_pick_flat_region)
 
         tabs = QTabWidget()
         tabs.addTab(self._panel,     "Mask-Based")
@@ -188,6 +189,52 @@ class AnalysisPlugin(AcornPlugin):
     # ------------------------------------------------------------------
     # SEM 3D analysis
     # ------------------------------------------------------------------
+
+    def _on_pick_flat_region(self) -> None:
+        """Start canvas rect-pick mode; result routed to _on_flat_region_picked."""
+        cw = self._context.canvas_widget()
+        if cw is None:
+            return
+        # Connect one-shot; disconnect after first pick in the handler
+        try:
+            cw.flat_region_picked.disconnect(self._on_flat_region_picked)
+        except Exception:
+            pass
+        cw.flat_region_picked.connect(self._on_flat_region_picked)
+        cw.start_flat_region_pick()
+        self._context.set_status(
+            "SEM calibration: draw a rectangle on a flat substrate area, then release."
+        )
+
+    def _on_flat_region_picked(self, x0: float, y0: float, x1: float, y1: float) -> None:
+        """Extract the selected region and calibrate I_bg / eta0."""
+        cw = self._context.canvas_widget()
+        if cw is not None:
+            try:
+                cw.flat_region_picked.disconnect(self._on_flat_region_picked)
+            except Exception:
+                pass
+
+        img = self._context.current_image
+        if img is None or self._sem_panel is None:
+            return
+
+        import numpy as np
+        from acorn.analysis.sem_physics import estimate_params_from_image
+
+        raw = img.raw.astype(np.float32)
+        ry0, ry1 = max(0, int(y0)), min(raw.shape[0], int(y1) + 1)
+        rx0, rx1 = max(0, int(x0)), min(raw.shape[1], int(x1) + 1)
+        if ry1 <= ry0 or rx1 <= rx0:
+            return
+
+        flat_mask = np.zeros(raw.shape[:2], dtype=bool)
+        flat_mask[ry0:ry1, rx0:rx1] = True
+        p = estimate_params_from_image(raw, flat_region_mask=flat_mask)
+        self._sem_panel.apply_calibration(p.I_bg, p.eta0)
+        self._context.set_status(
+            f"SEM calibration from selected region: I_bg={p.I_bg:.4g}  eta0={p.eta0:.4g}"
+        )
 
     def _do_sem_calibrate(self) -> None:
         """Auto-estimate I_bg and eta0 from current image + annotations."""
