@@ -267,13 +267,14 @@ class SEMTrainThread(QThread):
         try:
             from acorn.analysis.sem_unet import train_sem_unet
             ckpt = train_sem_unet(
-                output_dir     = self._config.get("output_dir", "."),
-                n_samples      = self._config.get("n_samples", 2000),
-                epochs         = self._config.get("epochs", 50),
-                batch_size     = self._config.get("batch_size", 16),
-                image_size     = self._config.get("image_size", 128),
+                output_dir      = self._config.get("output_dir", "."),
+                n_samples       = self._config.get("n_samples", 2000),
+                epochs          = self._config.get("epochs", 50),
+                batch_size      = self._config.get("batch_size", 16),
+                image_size      = self._config.get("image_size", 128),
                 detector_params = self._dp,
-                device         = "auto",
+                shape_types     = self._config.get("shape_types") or None,
+                device          = "auto",
                 log_cb         = lambda msg: self.progress.emit(0, msg),
                 progress_cb    = lambda ep, tot: self.progress.emit(
                     int(100 * ep / tot), f"Epoch {ep}/{tot}"

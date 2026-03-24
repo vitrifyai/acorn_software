@@ -385,18 +385,31 @@ class SEMPanel(QWidget):
 # Training dialog
 # ---------------------------------------------------------------------------
 
+_SHAPE_LABELS = {
+    "sphere":          "Sphere — plain hemisphere",
+    "ellipsoid":       "Ellipsoid — tri-axial",
+    "rough_sphere":    "Rough sphere — surface texture",
+    "hollow":          "Hollow shell — vesicle / empty spore",
+    "dumbbell":        "Dumbbell — two fused lobes / dividing cell",
+    "waist_ellipsoid": "Waist ellipsoid — pinched / constricted",
+    "septate":         "Septate — dumbbell with membrane at waist",
+}
+
+
 class _TrainDialog(QWidget):
     def __init__(self, parent=None) -> None:
-        from PyQt6.QtWidgets import QDialog, QDialogButtonBox
+        from PyQt6.QtWidgets import QDialog, QDialogButtonBox, QGroupBox
         super().__init__(parent)
         self._dlg = QDialog(parent)
-        self._dlg.setWindowTitle("Train SEM U-Net")
+        self._dlg.setWindowTitle("Train SEM U-Net on Synthetic Data")
+        self._dlg.setMinimumWidth(420)
         layout = QVBoxLayout(self._dlg)
 
         form = QFormLayout()
         self._n_samples = QSpinBox()
         self._n_samples.setRange(200, 20000)
         self._n_samples.setValue(2000)
+        self._n_samples.setToolTip("Total synthetic training + validation samples.")
         form.addRow("Synthetic samples:", self._n_samples)
 
         self._epochs = QSpinBox()
@@ -413,6 +426,7 @@ class _TrainDialog(QWidget):
         self._imgsz.setRange(64, 512)
         self._imgsz.setSingleStep(64)
         self._imgsz.setValue(128)
+        self._imgsz.setToolTip("Crop size for each synthetic particle (pixels).")
         form.addRow("Tile size (px):", self._imgsz)
 
         out_row = QHBoxLayout()
@@ -424,16 +438,55 @@ class _TrainDialog(QWidget):
         out_row.addWidget(self._out_edit, 1)
         out_row.addWidget(browse)
         form.addRow("Save checkpoint:", out_row)
-
         layout.addLayout(form)
+
+        # Shape-type selection
+        shape_box = QGroupBox("Synthetic shape types to include")
+        shape_box.setToolTip(
+            "The U-Net learns to correct shape-from-shading artefacts on each\n"
+            "selected morphology.  Include all types that match your sample."
+        )
+        shape_layout = QVBoxLayout(shape_box)
+        shape_layout.setSpacing(3)
+        self._shape_checks: dict[str, QCheckBox] = {}
+        from acorn.analysis.sem_unet import ALL_SHAPE_TYPES
+        for key in ALL_SHAPE_TYPES:
+            cb = QCheckBox(_SHAPE_LABELS.get(key, key))
+            cb.setChecked(True)
+            self._shape_checks[key] = cb
+            shape_layout.addWidget(cb)
+
+        sel_row = QHBoxLayout()
+        all_btn  = QPushButton("Select all")
+        none_btn = QPushButton("Select none")
+        all_btn.setFixedHeight(22)
+        none_btn.setFixedHeight(22)
+        all_btn.clicked.connect(lambda: [cb.setChecked(True)
+                                          for cb in self._shape_checks.values()])
+        none_btn.clicked.connect(lambda: [cb.setChecked(False)
+                                           for cb in self._shape_checks.values()])
+        sel_row.addWidget(all_btn)
+        sel_row.addWidget(none_btn)
+        sel_row.addStretch()
+        shape_layout.addLayout(sel_row)
+        layout.addWidget(shape_box)
 
         btns = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Ok |
             QDialogButtonBox.StandardButton.Cancel
         )
-        btns.accepted.connect(self._dlg.accept)
+        btns.accepted.connect(self._validate_and_accept)
         btns.rejected.connect(self._dlg.reject)
         layout.addWidget(btns)
+
+    def _validate_and_accept(self):
+        from PyQt6.QtWidgets import QMessageBox
+        selected = [k for k, cb in self._shape_checks.items() if cb.isChecked()]
+        if not selected:
+            QMessageBox.warning(self._dlg, "Train U-Net",
+                                "Select at least one shape type.")
+            return
+        self._dlg.accept()
 
     def exec(self):
         return self._dlg.exec()
@@ -444,10 +497,12 @@ class _TrainDialog(QWidget):
             self._out_edit.setText(d)
 
     def config(self) -> dict:
+        selected = [k for k, cb in self._shape_checks.items() if cb.isChecked()]
         return {
-            "n_samples":  self._n_samples.value(),
-            "epochs":     self._epochs.value(),
-            "batch_size": self._batch.value(),
-            "image_size": self._imgsz.value(),
-            "output_dir": self._out_edit.text().strip(),
+            "n_samples":   self._n_samples.value(),
+            "epochs":      self._epochs.value(),
+            "batch_size":  self._batch.value(),
+            "image_size":  self._imgsz.value(),
+            "output_dir":  self._out_edit.text().strip(),
+            "shape_types": selected,
         }

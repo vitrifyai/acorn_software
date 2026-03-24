@@ -107,18 +107,32 @@ class _SEMHeightUNetImpl:
 # Synthetic dataset
 # ---------------------------------------------------------------------------
 
+ALL_SHAPE_TYPES = [
+    "sphere",          # plain hemisphere
+    "ellipsoid",       # tri-axial ellipsoid
+    "rough_sphere",    # sphere + band-limited surface roughness
+    "hollow",          # outer sphere shell (hollow spore / vesicle)
+    "dumbbell",        # two merged spheres — figure-8 / dividing spore
+    "waist_ellipsoid", # ellipsoid with Gaussian constriction at equator
+    "septate",         # dumbbell with a thin membrane across the waist
+]
+
+
 class SyntheticSEMDataset:
     """
     Generates (image_2ch, delta_h) pairs from random synthetic surfaces.
 
-    Height field types (randomly sampled):
-      - sphere       : h = sqrt(max(0, R^2 - r^2))
-      - ellipsoid    : h = c * sqrt(max(0, 1 - x^2/a^2 - y^2/b^2))
-      - rough sphere : sphere + band-limited Gaussian noise
-      - hollow       : outer sphere shell with hollowed-out centre
+    Shape types (any subset of ALL_SHAPE_TYPES):
+      sphere          h = sqrt(max(0, R^2 - r^2))
+      ellipsoid       h = c * sqrt(max(0, 1 - x^2/a^2 - y^2/b^2))
+      rough_sphere    sphere + band-limited Gaussian surface noise
+      hollow          outer sphere shell with hollowed-out centre
+      dumbbell        two merged spheres offset along x: max(h_left, h_right)
+      waist_ellipsoid ellipsoid * (1 - beta * exp(-x^2 / 2*sigma^2))  — pinched
+      septate         dumbbell + thin flat membrane across the constriction
 
-    Each sample is rendered through SEMForwardModel, Poisson noise is
-    added, and a fast SFS pass (n_iters=100) is run to get h_physics.
+    Each sample is rendered through the physics forward model, Poisson noise
+    is added, and a fast SFS pass (n_iters=100) produces h_physics.
     The U-Net target is delta_h = h_true - h_physics.
     """
 
@@ -128,6 +142,7 @@ class SyntheticSEMDataset:
         image_size: int = 128,
         detector_params=None,
         noise_level: float = 0.05,
+        shape_types: list | None = None,
     ):
         try:
             import torch
@@ -135,12 +150,13 @@ class SyntheticSEMDataset:
         except ImportError as exc:
             raise ImportError("PyTorch required: pip install torch") from exc
         return _SyntheticSEMDatasetImpl(
-            n_samples, image_size, detector_params, noise_level
+            n_samples, image_size, detector_params, noise_level,
+            shape_types or ALL_SHAPE_TYPES,
         )
 
 
 class _SyntheticSEMDatasetImpl:
-    def __new__(cls, n_samples, image_size, detector_params, noise_level):
+    def __new__(cls, n_samples, image_size, detector_params, noise_level, shape_types):
         import torch
         import torch.utils.data as tdata
         from acorn.analysis.sem_physics import (
@@ -149,11 +165,12 @@ class _SyntheticSEMDatasetImpl:
 
         class _DS(tdata.Dataset):
             def __init__(self) -> None:
-                self._n      = n_samples
-                self._sz     = image_size
-                self._params = detector_params or DetectorParams()
-                self._noise  = noise_level
-                self._rng    = np.random.default_rng(42)
+                self._n           = n_samples
+                self._sz          = image_size
+                self._params      = detector_params or DetectorParams()
+                self._noise       = noise_level
+                self._shape_types = shape_types if shape_types else ALL_SHAPE_TYPES
+                self._rng         = np.random.default_rng(42)
 
             def __len__(self) -> int:
                 return self._n
@@ -197,9 +214,10 @@ class _SyntheticSEMDatasetImpl:
                         "h_physics": torch.from_numpy(h_phys).unsqueeze(0)}
 
             def _gen_height(self, rng: np.random.Generator, sz: int) -> np.ndarray:
+                from scipy.ndimage import gaussian_filter
+
                 cx = rng.uniform(sz * 0.35, sz * 0.65)
                 cy = rng.uniform(sz * 0.35, sz * 0.65)
-                shape_type = rng.integers(0, 4)
 
                 xs = np.arange(sz, dtype=np.float32)
                 ys = np.arange(sz, dtype=np.float32)
@@ -207,37 +225,86 @@ class _SyntheticSEMDatasetImpl:
                 dx = X - cx
                 dy = Y - cy
 
-                if shape_type == 0:   # sphere
-                    R = rng.uniform(sz * 0.15, sz * 0.35)
-                    r2 = dx ** 2 + dy ** 2
-                    h = np.sqrt(np.maximum(0.0, R ** 2 - r2)).astype(np.float32)
+                choice = self._shape_types[rng.integers(0, len(self._shape_types))]
 
-                elif shape_type == 1:   # ellipsoid
+                if choice == "sphere":
+                    R  = rng.uniform(sz * 0.15, sz * 0.35)
+                    r2 = dx ** 2 + dy ** 2
+                    h  = np.sqrt(np.maximum(0.0, R ** 2 - r2)).astype(np.float32)
+
+                elif choice == "ellipsoid":
                     a = rng.uniform(sz * 0.15, sz * 0.35)
                     b = rng.uniform(sz * 0.15, sz * 0.35)
                     c = rng.uniform(sz * 0.10, sz * 0.30)
                     inner = 1.0 - (dx / a) ** 2 - (dy / b) ** 2
                     h = (c * np.sqrt(np.maximum(0.0, inner))).astype(np.float32)
 
-                elif shape_type == 2:   # rough sphere
+                elif choice == "rough_sphere":
                     R  = rng.uniform(sz * 0.15, sz * 0.35)
                     r2 = dx ** 2 + dy ** 2
                     h  = np.sqrt(np.maximum(0.0, R ** 2 - r2)).astype(np.float32)
-                    # Band-limited roughness
                     freq_cutoff = rng.uniform(0.05, 0.15)
                     rough = rng.standard_normal((sz, sz)).astype(np.float32)
-                    from scipy.ndimage import gaussian_filter
                     rough = gaussian_filter(rough, sigma=1.0 / (2 * math.pi * freq_cutoff + 1e-8))
                     rough *= rng.uniform(0.02, 0.08) * R
                     h = np.maximum(0.0, h + rough * (h > 0)).astype(np.float32)
 
-                else:   # hollow sphere shell
+                elif choice == "hollow":
                     R_out = rng.uniform(sz * 0.20, sz * 0.35)
                     R_in  = R_out * rng.uniform(0.5, 0.75)
                     r2    = dx ** 2 + dy ** 2
                     h_out = np.sqrt(np.maximum(0.0, R_out ** 2 - r2))
                     h_in  = np.sqrt(np.maximum(0.0, R_in  ** 2 - r2))
                     h = (h_out - h_in).clip(min=0.0).astype(np.float32)
+
+                elif choice == "dumbbell":
+                    # Two merged spheres offset along x — figure-8 / dividing cell
+                    R      = rng.uniform(sz * 0.12, sz * 0.25)
+                    offset = rng.uniform(sz * 0.10, sz * 0.22)
+                    r2_l   = (dx - offset) ** 2 + dy ** 2
+                    r2_r   = (dx + offset) ** 2 + dy ** 2
+                    h_l    = np.sqrt(np.maximum(0.0, R ** 2 - r2_l))
+                    h_r    = np.sqrt(np.maximum(0.0, R ** 2 - r2_r))
+                    h      = np.maximum(h_l, h_r).astype(np.float32)
+
+                elif choice == "waist_ellipsoid":
+                    # Ellipsoid with a Gaussian-shaped constriction at the equator.
+                    # The pinch is along x (long axis); depth and width are randomised.
+                    a    = rng.uniform(sz * 0.20, sz * 0.35)   # long semi-axis
+                    b    = rng.uniform(sz * 0.15, sz * 0.25)   # short semi-axis
+                    c    = rng.uniform(sz * 0.12, sz * 0.25)   # height scale
+                    beta = rng.uniform(0.20, 0.60)             # pinch depth [0,1]
+                    sigma_w = a * rng.uniform(0.15, 0.35)      # pinch width
+                    inner   = np.maximum(0.0, 1.0 - (dx / a) ** 2 - (dy / b) ** 2)
+                    h_base  = c * np.sqrt(inner)
+                    # Constriction: deepest at dx=0 (the equatorial cross-section)
+                    pinch   = 1.0 - beta * np.exp(-(dx ** 2) / (2.0 * sigma_w ** 2))
+                    h       = np.maximum(0.0, h_base * pinch).astype(np.float32)
+
+                elif choice == "septate":
+                    # Dumbbell with a thin flat membrane sealing the constriction.
+                    # Models a spore undergoing cytokinesis / binary fission.
+                    R      = rng.uniform(sz * 0.12, sz * 0.24)
+                    offset = rng.uniform(sz * 0.10, sz * 0.22)
+                    r2_l   = (dx - offset) ** 2 + dy ** 2
+                    r2_r   = (dx + offset) ** 2 + dy ** 2
+                    h_l    = np.sqrt(np.maximum(0.0, R ** 2 - r2_l))
+                    h_r    = np.sqrt(np.maximum(0.0, R ** 2 - r2_r))
+                    h      = np.maximum(h_l, h_r)
+                    # Septum: short flat disc in the gap between the two lobes
+                    sep_half   = rng.uniform(sz * 0.005, sz * 0.015)  # half-thickness
+                    sep_height = R * rng.uniform(0.08, 0.20)          # membrane height
+                    sep_radius = R * rng.uniform(0.55, 0.80)          # lateral extent
+                    in_gap     = np.abs(dx) < sep_half
+                    in_disc    = dy ** 2 < sep_radius ** 2
+                    septum     = sep_height * in_gap * in_disc
+                    h          = np.maximum(h, septum).astype(np.float32)
+
+                else:
+                    # Fallback to sphere for any unrecognised type
+                    R  = rng.uniform(sz * 0.15, sz * 0.30)
+                    r2 = dx ** 2 + dy ** 2
+                    h  = np.sqrt(np.maximum(0.0, R ** 2 - r2)).astype(np.float32)
 
                 return h
 
@@ -257,6 +324,7 @@ def train_sem_unet(
     lr: float = 3e-4,
     image_size: int = 128,
     detector_params=None,
+    shape_types: list | None = None,
     device: str = "auto",
     log_cb: Callable[[str], None] | None = None,
     progress_cb: Callable[[int, int], None] | None = None,
@@ -282,10 +350,13 @@ def train_sem_unet(
     from acorn.analysis.sem_physics import DetectorParams
     params = detector_params or DetectorParams()
 
+    active = shape_types or ALL_SHAPE_TYPES
+    log(f"Shape types: {', '.join(active)}")
     dataset = SyntheticSEMDataset(
         n_samples=n_samples,
         image_size=image_size,
         detector_params=params,
+        shape_types=active,
     )
 
     n_val = max(1, int(n_samples * 0.1))
