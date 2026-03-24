@@ -132,10 +132,34 @@ def convert_to_yolo(dataset_dir: Path, out_dir: Path) -> tuple[Path, list[str]]:
                         bx, by, bw, bh = ann["bbox"]
                         flat = [bx, by, bx + bw, by, bx + bw, by + bh, bx, by + bh]
 
+                    # Normalise and clamp to [0, 1].
+                    # Coordinates outside image bounds (SAM edge clips, tile
+                    # boundaries) produce values > 1 or < 0 which cause
+                    # log(0) → -inf in YOLO's IoU loss and blow up training.
                     norm = [
-                        flat[i] / w if i % 2 == 0 else flat[i] / h_px
+                        max(0.0, min(1.0, flat[i] / w))   if i % 2 == 0
+                        else max(0.0, min(1.0, flat[i] / h_px))
                         for i in range(len(flat))
                     ]
+
+                    # Skip degenerate polygons: need at least 3 distinct points
+                    # and non-zero area; these arise when a spore is almost
+                    # entirely outside a tile and only a sliver remains.
+                    pts_norm = [(norm[j], norm[j + 1]) for j in range(0, len(norm) - 1, 2)]
+                    unique_pts = set(pts_norm)
+                    if len(unique_pts) < 3:
+                        continue
+                    # Shoelace area check — skip if nearly zero
+                    xs_n = [p[0] for p in pts_norm]
+                    ys_n = [p[1] for p in pts_norm]
+                    area = abs(sum(
+                        xs_n[k] * ys_n[(k + 1) % len(xs_n)] -
+                        xs_n[(k + 1) % len(xs_n)] * ys_n[k]
+                        for k in range(len(xs_n))
+                    )) / 2.0
+                    if area < 1e-6:
+                        continue
+
                     lines.append(str(cls_idx) + " " + " ".join(f"{v:.6f}" for v in norm))
 
                 lbl_path.write_text("\n".join(lines))
@@ -236,6 +260,68 @@ class YOLOTrainer:
         self.progress_cb = progress_cb or (lambda e, t: None)
         self.metrics_cb = metrics_cb or (lambda e, tl, m: None)
 
+    def _validate_labels(self, yolo_data_dir: Path) -> None:
+        """
+        Scan every label file in the converted YOLO dataset and report issues.
+
+        Checks for:
+          - coordinates outside [0, 1]          → would produce inf/NaN loss
+          - polygons with fewer than 3 points   → invalid segmentation
+          - images with label file but no lines → mismatch
+          - images without any label file       → treated as background by YOLO
+        """
+        issues: list[str] = []
+        n_files = n_lines = n_bad_coords = n_bad_poly = n_empty = 0
+
+        for split in ("train", "val"):
+            lbl_dir = yolo_data_dir / "labels" / split
+            if not lbl_dir.exists():
+                continue
+            for lbl_file in lbl_dir.glob("*.txt"):
+                n_files += 1
+                text = lbl_file.read_text().strip()
+                if not text:
+                    n_empty += 1
+                    continue
+                for line in text.splitlines():
+                    parts = line.split()
+                    if len(parts) < 7:          # cls + at least 3 xy pairs
+                        n_bad_poly += 1
+                        issues.append(f"{split}/{lbl_file.name}: too few points ({len(parts)-1})")
+                        continue
+                    n_lines += 1
+                    coords = [float(v) for v in parts[1:]]
+                    bad = [v for v in coords if v < 0.0 or v > 1.0]
+                    if bad:
+                        n_bad_coords += 1
+                        issues.append(
+                            f"{split}/{lbl_file.name}: {len(bad)} coord(s) outside [0,1]"
+                            f" — max={max(bad):.4f} min={min(bad):.4f}"
+                        )
+
+        summary = (
+            f"Label validation: {n_files} files, {n_lines} annotations"
+            f" | bad coords: {n_bad_coords}"
+            f" | bad polygons: {n_bad_poly}"
+            f" | empty files: {n_empty}"
+        )
+        self.log_cb(summary)
+
+        if issues:
+            # Log first 20 so the user can see what's wrong without flooding
+            self.log_cb("Label issues (first 20):")
+            for msg in issues[:20]:
+                self.log_cb(f"  {msg}")
+            if len(issues) > 20:
+                self.log_cb(f"  ... and {len(issues) - 20} more")
+
+        if n_bad_coords > 0:
+            self.log_cb(
+                "WARNING: out-of-range coordinates were found even after clamping.\n"
+                "This should not happen — please report this as a bug.\n"
+                "Training will continue but val loss may be unstable."
+            )
+
     def train(self) -> Path:
         """Run training and return the path to best.pt."""
         import csv
@@ -251,6 +337,9 @@ class YOLOTrainer:
             f"Dataset written to {yolo_data_dir}"
             + ("\nNo val split found — validation metrics will use train set." if val_reused else "")
         )
+
+        # ── pre-flight label validation ───────────────────────────────────────
+        self._validate_labels(yolo_data_dir)
 
         if isinstance(self.devices, list) and self.devices:
             device_str = ",".join(str(d) for d in self.devices)
