@@ -21,15 +21,26 @@ from acorn.core.contrast import ContrastParams
 _PRESET_FILE = Path.home() / ".acorn" / "presets.json"
 
 _BUILTIN_PRESETS: dict[str, ContrastParams] = {
-    "Default (Bandpass)": ContrastParams(),
-    "Low-dose Cryo-EM": ContrastParams(
-        method="bandpass",
-        bp_low_sigma=60.0,   # broad background removal for ice-thickness gradients
-        bp_high_sigma=1.5,   # extra smoothing for low-SNR shot noise
-        gamma=0.88,          # mild brightening to reveal faint features
+    # Fourier bandpass is the standard in structural biology cryo-EM software
+    # (RELION, cryoSPARC, EMAN2) — removes ice gradient, preserves protein contrast.
+    "Default (Fourier Bandpass)": ContrastParams(),
+    "CryoEM — Low Defocus": ContrastParams(
+        method="fourier",
+        fbp_hp_px=150.0,   # wider BG removal for large-FOV micrographs
+        fbp_lp_px=3.0,     # tighter noise cutoff to reveal Thon rings
     ),
-    "Bandpass Aggressive": ContrastParams(
-        method="bandpass", bp_low_sigma=40.0, bp_high_sigma=0.5
+    "CryoEM — High Defocus": ContrastParams(
+        method="fourier",
+        fbp_hp_px=100.0,
+        fbp_lp_px=6.0,     # softer noise cut preserves low-res CTF envelope
+    ),
+    "CryoEM — Tomogram Slice": ContrastParams(
+        method="fourier",
+        fbp_hp_px=80.0,    # narrower for dense tomo data
+        fbp_lp_px=2.0,
+    ),
+    "Bandpass (Spatial)": ContrastParams(
+        method="bandpass", bp_low_sigma=100.0, bp_high_sigma=1.0
     ),
     "Percentile 0.5/99.5": ContrastParams(
         method="percentile", low_pct=0.5, high_pct=99.5
@@ -171,7 +182,8 @@ class ContrastPanel(QWidget):
         method_layout.addWidget(QLabel("Normalisation:"))
         self._method_combo = QComboBox()
         for key, label in [
-            ("bandpass",   "Bandpass (recommended)"),
+            ("fourier",    "Fourier Bandpass (CryoEM standard)"),
+            ("bandpass",   "Spatial Bandpass"),
             ("percentile", "Percentile"),
             ("sigma",      "Sigma"),
             ("adaptive",   "Adaptive CLAHE"),
@@ -183,13 +195,14 @@ class ContrastPanel(QWidget):
         # ── per-method stacked panels ─────────────────────────────────────────
         self._stack = QStackedWidget()
         self._pages: dict[str, QWidget] = {}
+        self._pages["fourier"]    = self._make_fourier_page()
         self._pages["bandpass"]   = self._make_bandpass_page()
         self._pages["percentile"] = self._make_percentile_page()
         self._pages["sigma"]      = self._make_sigma_page()
         self._pages["adaptive"]   = self._make_adaptive_page()
         for page in self._pages.values():
             self._stack.addWidget(page)
-        self._stack.setCurrentWidget(self._pages["bandpass"])
+        self._stack.setCurrentWidget(self._pages["fourier"])
         layout.addWidget(self._stack)
 
         # ── gamma ─────────────────────────────────────────────────────────────
@@ -238,6 +251,25 @@ class ContrastPanel(QWidget):
         _outer.addWidget(_scroll)
 
     # ── page builders ─────────────────────────────────────────────────────────
+
+    def _make_fourier_page(self) -> QWidget:
+        w = QWidget()
+        vb = QVBoxLayout(w)
+        vb.setContentsMargins(0, 0, 0, 0)
+        vb.setSpacing(4)
+        self._fbp_hp = _ParamRow("BG scale (px)", 0, 500, 100.0, decimals=0, step=10)
+        self._fbp_lp = _ParamRow("Noise scale (px)", 0, 20, 4.0, decimals=1, step=0.5)
+        info = QLabel(
+            "Fourier-space Gaussian bandpass — standard for cryo-EM (RELION/cryoSPARC).\n"
+            "BG scale: removes ice/support gradients at scales larger than this (px).\n"
+            "Noise scale: suppresses shot noise at scales smaller than this (px)."
+        )
+        info.setWordWrap(True)
+        info.setStyleSheet("color: palette(mid); font-size: 11px;")
+        vb.addWidget(info)
+        vb.addWidget(self._fbp_hp)
+        vb.addWidget(self._fbp_lp)
+        return w
 
     def _make_bandpass_page(self) -> QWidget:
         w = QWidget()
@@ -379,7 +411,9 @@ class ContrastPanel(QWidget):
             idx = self._method_combo.findData(p.method)
             if idx >= 0:
                 self._method_combo.setCurrentIndex(idx)
-            self._stack.setCurrentWidget(self._pages[p.method])
+            self._stack.setCurrentWidget(self._pages.get(p.method, self._pages["fourier"]))
+            self._fbp_hp.value    = p.fbp_hp_px
+            self._fbp_lp.value    = p.fbp_lp_px
             self._pct_low.value   = p.low_pct
             self._pct_high.value  = p.high_pct
             self._n_sigma.value   = p.n_sigma
@@ -394,6 +428,8 @@ class ContrastPanel(QWidget):
     def params(self) -> ContrastParams:
         return ContrastParams(
             method=self.current_method(),
+            fbp_hp_px=self._fbp_hp.value,
+            fbp_lp_px=self._fbp_lp.value,
             low_pct=self._pct_low.value,
             high_pct=self._pct_high.value,
             n_sigma=self._n_sigma.value,

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 from typing import Literal
 
@@ -17,13 +18,13 @@ except ImportError:
         from scipy.ndimage import gaussian_filter
         return gaussian_filter(arr.astype(np.float32), sigma=sigma)
 
-ContrastMethod = Literal["percentile", "sigma", "adaptive", "bandpass"]
+ContrastMethod = Literal["fourier", "percentile", "sigma", "adaptive", "bandpass"]
 
 
 @dataclass
 class ContrastParams:
     """Serialisable parameters for any contrast method."""
-    method: ContrastMethod = "bandpass"
+    method: ContrastMethod = "fourier"
     # percentile
     low_pct: float = 0.5
     high_pct: float = 99.5
@@ -31,8 +32,13 @@ class ContrastParams:
     n_sigma: float = 3.0
     # adaptive (CLAHE)
     clip_limit: float = 0.03
-    # bandpass — best for low-dose cryo-EM
-    bp_low_sigma: float = 20.0   # px radius for background subtraction
+    # Fourier-space bandpass — standard for low-dose cryo-EM structural biology
+    # hp_px: remove ice/support gradients at scales larger than this (px)
+    # lp_px: suppress shot noise at scales smaller than this (px)
+    fbp_hp_px: float = 100.0
+    fbp_lp_px: float = 4.0
+    # spatial Gaussian bandpass (legacy)
+    bp_low_sigma: float = 100.0  # px radius for background subtraction
     bp_high_sigma: float = 1.0   # px radius for noise smoothing
     # post-processing
     gamma: float = 1.0
@@ -62,6 +68,62 @@ def normalize_adaptive(arr: np.ndarray, clip_limit: float = 0.03) -> np.ndarray:
     from skimage import exposure
     img8 = ((arr - arr.min()) / (arr.max() - arr.min() + 1e-12) * 255).astype(np.uint8)
     return exposure.equalize_adapthist(img8, clip_limit=clip_limit).astype(np.float32)
+
+
+def normalize_fourier_bandpass(
+    arr: np.ndarray,
+    hp_px: float = 100.0,
+    lp_px: float = 4.0,
+) -> np.ndarray:
+    """
+    Fourier-space Gaussian bandpass — standard for low-dose cryo-EM display.
+
+    This is the approach used in RELION, cryoSPARC, and CTFFIND for micrograph
+    visualisation. Operates in frequency space so there are no ringing artifacts
+    and the filter is fully separable.
+
+    hp_px : highpass cutoff (pixels).  Removes ice-thickness/support gradients at
+            spatial scales *larger* than this value (the 50% transmission point).
+            Typical: 100-300 px.  Set 0 to disable.
+    lp_px : lowpass cutoff (pixels).  Suppresses shot noise at scales *smaller*
+            than this (50% transmission point).  Typical: 2-6 px.  Set 0 to disable.
+
+    The filter is:
+        H(f) = HP(f) * LP(f)
+        HP(f) = 1 - exp(-f² / (2 σ_hp²))     σ_hp = 1 / (hp_px * sqrt(2 ln 2))
+        LP(f) = exp(-f² / (2 σ_lp²))          σ_lp = 1 / (lp_px * sqrt(2 ln 2))
+    where f is the radial spatial frequency in cycles/px (0 … 0.5).
+    """
+    f = arr.astype(np.float32)
+    H, W = f.shape[:2]
+
+    F = np.fft.rfft2(f)
+
+    # Radial frequency grid (cycles/px), shape matches rfft2 output (H, W//2+1)
+    fy = np.fft.fftfreq(H)[:, None]      # (H, 1)
+    fx = np.fft.rfftfreq(W)[None, :]     # (1, W//2+1)
+    freq2 = (fy ** 2 + fx ** 2).astype(np.float32)
+
+    _ln2x2 = 2.0 * math.log(2.0)
+
+    if hp_px > 0:
+        sigma_hp2 = (1.0 / (hp_px * math.sqrt(_ln2x2))) ** 2
+        hp_filter = (1.0 - np.exp(-freq2 / (2.0 * sigma_hp2))).astype(np.float32)
+    else:
+        hp_filter = np.ones(freq2.shape, dtype=np.float32)
+
+    if lp_px > 0:
+        sigma_lp2 = (1.0 / (lp_px * math.sqrt(_ln2x2))) ** 2
+        lp_filter = np.exp(-freq2 / (2.0 * sigma_lp2)).astype(np.float32)
+    else:
+        lp_filter = np.ones(freq2.shape, dtype=np.float32)
+
+    result = np.fft.irfft2(F * hp_filter * lp_filter, s=(H, W))
+
+    sub = result[::4, ::4]
+    lo, hi = np.percentile(sub, 0.5), np.percentile(sub, 99.5)
+    result = np.clip(result, lo, hi)
+    return (result - lo) / (hi - lo + 1e-12)
 
 
 _bp_cache: dict = {}   # (array_id, shape, low_sigma) -> background-subtracted float32 array
@@ -132,6 +194,7 @@ def apply_contrast(arr: np.ndarray, params: ContrastParams) -> np.ndarray:
     """Apply contrast normalisation from a ContrastParams object → float32 in [0, 1]."""
     f = arr.astype(np.float32)
     dispatch = {
+        "fourier":    lambda: normalize_fourier_bandpass(f, params.fbp_hp_px, params.fbp_lp_px),
         "percentile": lambda: normalize_percentile(f, params.low_pct, params.high_pct),
         "sigma":      lambda: normalize_sigma(f, params.n_sigma),
         "adaptive":   lambda: normalize_adaptive(f, params.clip_limit),
