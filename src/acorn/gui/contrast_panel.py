@@ -21,14 +21,14 @@ from acorn.core.contrast import ContrastParams
 _PRESET_FILE = Path.home() / ".acorn" / "presets.json"
 
 _BUILTIN_PRESETS: dict[str, ContrastParams] = {
+    "Percentile 0.5/99.5 (standard annotation for low dose)": ContrastParams(
+        method="percentile", low_pct=0.5, high_pct=99.5
+    ),
     "Default (Bandpass)": ContrastParams(),
     "Bandpass Aggressive": ContrastParams(
         method="bandpass", bp_low_sigma=40.0, bp_high_sigma=0.5
     ),
     "Fourier Bandpass": ContrastParams(method="fourier", fbp_hp_px=100.0, fbp_lp_px=4.0),
-    "Percentile 0.5/99.5": ContrastParams(
-        method="percentile", low_pct=0.5, high_pct=99.5
-    ),
     "Percentile 1/99": ContrastParams(
         method="percentile", low_pct=1.0, high_pct=99.0
     ),
@@ -186,7 +186,7 @@ class ContrastPanel(QWidget):
         self._pages["adaptive"]   = self._make_adaptive_page()
         for page in self._pages.values():
             self._stack.addWidget(page)
-        self._stack.setCurrentWidget(self._pages["bandpass"])
+        self._stack.setCurrentWidget(self._pages["percentile"])
         layout.addWidget(self._stack)
 
         # ── gamma ─────────────────────────────────────────────────────────────

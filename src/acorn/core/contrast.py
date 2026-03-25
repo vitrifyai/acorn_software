@@ -24,7 +24,7 @@ ContrastMethod = Literal["fourier", "percentile", "sigma", "adaptive", "bandpass
 @dataclass
 class ContrastParams:
     """Serialisable parameters for any contrast method."""
-    method: ContrastMethod = "bandpass"
+    method: ContrastMethod = "percentile"
     # percentile
     low_pct: float = 0.5
     high_pct: float = 99.5
