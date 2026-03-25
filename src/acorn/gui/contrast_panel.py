@@ -21,27 +21,11 @@ from acorn.core.contrast import ContrastParams
 _PRESET_FILE = Path.home() / ".acorn" / "presets.json"
 
 _BUILTIN_PRESETS: dict[str, ContrastParams] = {
-    # Fourier bandpass is the standard in structural biology cryo-EM software
-    # (RELION, cryoSPARC, EMAN2) — removes ice gradient, preserves protein contrast.
-    "Default (Fourier Bandpass)": ContrastParams(),
-    "CryoEM — Low Defocus": ContrastParams(
-        method="fourier",
-        fbp_hp_px=150.0,   # wider BG removal for large-FOV micrographs
-        fbp_lp_px=3.0,     # tighter noise cutoff to reveal Thon rings
+    "Default (Bandpass)": ContrastParams(),
+    "Bandpass Aggressive": ContrastParams(
+        method="bandpass", bp_low_sigma=40.0, bp_high_sigma=0.5
     ),
-    "CryoEM — High Defocus": ContrastParams(
-        method="fourier",
-        fbp_hp_px=100.0,
-        fbp_lp_px=6.0,     # softer noise cut preserves low-res CTF envelope
-    ),
-    "CryoEM — Tomogram Slice": ContrastParams(
-        method="fourier",
-        fbp_hp_px=80.0,    # narrower for dense tomo data
-        fbp_lp_px=2.0,
-    ),
-    "Bandpass (Spatial)": ContrastParams(
-        method="bandpass", bp_low_sigma=100.0, bp_high_sigma=1.0
-    ),
+    "Fourier Bandpass": ContrastParams(method="fourier", fbp_hp_px=100.0, fbp_lp_px=4.0),
     "Percentile 0.5/99.5": ContrastParams(
         method="percentile", low_pct=0.5, high_pct=99.5
     ),
@@ -202,7 +186,7 @@ class ContrastPanel(QWidget):
         self._pages["adaptive"]   = self._make_adaptive_page()
         for page in self._pages.values():
             self._stack.addWidget(page)
-        self._stack.setCurrentWidget(self._pages["fourier"])
+        self._stack.setCurrentWidget(self._pages["bandpass"])
         layout.addWidget(self._stack)
 
         # ── gamma ─────────────────────────────────────────────────────────────
