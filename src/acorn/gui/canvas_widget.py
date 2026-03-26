@@ -16,7 +16,7 @@ from acorn.render.canvas import CryoCanvas
 
 
 # Tools that use click-drag instead of click-click
-_DRAG_TOOLS = frozenset({"line", "arrow", "circle", "rectangle", "freehand"})
+_DRAG_TOOLS = frozenset({"line", "arrow", "circle", "rectangle", "freehand", "line_profile"})
 
 # All tools that change the cursor to a crosshair
 _ANNOTATION_TOOLS = _DRAG_TOOLS | frozenset({
@@ -185,6 +185,67 @@ class CanvasWidget(QWidget):
                 zorder=21,
             )
             artists.append(txt)
+        for art in artists:
+            self.canvas._overlay_artists.append(art)
+        self.canvas.blit_annotations()
+        return artists
+
+    def add_line_profile_overlay(
+        self,
+        p1: tuple[float, float],
+        p2: tuple[float, float],
+        intensities,   # 1-D array-like, values in [0, 1]
+        color: str = "#00AAFF",
+    ) -> list:
+        """Draw an intensity profile curve directly on the image canvas.
+
+        The profile x-axis runs along the drawn line (p1→p2).
+        The curve amplitude is perpendicular to the line (25 % of line length).
+        Returns the list of matplotlib artists added so callers can remove them.
+        """
+        import numpy as np
+        ax  = self.canvas.ax
+        arr = np.asarray(intensities, dtype=np.float64)
+        n   = len(arr)
+        if n < 2:
+            return []
+
+        x1, y1 = p1
+        x2, y2 = p2
+        dx, dy = x2 - x1, y2 - y1
+        length = math.hypot(dx, dy)
+        if length < 1.0:
+            return []
+
+        ux, uy  = dx / length, dy / length   # unit along line
+        px, py  = -uy, ux                    # unit perpendicular (CCW)
+        amp     = length * 0.25              # max profile height = 25 % of line
+
+        t   = np.linspace(0.0, 1.0, n)
+        xs  = x1 + t * dx + arr * amp * px
+        ys  = y1 + t * dy + arr * amp * py
+
+        artists: list = []
+        # baseline (where the line was drawn)
+        base, = ax.plot(
+            [x1, x2], [y1, y2],
+            color=color, lw=0.8, linestyle="--", alpha=0.55, zorder=14,
+        )
+        # profile curve
+        curve, = ax.plot(
+            xs, ys,
+            color=color, lw=1.5, alpha=0.92, zorder=15,
+        )
+        # tick marks at start and end
+        for px_i, py_i in [(x1, y1), (x2, y2)]:
+            tick, = ax.plot(
+                [px_i, px_i + amp * 0.05 * px],
+                [py_i, py_i + amp * 0.05 * py],
+                color=color, lw=1.0, alpha=0.7, zorder=14,
+            )
+            artists.append(tick)
+
+        artists = [base, curve] + artists
         for art in artists:
             self.canvas._overlay_artists.append(art)
         self.canvas.blit_annotations()

@@ -1691,7 +1691,7 @@ class MainWindow(QMainWindow):
 
         # Drag tools (line/arrow/circle/rectangle/freehand) are handled by
         # _on_drag_commit / _on_freehand_commit; ignore any stray click_events.
-        if tool in ("none", "line", "arrow", "circle", "rectangle", "freehand"):
+        if tool in ("none", "line", "arrow", "circle", "rectangle", "freehand", "line_profile"):
             return
 
         # ── single-click tools ────────────────────────────────────────────────
@@ -1715,11 +1715,11 @@ class MainWindow(QMainWindow):
         # ── two-click measurement tools ───────────────────────────────────────
         self._click_buffer.append((x, y))
 
-        if tool in ("distance", "line_profile"):
+        if tool == "distance":
             if len(self._click_buffer) == 1:
                 self._canvas_widget.set_rubber_band_pts(list(self._click_buffer))
                 self._statusbar.showMessage(
-                    f"{tool.capitalize()}: click 1/2 placed — click endpoint"
+                    "Distance: click 1/2 placed — click endpoint"
                 )
                 return
             p1, p2 = self._click_buffer[0], self._click_buffer[1]
@@ -1740,12 +1740,6 @@ class MainWindow(QMainWindow):
                         f"Distance: {m.distance_px:.1f} px  "
                         "(pixel size not set — click the px button to calibrate)"
                     )
-            elif tool == "line_profile":
-                if norm is not None:
-                    result = self._engine.line_profile(p1, p2, norm)
-                    from acorn.gui.dialogs import LineProfileDialog
-                    dlg = LineProfileDialog(result, parent=self)
-                    dlg.exec()
 
         # ── three-click tools ─────────────────────────────────────────────────
         elif tool == "angle":
@@ -1816,6 +1810,22 @@ class MainWindow(QMainWindow):
             store.add(RectangleAnnotation(x0=rx0, y0=ry0, x1=rx1, y1=ry1,
                                           color=col, linewidth=lw,
                                           linestyle=self._ann_panel.linestyle))
+        elif tool == "line_profile":
+            norm = self._canvas_widget.canvas.norm_image
+            if norm is not None:
+                result = self._engine.line_profile((x1, y1), (x2, y2), norm)
+                # Draw squiggly directly on the image canvas (ImageJ style)
+                self._canvas_widget.add_line_profile_overlay(
+                    (x1, y1), (x2, y2), result.intensities, color=col
+                )
+                self._statusbar.showMessage(
+                    f"Line profile: {result.length_nm:.1f} nm  "
+                    f"({len(result.intensities)} points)"
+                )
+                # Show dialog for CSV/PNG export of profile data
+                from acorn.gui.dialogs import LineProfileDialog
+                dlg = LineProfileDialog(result, parent=self)
+                dlg.exec()
 
     def _on_freehand_commit(self, pts: list) -> None:
         """Called when a freehand stroke is released."""
