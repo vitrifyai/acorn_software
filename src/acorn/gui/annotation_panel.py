@@ -33,11 +33,12 @@ class AnnotationPanel(QWidget):
     Emits ``tool_changed(str)`` when the active tool changes.
     """
 
-    tool_changed             = pyqtSignal(str)
-    undo_requested           = pyqtSignal()
-    clear_requested          = pyqtSignal()
+    tool_changed              = pyqtSignal(str)
+    undo_requested            = pyqtSignal()
+    clear_requested           = pyqtSignal()
+    clear_profiles_requested  = pyqtSignal()
     delete_selected_requested = pyqtSignal()
-    relabel_requested        = pyqtSignal(str)   # new label for selected annotation
+    relabel_requested         = pyqtSignal(str)   # new label for selected annotation
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -166,6 +167,11 @@ class AnnotationPanel(QWidget):
         btn_row.addWidget(undo_btn)
         btn_row.addWidget(clear_btn)
         layout.addLayout(btn_row)
+
+        clear_prof_btn = QPushButton("Clear Profiles")
+        clear_prof_btn.setStyleSheet("background:#7b3f00;color:white;")
+        clear_prof_btn.setToolTip("Remove all line profile overlays from the canvas")
+        layout.addWidget(clear_prof_btn)
         layout.addStretch()
 
         # ── connect ───────────────────────────────────────────────────────────
@@ -175,6 +181,7 @@ class AnnotationPanel(QWidget):
             )
         undo_btn.clicked.connect(self.undo_requested)
         clear_btn.clicked.connect(self.clear_requested)
+        clear_prof_btn.clicked.connect(self.clear_profiles_requested)
 
         _scroll = QScrollArea()
         _scroll.setWidgetResizable(True)

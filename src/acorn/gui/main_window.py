@@ -816,6 +816,9 @@ class MainWindow(QMainWindow):
         self._contrast_panel.contrast_changed.connect(self._on_contrast_changed)
         self._ann_panel.undo_requested.connect(self._on_undo)
         self._ann_panel.clear_requested.connect(self._on_clear_annotations)
+        self._ann_panel.clear_profiles_requested.connect(
+            self._canvas_widget.clear_line_profiles
+        )
         self._ann_panel.delete_selected_requested.connect(self._on_delete_selected)
         self._ann_panel.relabel_requested.connect(self._on_relabel_selected)
         self._ann_panel.tool_changed.connect(self._canvas_widget.set_tool)

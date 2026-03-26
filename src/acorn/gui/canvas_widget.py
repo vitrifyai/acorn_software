@@ -117,6 +117,7 @@ class CanvasWidget(QWidget):
         # ── persistent region overlays ────────────────────────────────────────
         self._exclude_artists: list = []
         self._crop_artists: list = []
+        self._profile_overlays: list[list] = []   # groups of artists per profile
 
         # ── annotation selection / move / resize state ────────────────────────
         self._moving_ann = None
@@ -248,8 +249,24 @@ class CanvasWidget(QWidget):
         artists = [base, curve] + artists
         for art in artists:
             self.canvas._overlay_artists.append(art)
+        self._profile_overlays.append(artists)
         self.canvas.blit_annotations()
         return artists
+
+    def clear_line_profiles(self) -> None:
+        """Remove all line profile overlays drawn on the current image."""
+        for group in self._profile_overlays:
+            for art in group:
+                try:
+                    art.remove()
+                except Exception:
+                    pass
+                try:
+                    self.canvas._overlay_artists.remove(art)
+                except ValueError:
+                    pass
+        self._profile_overlays.clear()
+        self.canvas.blit_annotations()
 
     def remove_artist(self, artist) -> None:
         """Remove a single matplotlib artist (and its overlay registration) and redraw."""
@@ -402,6 +419,7 @@ class CanvasWidget(QWidget):
         self._move_start = None
         self._resizing_ann = None
         self._resize_handle = None
+        self._profile_overlays.clear()
 
     def refresh(self) -> None:
         self._mpl_canvas.draw_idle()
