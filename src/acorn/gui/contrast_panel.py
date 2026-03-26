@@ -186,6 +186,11 @@ class ContrastPanel(QWidget):
         self._pages["adaptive"]   = self._make_adaptive_page()
         for page in self._pages.values():
             self._stack.addWidget(page)
+        idx = self._method_combo.findData("percentile")
+        if idx >= 0:
+            self._method_combo.blockSignals(True)
+            self._method_combo.setCurrentIndex(idx)
+            self._method_combo.blockSignals(False)
         self._stack.setCurrentWidget(self._pages["percentile"])
         layout.addWidget(self._stack)
 
@@ -260,7 +265,7 @@ class ContrastPanel(QWidget):
         vb = QVBoxLayout(w)
         vb.setContentsMargins(0, 0, 0, 0)
         vb.setSpacing(4)
-        self._bp_low  = _ParamRow("BG radius (px)", 0, 150, 20.0, decimals=0, step=1)
+        self._bp_low  = _ParamRow("BG radius (px)", 0, 500, 100.0, decimals=0, step=10)
         self._bp_high = _ParamRow("Smooth (px)", 0, 10, 1.0, decimals=2, step=0.25)
         info = QLabel("Removes ice gradient and suppresses shot noise.")
         info.setWordWrap(True)
