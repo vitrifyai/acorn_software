@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 import numpy as np
+from PyQt6.QtGui import QColor
 from PyQt6.QtWidgets import (
-    QDialog, QDialogButtonBox, QFileDialog, QHBoxLayout,
+    QColorDialog, QDialog, QDialogButtonBox, QFileDialog, QHBoxLayout,
     QLabel, QPushButton, QVBoxLayout,
 )
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvasQtAgg
@@ -24,8 +25,9 @@ class LineProfileDialog(QDialog):
     def __init__(self, result, parent=None):
         super().__init__(parent)
         self.setWindowTitle("Line Profile")
-        self.resize(620, 340)
+        self.resize(680, 380)
         self._result = result
+        self._line_color = "#00AAFF"
 
         layout = QVBoxLayout(self)
 
@@ -47,12 +49,23 @@ class LineProfileDialog(QDialog):
 
         # buttons
         btn_row = QHBoxLayout()
+        color_btn = QPushButton("Line color")
+        color_btn.clicked.connect(self._pick_color)
+        self._color_swatch = QPushButton()
+        self._color_swatch.setFixedWidth(28)
+        self._color_swatch.setStyleSheet(
+            f"background-color: {self._line_color}; border: 1px solid #888;"
+        )
+        self._color_swatch.clicked.connect(self._pick_color)
         export_btn = QPushButton("Export CSV")
         export_btn.clicked.connect(self._export_csv)
         export_img_btn = QPushButton("Export PNG")
         export_img_btn.clicked.connect(self._export_png)
         close_btn = QPushButton("Close")
         close_btn.clicked.connect(self.accept)
+        btn_row.addWidget(self._color_swatch)
+        btn_row.addWidget(color_btn)
+        btn_row.addSpacing(12)
         btn_row.addWidget(export_btn)
         btn_row.addWidget(export_img_btn)
         btn_row.addStretch()
@@ -62,7 +75,7 @@ class LineProfileDialog(QDialog):
     def _plot(self, result) -> None:
         ax = self._ax
         ax.clear()
-        ax.plot(result.distances_nm, result.intensities, color="#00AAFF", lw=1.2)
+        ax.plot(result.distances_nm, result.intensities, color=self._line_color, lw=1.2)
         ax.set_xlabel("Distance (nm)")
         ax.set_ylabel("Normalised intensity")
         ax.set_title("Line Profile")
@@ -70,6 +83,17 @@ class LineProfileDialog(QDialog):
         ax.grid(True, alpha=0.3)
         self._fig.tight_layout()
         self._canvas.draw()
+
+    def _pick_color(self) -> None:
+        qcol = QColorDialog.getColor(
+            QColor(self._line_color), self, "Line color"
+        )
+        if qcol.isValid():
+            self._line_color = qcol.name()
+            self._color_swatch.setStyleSheet(
+                f"background-color: {self._line_color}; border: 1px solid #888;"
+            )
+            self._plot(self._result)
 
     def _export_csv(self) -> None:
         path, _ = QFileDialog.getSaveFileName(

@@ -143,6 +143,13 @@ class CanvasWidget(QWidget):
         self._tool = tool
         self._cancel_drag()
         self.clear_rubber_band()
+        # Deactivate matplotlib toolbar zoom/pan so annotation clicks go through
+        if tool != "none":
+            from matplotlib.backend_bases import _Mode
+            if self._toolbar.mode is _Mode.ZOOM:
+                self._toolbar.zoom()
+            elif self._toolbar.mode is _Mode.PAN:
+                self._toolbar.pan()
         self._sync_cursor()
 
     def _sync_cursor(self) -> None:
