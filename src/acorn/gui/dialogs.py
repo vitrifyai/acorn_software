@@ -106,6 +106,11 @@ class LineProfileDialog(QDialog):
             for d, i in zip(self._result.distances_nm, self._result.intensities):
                 f.write(f"{d:.6f},{i:.8f}\n")
 
+    def update(self, result) -> None:
+        """Refresh the plot with new profile data (live drag update)."""
+        self._result = result
+        self._plot(result)
+
     def _export_png(self) -> None:
         path, _ = QFileDialog.getSaveFileName(
             self, "Save PNG", "line_profile.png", "PNG files (*.png)"

@@ -43,6 +43,7 @@ class CanvasWidget(QWidget):
     click_event               = pyqtSignal(float, float, int)
     # tool, x1, y1, x2, y2, shift_held
     drag_commit               = pyqtSignal(str, float, float, float, float, bool)
+    line_profile_preview      = pyqtSignal(float, float, float, float)  # live drag update
     freehand_commit           = pyqtSignal(object)   # list of (x, y) tuples
     sam_box_commit            = pyqtSignal(float, float, float, float)  # drag-drawn SAM box
     flat_region_picked        = pyqtSignal(float, float, float, float)  # one-shot rect pick
@@ -118,6 +119,7 @@ class CanvasWidget(QWidget):
         self._exclude_artists: list = []
         self._crop_artists: list = []
         self._profile_overlays: list[list] = []   # groups of artists per profile
+        self._live_profile_artists: list = []      # replaced on every drag motion
 
         # ── annotation selection / move / resize state ────────────────────────
         self._moving_ann = None
@@ -227,31 +229,66 @@ class CanvasWidget(QWidget):
         ys  = y1 + t * dy + arr * amp * py
 
         artists: list = []
-        # baseline (where the line was drawn)
-        base, = ax.plot(
-            [x1, x2], [y1, y2],
-            color=color, lw=0.8, linestyle="--", alpha=0.55, zorder=14,
-        )
-        # profile curve
-        curve, = ax.plot(
-            xs, ys,
-            color=color, lw=1.5, alpha=0.92, zorder=15,
-        )
-        # tick marks at start and end
-        for px_i, py_i in [(x1, y1), (x2, y2)]:
+        # profile curve only (no baseline)
+        curve, = ax.plot(xs, ys, color=color, lw=1.5, alpha=0.92, zorder=15)
+        # small tick marks at endpoints
+        for ex, ey in [(x1, y1), (x2, y2)]:
             tick, = ax.plot(
-                [px_i, px_i + amp * 0.05 * px],
-                [py_i, py_i + amp * 0.05 * py],
+                [ex, ex + amp * 0.05 * px],
+                [ey, ey + amp * 0.05 * py],
                 color=color, lw=1.0, alpha=0.7, zorder=14,
             )
             artists.append(tick)
-
-        artists = [base, curve] + artists
+        artists = [curve] + artists
         for art in artists:
             self.canvas._overlay_artists.append(art)
         self._profile_overlays.append(artists)
         self.canvas.blit_annotations()
         return artists
+
+    def update_live_profile(
+        self,
+        p1: tuple[float, float],
+        p2: tuple[float, float],
+        intensities,
+        color: str = "#00AAFF",
+    ) -> None:
+        """Replace the live (in-progress) profile overlay with updated data."""
+        import numpy as np
+        self._clear_live_profile()
+        arr = np.asarray(intensities, dtype=np.float64)
+        n = len(arr)
+        if n < 2:
+            return
+        x1, y1 = p1
+        x2, y2 = p2
+        dx, dy = x2 - x1, y2 - y1
+        length = math.hypot(dx, dy)
+        if length < 1.0:
+            return
+        ux, uy = dx / length, dy / length
+        px, py = -uy, ux
+        amp = length * 0.25
+        t = np.linspace(0.0, 1.0, n)
+        xs = x1 + t * dx + arr * amp * px
+        ys = y1 + t * dy + arr * amp * py
+        ax = self.canvas.ax
+        curve, = ax.plot(xs, ys, color=color, lw=1.5, alpha=0.92, zorder=15)
+        self._live_profile_artists = [curve]
+        self.canvas._overlay_artists.append(curve)
+        self.canvas.blit_annotations()
+
+    def _clear_live_profile(self) -> None:
+        for art in self._live_profile_artists:
+            try:
+                art.remove()
+            except Exception:
+                pass
+            try:
+                self.canvas._overlay_artists.remove(art)
+            except ValueError:
+                pass
+        self._live_profile_artists.clear()
 
     def clear_line_profiles(self) -> None:
         """Remove all line profile overlays drawn on the current image."""
@@ -437,6 +474,7 @@ class CanvasWidget(QWidget):
         self._drag_start = None
         self._freehand_pts.clear()
         self._clear_preview()
+        self._clear_live_profile()
 
     def _clear_preview(self) -> None:
         for artist in self._preview_artists:
@@ -519,7 +557,7 @@ class CanvasWidget(QWidget):
         """Create or update the temporary preview artist for drag tools."""
         ax = self.canvas.ax
 
-        if tool in ("line", "arrow"):
+        if tool in ("line", "arrow", "line_profile"):
             if not self._preview_artists:
                 line, = ax.plot(
                     [x1, x2], [y1, y2],
@@ -734,6 +772,8 @@ class CanvasWidget(QWidget):
             if self._shift_held:
                 x2, y2 = self._apply_shift_constraint(self._tool, x1, y1, x2, y2)
             self._update_drag_preview(self._tool, x1, y1, x2, y2)
+            if self._tool == "line_profile":
+                self.line_profile_preview.emit(x1, y1, x2, y2)
 
     def _on_release(self, event) -> None:
         # ── flat-region one-shot pick ─────────────────────────────────────────

@@ -819,6 +819,8 @@ class MainWindow(QMainWindow):
         self._ann_panel.clear_profiles_requested.connect(
             self._canvas_widget.clear_line_profiles
         )
+        self._canvas_widget.line_profile_preview.connect(self._on_line_profile_preview)
+        self._live_profile_dlg = None
         self._ann_panel.delete_selected_requested.connect(self._on_delete_selected)
         self._ann_panel.relabel_requested.connect(self._on_relabel_selected)
         self._ann_panel.tool_changed.connect(self._canvas_widget.set_tool)
@@ -1817,7 +1819,8 @@ class MainWindow(QMainWindow):
             norm = self._canvas_widget.canvas.norm_image
             if norm is not None:
                 result = self._engine.line_profile((x1, y1), (x2, y2), norm)
-                # Draw squiggly directly on the image canvas (ImageJ style)
+                # Clear live preview, commit as permanent overlay
+                self._canvas_widget._clear_live_profile()
                 self._canvas_widget.add_line_profile_overlay(
                     (x1, y1), (x2, y2), result.intensities, color=col
                 )
@@ -1825,10 +1828,30 @@ class MainWindow(QMainWindow):
                     f"Line profile: {result.length_nm:.1f} nm  "
                     f"({len(result.intensities)} points)"
                 )
-                # Show dialog for CSV/PNG export of profile data
+                # Update the live dialog or open it if closed
                 from acorn.gui.dialogs import LineProfileDialog
-                dlg = LineProfileDialog(result, parent=self)
-                dlg.exec()
+                if self._live_profile_dlg is None or not self._live_profile_dlg.isVisible():
+                    self._live_profile_dlg = LineProfileDialog(result, parent=self)
+                    self._live_profile_dlg.show()
+                else:
+                    self._live_profile_dlg.update(result)
+
+    def _on_line_profile_preview(self, x1: float, y1: float, x2: float, y2: float) -> None:
+        """Called on every drag-motion when line_profile tool is active."""
+        norm = self._canvas_widget.canvas.norm_image
+        if norm is None:
+            return
+        col = self._ann_panel.color
+        result = self._engine.line_profile((x1, y1), (x2, y2), norm)
+        self._canvas_widget.update_live_profile(
+            (x1, y1), (x2, y2), result.intensities, color=col
+        )
+        from acorn.gui.dialogs import LineProfileDialog
+        if self._live_profile_dlg is None or not self._live_profile_dlg.isVisible():
+            self._live_profile_dlg = LineProfileDialog(result, parent=self)
+            self._live_profile_dlg.show()
+        else:
+            self._live_profile_dlg.update(result)
 
     def _on_freehand_commit(self, pts: list) -> None:
         """Called when a freehand stroke is released."""
