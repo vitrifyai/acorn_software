@@ -952,18 +952,21 @@ class MainWindow(QMainWindow):
     # ── file opening ──────────────────────────────────────────────────────────
 
     def _open_files_dialog(self) -> None:
-        paths, _ = QFileDialog.getOpenFileNames(
-            self, "Open image file(s)", "",
-            "All supported (*.dm4 *.tif *.tiff *.mrc *.mrcs *.png *.jpg *.jpeg);;"
-            "DM4 (*.dm4);;"
-            "TIFF (*.tif *.tiff);;"
-            "MRC (*.mrc *.mrcs);;"
-            "Images (*.png *.jpg *.jpeg);;"
+        dlg = QFileDialog(self, "Open image file(s)")
+        dlg.setOptions(QFileDialog.Option.DontUseNativeDialog)
+        dlg.setFileMode(QFileDialog.FileMode.ExistingFiles)
+        dlg.setNameFilters([
+            "All supported (*.dm4 *.tif *.tiff *.mrc *.mrcs *.png *.jpg *.jpeg)",
+            "DM4 (*.dm4)",
+            "TIFF (*.tif *.tiff)",
+            "MRC (*.mrc *.mrcs)",
+            "Images (*.png *.jpg *.jpeg)",
             "All files (*)",
-            options=QFileDialog.Option.DontUseNativeDialog,
-        )
-        if paths:
-            self.open_files([Path(p) for p in paths])
+        ])
+        if dlg.exec():
+            paths = dlg.selectedFiles()
+            if paths:
+                self.open_files([Path(p) for p in paths])
 
     def _pick_directory(self, title: str = "Select folder") -> str:
         """
