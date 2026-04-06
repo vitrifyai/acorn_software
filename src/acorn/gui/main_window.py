@@ -960,6 +960,7 @@ class MainWindow(QMainWindow):
             "MRC (*.mrc *.mrcs);;"
             "Images (*.png *.jpg *.jpeg);;"
             "All files (*)",
+            options=QFileDialog.Option.DontUseNativeDialog,
         )
         if paths:
             self.open_files([Path(p) for p in paths])
@@ -1066,6 +1067,71 @@ class MainWindow(QMainWindow):
             path.write_text(json.dumps(data))
         except OSError:
             pass  # NAS write failure — silently skip, in-memory state is preserved
+        self._save_annotated_overlay(idx)
+
+    def _save_annotated_overlay(self, idx: int) -> None:
+        """Render the current image with annotations overlaid and save to annotated/ subfolder.
+
+        Saves to: {image_parent}/annotated/{stem}_annotated.png
+        Only runs when idx matches the currently displayed image (norm array is in memory).
+        Silently skips if the norm image is unavailable or PIL is not installed.
+        """
+        if idx != self._img_idx:
+            return
+        norm = self._canvas_widget.canvas.norm_image
+        if norm is None:
+            return
+        if idx < 0 or idx >= len(self._image_paths):
+            return
+        src_path = self._image_paths[idx]
+        try:
+            import numpy as np
+            from PIL import Image as _PILImage, ImageDraw as _ImageDraw
+        except ImportError:
+            return
+
+        img8 = (np.clip(norm, 0.0, 1.0) * 255).astype(np.uint8)
+        if img8.ndim == 2:
+            pil_img = _PILImage.fromarray(img8, "L").convert("RGB")
+        else:
+            pil_img = _PILImage.fromarray(img8).convert("RGB")
+
+        draw = _ImageDraw.Draw(pil_img)
+
+        def _hex_to_rgb(hex_color: str) -> tuple:
+            h = hex_color.lstrip("#")
+            if len(h) == 3:
+                h = "".join(c * 2 for c in h)
+            try:
+                return (int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16))
+            except ValueError:
+                return (255, 140, 0)
+
+        for ann in self._canvas_widget.canvas.store:
+            color = _hex_to_rgb(getattr(ann, "color", "#FF8C00"))
+            lw = max(1, int(getattr(ann, "linewidth", 2.0)))
+            t = ann.type
+            if t == "roi":
+                if len(ann.vertices) >= 2:
+                    pts = [tuple(v) for v in ann.vertices]
+                    draw.line(pts + [pts[0]], fill=color, width=lw)
+            elif t == "circle":
+                x0, y0 = ann.cx - ann.r, ann.cy - ann.r
+                x1, y1 = ann.cx + ann.r, ann.cy + ann.r
+                draw.ellipse([x0, y0, x1, y1], outline=color, width=lw)
+            elif t in ("line", "arrow", "distance", "angle"):
+                if hasattr(ann, "p1") and hasattr(ann, "p2"):
+                    draw.line([tuple(ann.p1), tuple(ann.p2)], fill=color, width=lw)
+            elif t == "rectangle":
+                draw.rectangle([ann.x0, ann.y0, ann.x1, ann.y1], outline=color, width=lw)
+
+        try:
+            out_dir = src_path.parent / "annotated"
+            out_dir.mkdir(exist_ok=True)
+            out_path = out_dir / f"{src_path.stem}_annotated.png"
+            pil_img.save(str(out_path))
+        except OSError:
+            pass  # NAS write failure — silently skip
 
     def _autoload_sidecar(self, idx: int) -> Optional[tuple]:
         """Load sidecar file for idx. Returns (annotations, pixel_size_nm_or_None) or None."""
