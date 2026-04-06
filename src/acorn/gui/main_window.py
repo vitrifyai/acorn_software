@@ -854,7 +854,9 @@ class MainWindow(QMainWindow):
         self._sam_panel.auto_segment_requested.connect(self._on_sam_auto_segment)
         self._sam_panel.point_prompt_mode_set.connect(self._on_sam_point_mode)
         self._sam_panel.box_prompt_mode_set.connect(self._on_sam_box_mode)
+        self._sam_panel.neg_box_prompt_mode_set.connect(self._on_sam_neg_box_mode)
         self._sam_panel.scribble_mode_set.connect(self._on_sam_scribble_mode)
+        self._sam_panel.scribble_neg_mode_set.connect(self._on_sam_neg_scribble_mode)
         self._sam_panel.prompt_mode_cleared.connect(lambda: setattr(self, "_sam_mode", None))
         self._sam_panel.commit_new_requested.connect(self._on_sam_commit_new)
         self._sam_panel.undo_point_requested.connect(self._on_sam_undo_point)
@@ -1927,10 +1929,10 @@ class MainWindow(QMainWindow):
         if len(pts) < 2:
             return
         # SAM scribble mode: convert stroke to point prompts
-        if (self._sam_mode == "scribble"
+        if (self._sam_mode in ("scribble", "scribble_neg")
                 and self._sam_predictor is not None
                 and self._sam_predictor.is_loaded):
-            self._on_sam_scribble_commit(pts)
+            self._on_sam_scribble_commit(pts, positive=(self._sam_mode == "scribble"))
             return
         if len(pts) < 3:
             return
@@ -1961,8 +1963,12 @@ class MainWindow(QMainWindow):
                 f"Freehand ROI{label_str} added (no image — stats unavailable)"
             )
 
-    def _on_sam_scribble_commit(self, pts: list) -> None:
-        """Convert a freehand scribble stroke into SAM positive point prompts."""
+    def _on_sam_scribble_commit(self, pts: list, positive: bool = True) -> None:
+        """Convert a freehand scribble stroke into SAM point prompts.
+
+        positive=True  → foreground prompts (label 1)
+        positive=False → background/negative prompts (label 0)
+        """
         if self._sam_busy():
             self._sam_panel.set_sam_status("SAM is running — please wait.")
             return
@@ -1975,10 +1981,11 @@ class MainWindow(QMainWindow):
             return
 
         point_label = self._sam_panel.point_label
+        label_int = 1 if positive else 0
         for x, y in sampled:
             self._sam_prompt_points.append((x, y))
-            self._sam_prompt_labels.append(1)
-            markers = self._canvas_widget.add_sam_point_marker(x, y, True, label="")
+            self._sam_prompt_labels.append(label_int)
+            markers = self._canvas_widget.add_sam_point_marker(x, y, positive, label="")
             self._sam_point_artists.append(markers)
 
         points_snap = list(self._sam_prompt_points)
@@ -2721,9 +2728,26 @@ class MainWindow(QMainWindow):
     def _on_sam_scribble_mode(self) -> None:
         self._sam_mode      = "scribble"
         self._sam_box_click = None
-        self._canvas_widget.set_tool("freehand")   # reuse freehand canvas tool
+        self._canvas_widget.set_tool("freehand")
         self._statusbar.showMessage(
             "SAM scribble: draw along the feature — stroke points become positive prompts"
+        )
+
+    def _on_sam_neg_scribble_mode(self) -> None:
+        self._sam_mode      = "scribble_neg"
+        self._sam_box_click = None
+        self._canvas_widget.set_tool("freehand")
+        self._statusbar.showMessage(
+            "SAM negative scribble: draw over background — stroke points become negative prompts"
+        )
+
+    def _on_sam_neg_box_mode(self) -> None:
+        self._sam_mode      = "neg_box"
+        self._sam_box_click = None
+        self._canvas_widget.clear_sam_box_anchor()
+        self._canvas_widget.set_tool("sam")
+        self._statusbar.showMessage(
+            "SAM negative box: drag over background area to add negative prompts at its centre"
         )
 
     def _on_sam_accept(self) -> None:
@@ -3056,6 +3080,61 @@ class MainWindow(QMainWindow):
                 f"Crop region set: ({self._sam_crop_region[0]:.0f}, {self._sam_crop_region[1]:.0f}) — "
                 f"({self._sam_crop_region[2]:.0f}, {self._sam_crop_region[3]:.0f})"
             )
+            return
+
+        if self._sam_mode == "neg_box":
+            # Add the centre of the dragged box as a negative point prompt
+            cx = (x0 + x1) / 2.0
+            cy = (y0 + y1) / 2.0
+            self._sam_prompt_points.append((cx, cy))
+            self._sam_prompt_labels.append(0)
+            markers = self._canvas_widget.add_sam_point_marker(cx, cy, False, label="")
+            self._sam_point_artists.append(markers)
+            if (self._sam_predictor is not None and self._sam_predictor.is_loaded
+                    and not self._sam_busy()):
+                img8, ox, oy = self._get_sam_working_image()
+                if img8 is not None:
+                    points_snap = list(self._sam_prompt_points)
+                    labels_snap = list(self._sam_prompt_labels)
+                    points_for_sam = [(px - ox, py - oy) for px, py in points_snap]
+                    self._sam_panel.set_sam_status("Running SAM with negative box point…")
+
+                    def _run_nb():
+                        return self._sam_predictor.predict_points(
+                            img8, points_for_sam, labels=labels_snap
+                        )
+
+                    def _done_nb(masks):
+                        if not masks:
+                            self._sam_panel.set_sam_status("No mask — add a positive point first.")
+                            return
+                        store = self._canvas_widget.canvas.store
+                        if self._sam_current_preview is not None:
+                            store.undo()
+                            if self._sam_current_preview in self._pending_sam_masks:
+                                self._pending_sam_masks.remove(self._sam_current_preview)
+                            self._sam_current_preview = None
+                        vertices = self._sam_predictor.mask_to_polygon(masks[0])
+                        if ox != 0 or oy != 0:
+                            vertices = [(vx + ox, vy + oy) for vx, vy in vertices]
+                        if len(vertices) >= 3:
+                            point_label = self._sam_panel.point_label
+                            roi = ROIAnnotation(
+                                vertices=vertices, area_nm2=0.0, stats={},
+                                color=self._sam_color_for_label(point_label), linewidth=1.5,
+                                label=point_label,
+                            )
+                            store.add(roi)
+                            self._pending_sam_masks.append(roi)
+                            self._sam_current_preview = roi
+                        self._sam_panel.set_sam_status("Updated mask with negative box point.")
+
+                    self._sam_thread = SAMThread(_run_nb, self)
+                    self._sam_thread.finished.connect(_done_nb)
+                    self._sam_thread.error.connect(
+                        lambda e: self._sam_panel.set_sam_status(f"Error: {e}")
+                    )
+                    self._sam_thread.start()
             return
 
         if self._sam_mode != "box":

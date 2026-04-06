@@ -86,7 +86,9 @@ class SAMPanel(QWidget):
     auto_segment_requested  = pyqtSignal()
     point_prompt_mode_set   = pyqtSignal(bool)               # True = positive, False = negative
     box_prompt_mode_set     = pyqtSignal()
+    neg_box_prompt_mode_set = pyqtSignal()                   # box → negative SAM prompts
     scribble_mode_set       = pyqtSignal()                   # freehand stroke → SAM prompts
+    scribble_neg_mode_set   = pyqtSignal()                   # freehand stroke → negative SAM prompts
     prompt_mode_cleared     = pyqtSignal()                   # all mode buttons unchecked
     commit_new_requested    = pyqtSignal()                   # keep current preview, start next object
     clear_points_requested  = pyqtSignal()                   # discard accumulated points + preview
@@ -236,24 +238,47 @@ class SAMPanel(QWidget):
         self._mode_box_btn.setToolTip("Click two corners to define a bounding box prompt")
         self._mode_box_btn.clicked.connect(self._on_box_clicked)
 
-        self._mode_scribble_btn = QPushButton("Scribble")
+        self._mode_scribble_btn = QPushButton("+ Scribble")
         self._mode_scribble_btn.setCheckable(True)
         self._mode_scribble_btn.setStyleSheet("background:#0e7490;color:white;")
         self._mode_scribble_btn.setToolTip(
-            "Draw a freehand stroke along a feature (e.g. membrane layer).\n"
-            "Points sampled along the stroke become positive SAM prompts.\n"
-            "You can draw multiple strokes to refine the mask."
+            "Draw a freehand stroke along a feature.\n"
+            "Points sampled along the stroke become positive SAM prompts."
         )
         self._mode_scribble_btn.clicked.connect(self._on_scribble_clicked)
+
+        self._mode_neg_scribble_btn = QPushButton("- Scribble")
+        self._mode_neg_scribble_btn.setCheckable(True)
+        self._mode_neg_scribble_btn.setStyleSheet("background:#7b2d2d;color:white;")
+        self._mode_neg_scribble_btn.setToolTip(
+            "Draw a freehand stroke over background areas.\n"
+            "Points sampled along the stroke become negative SAM prompts\n"
+            "(tells SAM to exclude this region from the mask)."
+        )
+        self._mode_neg_scribble_btn.clicked.connect(self._on_neg_scribble_clicked)
+
+        self._mode_neg_box_btn = QPushButton("- Box")
+        self._mode_neg_box_btn.setCheckable(True)
+        self._mode_neg_box_btn.setStyleSheet("background:#6d3a8a;color:white;")
+        self._mode_neg_box_btn.setToolTip(
+            "Drag a box over a background region.\n"
+            "SAM will treat the centre of this box as a negative prompt\n"
+            "(pushes the mask boundary away from this area)."
+        )
+        self._mode_neg_box_btn.clicked.connect(self._on_neg_box_clicked)
 
         mode_row1 = QHBoxLayout()
         mode_row1.addWidget(self._mode_pos_btn)
         mode_row1.addWidget(self._mode_neg_btn)
         mode_row2 = QHBoxLayout()
         mode_row2.addWidget(self._mode_box_btn)
-        mode_row2.addWidget(self._mode_scribble_btn)
+        mode_row2.addWidget(self._mode_neg_box_btn)
+        mode_row3 = QHBoxLayout()
+        mode_row3.addWidget(self._mode_scribble_btn)
+        mode_row3.addWidget(self._mode_neg_scribble_btn)
         prompt_layout.addLayout(mode_row1)
         prompt_layout.addLayout(mode_row2)
+        prompt_layout.addLayout(mode_row3)
 
         # ── label for the resulting mask ───────────────────────────────────────
         label_row = QHBoxLayout()
@@ -488,7 +513,8 @@ class SAMPanel(QWidget):
     def reset_prompt_mode(self) -> None:
         """Uncheck all prompt-mode buttons without emitting any signals."""
         for btn in (self._mode_pos_btn, self._mode_neg_btn,
-                    self._mode_box_btn, self._mode_scribble_btn):
+                    self._mode_box_btn, self._mode_neg_box_btn,
+                    self._mode_scribble_btn, self._mode_neg_scribble_btn):
             btn.blockSignals(True)
             btn.setChecked(False)
             btn.blockSignals(False)
@@ -506,7 +532,8 @@ class SAMPanel(QWidget):
     def _activate_mode(self, active_btn: QPushButton) -> None:
         """Check active_btn and silently uncheck the others."""
         for btn in (self._mode_pos_btn, self._mode_neg_btn,
-                    self._mode_box_btn, self._mode_scribble_btn):
+                    self._mode_box_btn, self._mode_neg_box_btn,
+                    self._mode_scribble_btn, self._mode_neg_scribble_btn):
             btn.blockSignals(True)
             btn.setChecked(btn is active_btn)
             btn.blockSignals(False)
@@ -526,6 +553,14 @@ class SAMPanel(QWidget):
     def _on_scribble_clicked(self) -> None:
         self._activate_mode(self._mode_scribble_btn)
         self.scribble_mode_set.emit()
+
+    def _on_neg_scribble_clicked(self) -> None:
+        self._activate_mode(self._mode_neg_scribble_btn)
+        self.scribble_neg_mode_set.emit()
+
+    def _on_neg_box_clicked(self) -> None:
+        self._activate_mode(self._mode_neg_box_btn)
+        self.neg_box_prompt_mode_set.emit()
 
     def _browse_checkpoint(self) -> None:
         path, _ = QFileDialog.getOpenFileName(
