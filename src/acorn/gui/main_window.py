@@ -1336,8 +1336,7 @@ class MainWindow(QMainWindow):
     # ── file opening ──────────────────────────────────────────────────────────
 
     def _open_files_dialog(self) -> None:
-        dlg = QFileDialog(self, "Open image file(s)")
-        dlg.setOptions(QFileDialog.Option.DontUseNativeDialog)
+        dlg = QFileDialog(self, "Open image file(s)", str(Path.home()))
         dlg.setFileMode(QFileDialog.FileMode.ExistingFiles)
         dlg.setNameFilters([
             "All supported (*.dm4 *.tif *.tiff *.mrc *.mrcs *.png *.jpg *.jpeg)",
