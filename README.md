@@ -5,7 +5,7 @@
 ACORN is an open-source desktop application for loading, annotating, analyzing, and exporting
 cryo-EM and other electron microscopy images. It provides a PyQt6 GUI and a headless CLI,
 integrates SAM 3, SAM 2, YOLO, and UNet for AI-assisted segmentation, ships a plugin architecture for
-extending functionality, and includes **CLU** (Contextual Lab Utility), a natural-language AI assistant that can drive
+extending functionality, and includes **CLU** (Cryo-EM Lab Utility), a natural-language AI assistant that can drive
 any feature in the application from a chat panel.
 
 Developed by **Alexis N. Williams** and **Chanda R. Harris** of the
@@ -139,7 +139,7 @@ See `acorn_tracking/plugin.py` for the simplest real-world example, and
 
 ---
 
-## AI assistant: CLU (Contextual Lab Utility)
+## AI assistant: CLU (Cryo-EM Lab Utility)
 
 CLU is ACORN's built-in natural-language assistant. It lives in the **CLU** tab (added by the
 `acorn_llm` plugin) and can perform any ACORN action from a chat message: segmentation,
