@@ -193,7 +193,7 @@ ollama create acorn-tools -f Modelfile.tools
 
 ## Training models and bringing your own
 
-### Training a model inside ACORN
+### How to train your model inside ACORN
 
 ACORN includes a full in-app training pipeline for both YOLO and UNet models.
 
@@ -208,13 +208,13 @@ ACORN includes a full in-app training pipeline for both YOLO and UNet models.
 Use **YOLO** for countable, distinct objects (vesicles, particles, nanoparticles, cells).
 Use **UNet** for continuous structures (membranes, filaments, surfaces, dense regions).
 
-For large datasets (20+ images), annotate a sample of 5-15 images first, train a model,
+For large datasets (e.g., 20+ images @ 4K X 4K), annotate a sample of 5-15 images first, train a model,
 then use that model to run batch inference on the remaining images and re-finalize the dataset.
 CLU can guide you through this entire workflow from the chat panel.
 
 ### Bringing your own model
 
-You are not required to train inside ACORN. Any model trained externally can be loaded directly.
+Got a trained model for your system? Cool,load it up and run it with ACORN. 
 
 **Custom YOLO model:**
 - Go to the **YOLO** tab
@@ -484,7 +484,7 @@ method, motion correction, and dose series analysis.
 Bug reports, feature requests, and pull requests are welcome via GitHub:
 **[https://github.com/vitrifyai/acorn_software](https://github.com/vitrifyai/acorn_software)**
 
-For direct correspondence: **williamsan@ornl.gov**
+For direct correspondence, to extend positive vibes, or tell us this sucks directly: **williamsan@ornl.gov**
 
 ---
 
