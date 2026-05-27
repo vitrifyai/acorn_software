@@ -92,6 +92,13 @@ else
     warn "  UNet install failed.  To retry: uv pip install --python .venv/bin/python segmentation-models-pytorch"
 fi
 
+info "  CLU AI assistant (Anthropic + OpenAI-compatible providers)..."
+if uv pip install --python "$VENV_PYTHON" "anthropic>=0.30" "openai>=1.0"; then
+    success "  CLU installed."
+else
+    warn "  CLU install failed.  To retry: uv pip install --python .venv/bin/python anthropic openai"
+fi
+
 success "AI tools installation complete."
 
 # ── 5. Pre-download model checkpoints ────────────────────────────────────────

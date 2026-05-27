@@ -82,22 +82,48 @@ signal on `AcornContext`.
 
 ### Writing a plugin
 
-Create a package that subclasses `acorn.plugin_loader.AcornPlugin`:
+Subclass `acorn.plugin_base.AcornPlugin`, implement `create_panel()`, and register via
+`pyproject.toml`. The `AcornContext` object passed at construction gives full access to
+application state and signals.
 
 ```python
-from acorn.plugin_loader import AcornPlugin
+from acorn.plugin_base import AcornPlugin
+from PyQt6.QtWidgets import QLabel, QWidget, QVBoxLayout
 
 class MyPlugin(AcornPlugin):
-    PLUGIN_ID = "my_plugin"
-    TAB_LABEL = "My Tab"
+    PLUGIN_ID  = "my_plugin"
+    TAB_LABEL  = "My Tab"
+    sort_order = 50        # lower = further left in the tab bar
 
-    def create_panel(self):
-        # return a QWidget to add as a tab, or None
-        ...
+    def __init__(self, context):
+        super().__init__(context)
+        # Signals from core — connect to react to user actions
+        context.image_loaded.connect(self._on_image_loaded)
+        context.annotations_changed.connect(self._on_annotations_changed)
+        context.pixel_size_changed.connect(self._on_pixel_size_changed)
+        # CLU calls this whenever it dispatches a tool — filter by action name
+        context.action_requested.connect(self._on_action_requested)
 
-    def teardown(self):
-        # called on application exit
-        ...
+    def create_panel(self) -> QWidget:
+        w = QWidget()
+        QVBoxLayout(w).addWidget(QLabel("Hello from my plugin"))
+        return w
+
+    def _on_image_loaded(self, image):
+        self._context.set_status(f"Loaded {image.filepath.name}", timeout_ms=3000)
+
+    def _on_annotations_changed(self, store):
+        print(f"{len(list(store))} annotations on current image")
+
+    def _on_pixel_size_changed(self, px_nm: float):
+        print(f"Pixel size set to {px_nm} nm/px")
+
+    def _on_action_requested(self, action: str, params: dict):
+        if action != "my_custom_action":
+            return
+        # params is whatever JSON CLU included in the tool call
+        label = params.get("label", "")
+        self._context.set_status(f"my_custom_action called with label={label}")
 ```
 
 Register it in `pyproject.toml`:
@@ -107,9 +133,9 @@ Register it in `pyproject.toml`:
 my_plugin = "my_plugin.plugin:MyPlugin"
 ```
 
-Plugins receive an `AcornContext` object giving read/write access to the current image,
-annotations, pixel size, contrast, and the `action_requested` signal so CLU can drive
-plugin functionality.
+Run `uv pip install -e .` once — the tab appears automatically on next launch.
+See `acorn_tracking/plugin.py` for the simplest real-world example, and
+`acorn_llm/plugin.py` for a full plugin that adds CLU tools, menu actions, and streaming.
 
 ---
 

@@ -82,7 +82,7 @@ Go to **File > Open** (or press **Ctrl+O**) and select your image file.
 | **UNet** | Semantic segmentation using a custom-trained model |
 | **Export** | Save annotated images, measurement data, or training datasets |
 | **Train** | Prepare labelled data and train a custom YOLO or UNet model on your images |
-| **Analysis** | Estimate 3D surface areas from 2D ROI masks; single or batch mode |
+| **Analysis** | Estimate 3D surface areas from 2D ROI masks; plot distributions in Å², nm², µm², or mm²; group results by label across all images |
 | **Track** | Link annotations across image series to track particle or feature motion |
 | **3D** | Volume rendering and z-slice navigation for MRC tomograms |
 | **CLU** | Natural-language AI assistant — type what you want to do, the AI does it |
@@ -156,14 +156,17 @@ CLU understands microscopy intent, not just commands. You can say things like:
 - *"detect all the particles"* — CLU runs YOLO detection
 - *"prep this for training"* — CLU annotates, accepts, and queues the image for export
 - *"train a YOLO model"* — CLU configures and starts training
+- *"annotate all images at once"* — CLU runs SAM on every loaded image sequentially
 - *"average the frames"* — CLU compresses with mean averaging
 - *"run motion correction on frames 3 to 50"* — CLU clips the frame range and motion-corrects
 - *"show me how the membrane changes with dose"* — CLU opens the dose series tool
-- *"how many vesicles are annotated?"* — CLU answers from the current state without calling tools
+- *"how many vesicles are annotated across all images?"* — CLU reads the full dataset state
+- *"which images still need annotations?"* — CLU lists unannotated images from the loaded set
 - *"what's the pixel size?"* — CLU reads it from the loaded image metadata
 
-CLU always knows what is loaded, how many annotations exist, whether the image is a movie, and
-what the pixel size is. You do not need to tell it anything twice.
+CLU always knows the full state of every loaded image — annotation counts, labels, pixel sizes,
+and export queue status — across the entire dataset, not just the current image. You do not
+need to tell it anything twice.
 
 ### Two model modes
 
@@ -214,6 +217,91 @@ for training"* — CLU will run the full workflow for you.
 - In the **Motion plot**, a drift trajectory that curves or spikes late in the series often
   indicates beam-induced bubbling or charging — useful for deciding how many frames to keep
 - If you are not sure which AI tool to use, open CLU and just describe what you see
+
+---
+
+## Working with large datasets
+
+If you have 20 or more images to analyze, the recommended approach is a two-phase workflow
+that avoids annotating every image by hand.
+
+### Phase 1 — Annotate a representative sample and train a model
+
+1. Load your images with **File > Open Folder**
+2. Annotate 5–15 diverse images using SAM or manual tools
+3. Accept the annotations and queue each image for export
+4. Go to the **Export** tab and finalize the dataset (creates train/val/test splits)
+5. Go to the **Train** tab, configure your model (YOLO for countable objects, UNet for
+   continuous structures like membranes), and click **Start Training**
+
+### Phase 2 — Run the trained model on the rest
+
+6. After training finishes, go to the **YOLO** or **UNet** tab and load your new checkpoint
+7. For each remaining image: run detection, accept the annotations, queue for export
+8. Re-finalize the dataset — new images are added to the splits automatically
+9. Optionally re-train on the expanded dataset for further improvement
+
+### Letting CLU handle it
+
+You can ask CLU to do this entire workflow in plain English:
+
+- *"annotate all images with SAM, then prep for training"* — CLU batches SAM across every
+  image, accepts, and queues automatically
+- *"train a YOLO model on the queued images"* — CLU finalizes the dataset and starts training
+- *"run detection on all images with the loaded YOLO model"* — CLU steps through each image
+
+### Analysis across many images
+
+The **Analysis** tab's batch mode automatically uses each image's own calibrated pixel size,
+so you do not need to set a uniform pixel size when images were acquired at different
+magnifications. Enable **Group same-label annotations across images** to combine all
+*vesicle* annotations from all images into one distribution — or uncheck it to compare
+image-by-image variation.
+
+---
+
+## Writing a plugin
+
+If you want to add your own tab to ACORN, you can write a plugin in about 20 lines of Python.
+The full guide is in the main README, but here is the minimal example:
+
+```python
+from acorn.plugin_base import AcornPlugin
+from PyQt6.QtWidgets import QLabel, QWidget, QVBoxLayout
+
+class MyPlugin(AcornPlugin):
+    PLUGIN_ID = "my_plugin"
+    TAB_LABEL = "My Tab"
+    sort_order = 50   # controls tab position
+
+    def __init__(self, context):
+        super().__init__(context)
+        # context gives access to images, annotations, pixel size, status bar, menus
+        context.image_loaded.connect(self._on_image_loaded)
+        # respond to CLU tool calls:
+        context.action_requested.connect(self._on_action)
+
+    def create_panel(self):
+        w = QWidget()
+        QVBoxLayout(w).addWidget(QLabel("Hello from my plugin"))
+        return w
+
+    def _on_image_loaded(self, image):
+        self._context.set_status(f"Loaded: {image.filepath.name}")
+
+    def _on_action(self, action_name, params):
+        if action_name == "my_custom_action":
+            print("CLU called my action with", params)
+```
+
+Register it in `pyproject.toml`:
+
+```toml
+[project.entry-points."acorn.plugins"]
+my_plugin = "my_plugin.plugin:MyPlugin"
+```
+
+Then `uv pip install -e .` and the tab appears automatically.
 
 ---
 
