@@ -1,11 +1,11 @@
-# ACORN — Microscopy Image Analysis Suite
+# ACORN: Microscopy Image Analysis Suite
 
 **Annotate, Curate, Observe, Review, Navigate**
 
 ACORN is an open-source desktop application for loading, annotating, analyzing, and exporting
 cryo-EM and other electron microscopy images. It provides a PyQt6 GUI and a headless CLI,
 integrates SAM 3, SAM 2, YOLO, and UNet for AI-assisted segmentation, ships a plugin architecture for
-extending functionality, and includes **CLU** — a natural-language AI assistant that can drive
+extending functionality, and includes **CLU** (Contextual Lab Utility), a natural-language AI assistant that can drive
 any feature in the application from a chat panel.
 
 Developed by **Alexis N. Williams** and **Chanda R. Harris** of the
@@ -37,7 +37,7 @@ Center for Nanophase Materials Sciences, Oak Ridge National Laboratory.
 - **Motion correction**: two-pass phase cross-correlation alignment (skimage); sub-pixel accurate
 - **Drift trajectory plot**: MotionCor2-style per-frame displacement chart and drift path
 - **Dose series analysis**: split movie into equal-dose bins, view averaged images and
-  difference maps (`bin N − bin 1`) to visualise beam-induced structural changes
+  difference maps (`bin N - bin 1`) to visualise beam-induced structural changes
 - Configurable frame range (start / end frame): skip early high-motion frames or cap total dose
 - Individual frame viewer: step through any frame in the movie
 
@@ -49,11 +49,11 @@ Center for Nanophase Materials Sciences, Oak Ridge National Laboratory.
   configurable max displacement (nm), minimum track length, frame gap tolerance
 
 ### Training pipeline
-- Tile extraction from annotated images, 8× augmentation, negative-prompt sampling
+- Tile extraction from annotated images, 8x augmentation, negative-prompt sampling
 - Dataset splitting (train / val / test) with reproducible seeds
-- In-app **YOLO training** — configure base model, epochs, batch size, image size, then start
-- In-app **UNet training** — configure architecture (UNet, UNet++, FPN, DeepLabV3+…),
-  encoder backbone (ResNet, EfficientNet, MiT…), and hyperparameters
+- In-app **YOLO training**: configure base model, epochs, batch size, image size, then start
+- In-app **UNet training**: configure architecture (UNet, UNet++, FPN, DeepLabV3+...),
+  encoder backbone (ResNet, EfficientNet, MiT...), and hyperparameters
 - Export to COCO JSON + RLE masks
 - One-click push to HuggingFace Hub
 
@@ -67,7 +67,7 @@ Center for Nanophase Materials Sciences, Oak Ridge National Laboratory.
 ## Plugin architecture
 
 ACORN uses a plugin system based on Python entry points (`acorn.plugins`). Plugins are
-discovered automatically at startup — no configuration file needed. Each plugin provides a
+discovered automatically at startup with no configuration file needed. Each plugin provides a
 tab panel in the main window and can respond to AI tool calls through the `action_requested`
 signal on `AcornContext`.
 
@@ -97,11 +97,11 @@ class MyPlugin(AcornPlugin):
 
     def __init__(self, context):
         super().__init__(context)
-        # Signals from core — connect to react to user actions
+        # Signals from core - connect to react to user actions
         context.image_loaded.connect(self._on_image_loaded)
         context.annotations_changed.connect(self._on_annotations_changed)
         context.pixel_size_changed.connect(self._on_pixel_size_changed)
-        # CLU calls this whenever it dispatches a tool — filter by action name
+        # CLU calls this whenever it dispatches a tool - filter by action name
         context.action_requested.connect(self._on_action_requested)
 
     def create_panel(self) -> QWidget:
@@ -133,16 +133,16 @@ Register it in `pyproject.toml`:
 my_plugin = "my_plugin.plugin:MyPlugin"
 ```
 
-Run `uv pip install -e .` once — the tab appears automatically on next launch.
+Run `uv pip install -e .` once and the tab appears automatically on next launch.
 See `acorn_tracking/plugin.py` for the simplest real-world example, and
 `acorn_llm/plugin.py` for a full plugin that adds CLU tools, menu actions, and streaming.
 
 ---
 
-## AI assistant — CLU
+## AI assistant: CLU (Contextual Lab Utility)
 
-CLU (is ACORN's built-in natural-language assistant. It lives in the **CLU** tab (added by the
-`acorn_llm` plugin) and can perform any ACORN action from a chat message — segmentation,
+CLU is ACORN's built-in natural-language assistant. It lives in the **CLU** tab (added by the
+`acorn_llm` plugin) and can perform any ACORN action from a chat message: segmentation,
 contrast adjustment, training, dataset management, movie processing, and more.
 
 ### Supported providers
@@ -155,11 +155,11 @@ contrast adjustment, training, dataset management, movie processing, and more.
 
 ### Two model modes
 
-- **Vision model** — receives a thumbnail of the current image along with the message; good for
+- **Vision model**: receives a thumbnail of the current image along with the message; good for
   questions about image content, contrast assessment, and open-ended analysis
-- **Tool model** — uses function calling to drive ACORN actions; good for workflows ("segment
+- **Tool model**: uses function calling to drive ACORN actions; good for workflows ("segment
   and queue for training"), comparisons ("try different frame ranges"), and multi-step pipelines
-- **Auto** (default) — uses the vision model when "Include image" is checked, the tool model
+- **Auto** (default): uses the vision model when "Include image" is checked, the tool model
   otherwise
 
 ### What CLU can do
@@ -191,6 +191,73 @@ ollama create acorn-tools -f Modelfile.tools
 
 ---
 
+## Training models and bringing your own
+
+### Training a model inside ACORN
+
+ACORN includes a full in-app training pipeline for both YOLO and UNet models.
+
+**Recommended workflow:**
+
+1. Annotate a representative set of images using SAM, YOLO, or manual tools
+2. Accept annotations and queue each image for export in the **Export** tab
+3. Set the dataset directory and click **Finalize Dataset** to create train/val/test splits
+4. Go to the **Train** tab, choose YOLO or UNet, configure hyperparameters, and click **Start Training**
+5. Training runs in the background; progress is shown in the Train tab
+
+Use **YOLO** for countable, distinct objects (vesicles, particles, nanoparticles, cells).
+Use **UNet** for continuous structures (membranes, filaments, surfaces, dense regions).
+
+For large datasets (20+ images), annotate a sample of 5-15 images first, train a model,
+then use that model to run batch inference on the remaining images and re-finalize the dataset.
+CLU can guide you through this entire workflow from the chat panel.
+
+### Bringing your own model
+
+You are not required to train inside ACORN. Any model trained externally can be loaded directly.
+
+**Custom YOLO model:**
+- Go to the **YOLO** tab
+- Click the model path field and browse to your `.pt` file (any Ultralytics YOLO weight)
+- Click **Load** and run detection or segmentation as normal
+
+**Custom UNet model:**
+- Go to the **UNet** tab
+- Set the architecture and encoder to match how your model was trained
+- Browse to your `.pt` checkpoint file and click **Load**
+
+**Custom SAM checkpoint:**
+- Go to the **SAM** tab
+- Select the backend (SAM 3, SAM 2, or micro-SAM)
+- Choose your checkpoint from the dropdown or browse to a local `.pt` file
+
+**Exporting from ACORN for external training:**
+
+ACORN exports datasets in COCO JSON format with RLE-encoded masks, compatible with most
+standard training frameworks. Use the CLI for headless export:
+
+```bash
+acorn train-export --dataset-dir ./my_dataset   # extract tiles and annotations
+acorn finalize --dataset-dir ./my_dataset        # create splits
+```
+
+The output directory will contain:
+- `images/` - extracted image tiles (PNG)
+- `masks/` - binary mask PNGs
+- `annotations.json` - COCO-format annotations with RLE masks
+- `splits/train.json`, `splits/val.json`, `splits/test.json`
+
+You can then train any framework that accepts COCO-format data (Detectron2, MMDetection,
+Ultralytics, custom PyTorch, etc.) and load the resulting checkpoint back into ACORN.
+
+**Pushing your dataset to HuggingFace Hub:**
+
+```bash
+acorn push-to-hub --dataset-dir ./my_dataset --repo-id your-username/my-dataset
+```
+
+---
+
 ## Installation
 
 ### Personal machine (Linux / macOS)
@@ -203,7 +270,7 @@ Uses [uv](https://github.com/astral-sh/uv) (installed automatically if not prese
 Creates a self-contained `.venv`, installs all dependencies, downloads the recommended
 model checkpoints (~380 MB), and creates a desktop shortcut.
 
-### Shared workstation — all users (Linux, requires sudo)
+### Shared workstation (Linux, requires sudo)
 
 ```bash
 sudo bash setup_system.sh
@@ -212,7 +279,7 @@ sudo bash setup_system.sh
 Installs ACORN to `/opt/acorn` with a shared model cache at `/opt/acorn/models/`.
 Writes `/etc/profile.d/acorn.sh` (shared env vars), creates `/usr/local/bin/acorn` and
 `/usr/local/bin/acorn-gui` wrappers, and registers a desktop entry for ThinLinc / GNOME / KDE.
-No per-user install needed — any user on the machine can run `acorn-gui` immediately.
+No per-user install needed; any user on the machine can run `acorn-gui` immediately.
 
 After the initial system setup, push updates from the dev copy without sudo:
 
@@ -226,7 +293,7 @@ has changed (sha256 hash check), keeping deploys fast.
 ### Migrating to a new machine
 
 ```bash
-# On the old machine — copy shared models to the new one
+# On the old machine - copy shared models to the new one
 rsync -av /opt/acorn/models/ newmachine:/opt/acorn/models/
 ```
 
@@ -243,7 +310,7 @@ then rsync the models over. The setup script skips downloads for files that alre
 | Shared /opt | `/opt/conda/bin/python3` (3.13) | `/opt/acorn/.venv` |
 | Dev (vnw) | 3.10 (uv-managed) | `/home/vnw/cryoem-tools/.venv` |
 
-The editable dev install means changes to `.py` files are live immediately — no reinstall needed.
+The editable dev install means changes to `.py` files are live immediately with no reinstall needed.
 
 ---
 
@@ -255,7 +322,7 @@ ACORN supports three SAM backends, selected automatically at load time:
 
 | Backend | Package | Notes |
 |---------|---------|-------|
-| **SAM 3** | `pip install sam3` | Recommended — fastest, best cryo-EM accuracy |
+| **SAM 3** | `pip install sam3` | Recommended: fastest, best cryo-EM accuracy |
 | **SAM 2** | `pip install sam2` | Fallback if SAM 3 is not installed; same HF checkpoints |
 | **micro-SAM** | bundled | Fine-tuned for EM/LM; no HF login required |
 
@@ -295,17 +362,17 @@ python download_models.py --list                 # show status without downloadi
 
 | Model | Backend | Size | Notes |
 |-------|---------|------|-------|
-| vit_b_em_organelles | micro-SAM | 375 MB | EM organelles — recommended for cryo-EM |
+| vit_b_em_organelles | micro-SAM | 375 MB | EM organelles; recommended for cryo-EM |
 | vit_l_em_organelles | micro-SAM | 760 MB | EM organelles, larger / more accurate |
 | vit_b_lm | micro-SAM | 375 MB | Light microscopy |
 | vit_l_lm | micro-SAM | 760 MB | Light microscopy, larger |
-| vit_b / vit_l / vit_h | micro-SAM | 375 MB – 2.4 GB | Generic SAM (Meta original) |
+| vit_b / vit_l / vit_h | micro-SAM | 375 MB - 2.4 GB | Generic SAM (Meta original) |
 | sam3.pt | SAM 3 | ~2.4 GB | SAM 3 (HF login required) |
 | sam2_hiera_large.pt | SAM 2 | ~2.4 GB | SAM 2 fallback (HF login required) |
 | sam2_hiera_base_plus.pt | SAM 2 | ~320 MB | SAM 2 smaller variant |
-| yolo11n-seg.pt | YOLO | 6 MB | Nano segmentation — recommended starter |
-| yolo11s/m/l/x-seg.pt | YOLO | 22–130 MB | Larger segmentation models |
-| yolo11n/s/m/l/x.pt | YOLO | 6–130 MB | Detection-only variants |
+| yolo11n-seg.pt | YOLO | 6 MB | Nano segmentation; recommended starter |
+| yolo11s/m/l/x-seg.pt | YOLO | 22-130 MB | Larger segmentation models |
+| yolo11n/s/m/l/x.pt | YOLO | 6-130 MB | Detection-only variants |
 
 ---
 
@@ -339,7 +406,7 @@ src/
                 unet_panel.py        UNet tab
                 train_panel.py       training tab
                 export_panel.py      export tab
-                context.py           AcornContext — plugin interface
+                context.py           AcornContext plugin interface
     export/     training_exporter.py tile extraction and COCO export
                 dataset_finalizer.py train/val/test splitting
                 mask_exporter.py     mask PNG export
@@ -352,10 +419,10 @@ src/
     analysis/   surface_area.py      3D surface area estimation
                 surface_area_stats.py batch statistics
     cli/        main.py              CLI entry point
-  acorn_analysis/  Analysis plugin — surface area tab
-  acorn_tracking/  Track plugin — particle tracking tab
-  acorn_3d/        3D plugin — volume rendering tab
-  acorn_llm/       CLU plugin — AI assistant tab
+  acorn_analysis/  Analysis plugin: surface area tab
+  acorn_tracking/  Track plugin: particle tracking tab
+  acorn_3d/        3D plugin: volume rendering tab
+  acorn_llm/       CLU plugin: AI assistant tab
     agent.py        LLM agent (Anthropic / OpenAI-compatible)
     panel.py        chat UI panel
     config.py       provider and model configuration
@@ -400,9 +467,9 @@ acorn push-to-hub --dataset-dir ./dataset --repo-id user/name
 
 | Format | Extension | Movie / multi-frame |
 |--------|-----------|---------------------|
-| Gatan DM4 | .dm4 | Yes — 3D stacks auto-detected |
-| TIFF | .tif, .tiff | Yes — multi-page stacks |
-| MRC / MRCS | .mrc, .mrcs | Yes — all 3D MRC data |
+| Gatan DM4 | .dm4 | Yes: 3D stacks auto-detected |
+| TIFF | .tif, .tiff | Yes: multi-page stacks |
+| MRC / MRCS | .mrc, .mrcs | Yes: all 3D MRC data |
 | PNG | .png | No |
 | JPEG | .jpg, .jpeg | No |
 
@@ -426,7 +493,7 @@ For direct correspondence: **williamsan@ornl.gov**
 The [electron Microscopy and Microanalysis (eMMA) group](https://www.ornl.gov/group/electron-microscopy-and-microanalysis)
 is part of the Center for Nanophase Materials Sciences (CNMS) at Oak Ridge National Laboratory.
 The group develops and applies advanced multi-scale materials characterization techniques (including aberration-corrected STEM, in-situ and cryo-EM, electron spectroscopy (EELS/EDX),
-and atom probe tomography)to uncover structure-property-function relationships across
+and atom probe tomography) to uncover structure-property-function relationships across
 metals, ceramics, composites, nanomaterials, and biological specimens.
 
 ACORN was developed to accelerate data analysis workflows for the group's low-dose cryo-EM and
