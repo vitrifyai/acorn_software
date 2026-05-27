@@ -4,7 +4,7 @@
 
 ACORN is an open-source desktop application for loading, annotating, analyzing, and exporting
 cryo-EM and other electron microscopy images. It provides a PyQt6 GUI and a headless CLI,
-integrates SAM 3, YOLO, and UNet for AI-assisted segmentation, ships a plugin architecture for
+integrates SAM 3, SAM 2, YOLO, and UNet for AI-assisted segmentation, ships a plugin architecture for
 extending functionality, and includes **CLU** — a natural-language AI assistant that can drive
 any feature in the application from a chat panel.
 
@@ -223,11 +223,20 @@ The editable dev install means changes to `.py` files are live immediately — n
 
 ## AI models
 
-### SAM 3 and micro-SAM
+### SAM 3, SAM 2, and micro-SAM
 
-SAM 3 checkpoints are hosted on [HuggingFace Hub](https://huggingface.co/facebook/sam3) and
-require accepting Meta's license agreement before the first download. Log in at
-[huggingface.co](https://huggingface.co) and accept the license, then authenticate:
+ACORN supports three SAM backends, selected automatically at load time:
+
+| Backend | Package | Notes |
+|---------|---------|-------|
+| **SAM 3** | `pip install sam3` | Recommended — fastest, best cryo-EM accuracy |
+| **SAM 2** | `pip install sam2` | Fallback if SAM 3 is not installed; same HF checkpoints |
+| **micro-SAM** | bundled | Fine-tuned for EM/LM; no HF login required |
+
+SAM 3 and SAM 2 checkpoints are hosted on HuggingFace and require accepting Meta's license
+agreement before the first download. Log in at [huggingface.co](https://huggingface.co),
+accept the license for [facebook/sam3](https://huggingface.co/facebook/sam3) or
+[facebook/sam2](https://huggingface.co/facebook/sam2), then authenticate:
 
 ```bash
 huggingface-cli login
@@ -236,7 +245,8 @@ export HUGGING_FACE_HUB_TOKEN=your_token_here
 ```
 
 On a shared workstation, the admin can pre-download the checkpoint once to
-`/opt/acorn/models/sam3/` so all users share it without needing individual HF accounts.
+`/opt/acorn/models/sam3/` (or `sam2/`) so all users share it without needing individual
+HF accounts.
 
 micro-SAM checkpoints are downloaded automatically on first use and cached to
 `$MICROSAM_CACHEDIR` (defaults to `~/.cache/micro_sam`, or `/opt/acorn/models/micro_sam`
@@ -265,6 +275,8 @@ python download_models.py --list                 # show status without downloadi
 | vit_l_lm | micro-SAM | 760 MB | Light microscopy, larger |
 | vit_b / vit_l / vit_h | micro-SAM | 375 MB – 2.4 GB | Generic SAM (Meta original) |
 | sam3.pt | SAM 3 | ~2.4 GB | SAM 3 (HF login required) |
+| sam2_hiera_large.pt | SAM 2 | ~2.4 GB | SAM 2 fallback (HF login required) |
+| sam2_hiera_base_plus.pt | SAM 2 | ~320 MB | SAM 2 smaller variant |
 | yolo11n-seg.pt | YOLO | 6 MB | Nano segmentation — recommended starter |
 | yolo11s/m/l/x-seg.pt | YOLO | 22–130 MB | Larger segmentation models |
 | yolo11n/s/m/l/x.pt | YOLO | 6–130 MB | Detection-only variants |
@@ -377,7 +389,7 @@ method, motion correction, and dose series analysis.
 ## Contributing and feedback
 
 Bug reports, feature requests, and pull requests are welcome via GitHub:
-**[GitHub repository — link to be added]**
+**[https://github.com/vitrifyai/acorn_software](https://github.com/vitrifyai/acorn_software)**
 
 For direct correspondence: **williamsan@ornl.gov**
 
