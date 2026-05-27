@@ -12,7 +12,7 @@ Developed by **Alexis Williams** and **Chanda Harris** of the
 [eMMA (electron Microscopy and Microanalysis) group](https://www.ornl.gov/group/electron-microscopy-and-microanalysis),
 Center for Nanophase Materials Sciences, Oak Ridge National Laboratory.
 
-> For a plain-language introduction aimed at domain experts, see [QUICKSTART.md](QUICKSTART.md).
+> Expert user or hate instructions? See [QUICKSTART.md](QUICKSTART.md).
 
 ---
 
