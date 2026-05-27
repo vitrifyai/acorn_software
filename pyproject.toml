@@ -63,6 +63,7 @@ dev = [
     "pytest-cov",
     "ruff",
 ]
+llm      = ["anthropic>=0.52", "openai>=1.0"]
 analysis = ["opencv-python>=4.8", "pandas>=1.5"]
 tracking = ["pandas>=1.5", "scipy>=1.10"]
 volume   = ["mrcfile>=1.4", "tifffile>=2023.1"]
@@ -79,6 +80,7 @@ acorn-gui = "acorn.gui.main_window:launch"
 acorn_analysis = "acorn_analysis.plugin:AnalysisPlugin"
 acorn_tracking = "acorn_tracking.plugin:TrackingPlugin"
 acorn_3d       = "acorn_3d.plugin:VolumePlugin"
+acorn_llm      = "acorn_llm.plugin:LLMPlugin"
 
 [tool.hatch.build.targets.wheel]
 packages = [
@@ -86,6 +88,7 @@ packages = [
     "src/acorn_analysis",
     "src/acorn_tracking",
     "src/acorn_3d",
+    "src/acorn_llm",
 ]
 
 

@@ -30,6 +30,9 @@ class AcornContext(QObject):
     pixel_size_changed  = pyqtSignal(float)
     slice_changed       = pyqtSignal(int)      # z-slice index (for acorn_3d)
 
+    # Emitted by the LLM assistant to request tool actions (action_name, params)
+    action_requested    = pyqtSignal(str, dict)
+
     def __init__(self, main_window: "MainWindow") -> None:
         super().__init__()
         self._window_ref = weakref.ref(main_window)
@@ -145,3 +148,228 @@ class AcornContext(QObject):
         action.triggered.connect(callback)
         target_menu.addAction(action)
         return action
+
+    def get_llm_state(self) -> dict:
+        """Return a snapshot of current application state for the LLM system prompt."""
+        w = self._w()
+        state: dict = {}
+        if w is None:
+            return state
+
+        img = self.current_image
+        if img is not None:
+            state["image_name"] = img.filepath.name if img.filepath else "untitled"
+            state["image_shape"] = list(img.raw.shape) if img.raw is not None else []
+            state["pixel_size_nm"] = float(self.current_pixel_size_nm)
+            state["is_movie"]  = img.is_movie
+            state["n_frames"]  = img.n_frames
+        state["image_count"]         = len(self.image_paths)
+        state["current_image_index"] = self.current_image_index
+
+        state["sam_loaded"]  = getattr(w, "_sam_predictor",  None) is not None and getattr(w._sam_predictor,  "is_loaded", False)
+        state["yolo_loaded"] = getattr(w, "_yolo_predictor", None) is not None and getattr(w._yolo_predictor, "is_loaded", False)
+        state["unet_loaded"] = getattr(w, "_unet_predictor", None) is not None and getattr(w._unet_predictor, "is_loaded", False)
+
+        state["pending_sam"]  = len(getattr(w, "_pending_sam_masks",  []))
+        state["pending_yolo"] = len(getattr(w, "_pending_yolo_anns",  []))
+        state["pending_unet"] = len(getattr(w, "_pending_unet_masks", []))
+
+        try:
+            state["contrast_method"] = w._contrast_panel.params().method
+            state["contrast_presets"] = list(w._contrast_panel._all_presets().keys())
+        except Exception:
+            pass
+
+        # SAM configuration
+        try:
+            sp = w._sam_panel
+            state["sam_backend"]    = sp._backend_combo.currentData()
+            state["sam_checkpoint"] = sp._ckpt_combo.currentText()
+            ckpts = [sp._ckpt_combo.itemText(i) for i in range(sp._ckpt_combo.count())]
+            state["sam_checkpoints_available"] = ckpts
+            state["sam_points_per_side"]  = sp._pts_per_side.value()
+            state["sam_iou_thresh"]       = sp._iou_thresh.value()
+            state["sam_stability_thresh"] = sp._stability_thresh.value()
+        except Exception:
+            pass
+
+        # YOLO configuration
+        try:
+            yp = w._yolo_panel
+            state["yolo_model_path"] = yp._model_combo.currentText() if hasattr(yp, "_model_combo") else ""
+        except Exception:
+            pass
+
+        # UNet configuration
+        try:
+            up = w._unet_panel
+            state["unet_arch"]     = up._arch_combo.currentText()    if hasattr(up, "_arch_combo")    else ""
+            state["unet_encoder"]  = up._encoder_combo.currentText() if hasattr(up, "_encoder_combo") else ""
+            state["unet_ckpt"]     = up._ckpt_edit.text()            if hasattr(up, "_ckpt_edit")     else ""
+        except Exception:
+            pass
+
+        # Export queue and dataset state
+        try:
+            ep = w._export_panel
+            export_dir = ep.dataset_dir
+            state["export_dataset_dir"] = export_dir
+            state["export_queue_count"] = len(w._export_queue)
+            state["export_val_frac"]    = ep._val_frac.value()
+            state["export_test_frac"]   = ep._test_frac.value()
+            if export_dir:
+                from pathlib import Path as _Path
+                state["dataset_finalized"] = (_Path(export_dir) / "splits" / "train.json").exists()
+            else:
+                state["dataset_finalized"] = False
+        except Exception:
+            pass
+
+        # Train tab configuration
+        try:
+            tp = w._train_panel
+            state["train_model_type"]    = "yolo" if tp._yolo_radio.isChecked() else "unet"
+            state["train_dataset_dir"]   = tp._dir_edit.text().strip()
+            state["train_epochs"]        = tp._epochs.value()
+            state["train_batch"]         = tp._batch.value()
+            state["train_yolo_base"]     = tp._yolo_base.currentText()
+            state["train_yolo_imgsz"]    = tp._yolo_imgsz.value()
+            state["train_unet_arch"]     = tp._unet_arch.currentText()
+            state["train_unet_encoder"]  = tp._unet_encoder.currentText()
+            state["train_unet_imgsz"]    = tp._unet_imgsz.value()
+        except Exception:
+            pass
+
+        # Current image annotations (detailed)
+        store = self.annotation_store
+        if store is not None:
+            anns = list(store)
+            state["annotation_count"] = len(anns)
+            labels: dict[str, int] = {}
+            ann_types: dict[str, int] = {}
+            distances: list[dict] = []
+            roi_areas: list[dict] = []
+            for a in anns:
+                lbl = getattr(a, "label", None) or getattr(a, "text", None) or "unknown"
+                labels[lbl] = labels.get(lbl, 0) + 1
+                typ = getattr(a, "type", "unknown")
+                ann_types[typ] = ann_types.get(typ, 0) + 1
+                if getattr(a, "type", None) == "distance":
+                    distances.append({
+                        "distance_nm": round(a.distance_nm, 4),
+                        "distance_px": round(a.distance_px, 2),
+                        "calibrated": a.calibrated,
+                    })
+                if getattr(a, "type", None) == "roi" and getattr(a, "area_nm2", 0) > 0:
+                    roi_areas.append({
+                        "label": getattr(a, "label", ""),
+                        "area_nm2": round(a.area_nm2, 2),
+                    })
+            state["annotation_labels"] = labels
+            state["annotation_types"]  = ann_types
+            if distances:
+                state["distance_measurements"] = distances
+            if roi_areas:
+                state["roi_areas"] = roi_areas
+        else:
+            state["annotation_count"]  = 0
+            state["annotation_labels"] = {}
+
+        # Full image list — every loaded image with annotation, pixel size, and queue status.
+        # The agent must see this to reason about the whole dataset, navigate by filename,
+        # and know which images still need work.
+        all_states = self.all_annotation_states
+        paths = self.image_paths
+        queue_stems: set = set()
+        if w is not None and hasattr(w, "_export_queue"):
+            queue_stems = {item["stem"] for item in w._export_queue}
+
+        dataset_total   = 0
+        dataset_labels: dict[str, int] = {}
+        images_annotated = 0
+        image_list: list[dict] = []
+
+        for i, path in enumerate(paths):
+            img_anns = all_states.get(i, [])
+            n = len(img_anns)
+            dataset_total += n
+            if n > 0:
+                images_annotated += 1
+            img_labels: dict[str, int] = {}
+            for a in img_anns:
+                lbl = getattr(a, "label", None) or getattr(a, "text", None) or "unknown"
+                img_labels[lbl] = img_labels.get(lbl, 0) + 1
+                dataset_labels[lbl] = dataset_labels.get(lbl, 0) + 1
+            image_list.append({
+                "index":            i,
+                "filename":         path.name,
+                "annotation_count": n,
+                "label_counts":     img_labels,
+                "pixel_size_nm":    self.pixel_size_for_index(i),
+                "in_export_queue":  path.stem in queue_stems,
+            })
+
+        state["image_list"]                = image_list
+        state["dataset_total_annotations"] = dataset_total
+        state["dataset_images_annotated"]  = images_annotated
+        state["dataset_label_counts"]      = dataset_labels
+        state["export_queue_filenames"]    = sorted(queue_stems)
+
+        # Finalized dataset statistics (from dataset_stats.json if it exists)
+        try:
+            import json as _json
+            from pathlib import Path as _Path
+            ep = w._export_panel
+            ds_dir = ep.dataset_dir if ep is not None else ""
+            if ds_dir:
+                stats_file = _Path(ds_dir) / "dataset_stats.json"
+                if stats_file.exists():
+                    state["dataset_stats"] = _json.loads(stats_file.read_text())
+        except Exception:
+            pass
+
+        return state
+
+    def get_thumbnail(self, max_px: int = 1024) -> Optional[str]:
+        """Return a base64-encoded JPEG thumbnail of the current displayed image, or None."""
+        import base64
+        import io
+        import numpy as np
+
+        w = self._w()
+        if w is None:
+            return None
+        img = self.current_image
+        if img is None or img.raw is None:
+            return None
+
+        try:
+            from acorn.core.contrast import apply_contrast
+            from PIL import Image
+
+            if img.is_color:
+                # Color image: use raw RGB directly
+                arr8 = (np.clip(img.raw, 0.0, 1.0) * 255).astype(np.uint8)
+                pil = Image.fromarray(arr8, mode="RGB")
+            else:
+                params = w._canvas_widget.canvas._params if hasattr(w._canvas_widget.canvas, "_params") else None
+                if params is not None:
+                    norm = apply_contrast(img.raw, params)
+                else:
+                    raw = img.raw.astype(float)
+                    raw -= raw.min()
+                    if raw.max() > 0:
+                        raw /= raw.max()
+                    norm = raw
+                arr8 = (np.clip(norm, 0.0, 1.0) * 255).astype(np.uint8)
+                pil = Image.fromarray(arr8, mode="L").convert("RGB")
+            h, w_px = arr8.shape[:2]
+            scale = min(1.0, max_px / max(h, w_px))
+            if scale < 1.0:
+                pil = pil.resize((int(w_px * scale), int(h * scale)), Image.LANCZOS)
+
+            buf = io.BytesIO()
+            pil.save(buf, format="JPEG", quality=85)
+            return base64.b64encode(buf.getvalue()).decode()
+        except Exception:
+            return None

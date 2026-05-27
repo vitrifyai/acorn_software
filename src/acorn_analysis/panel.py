@@ -205,6 +205,14 @@ class AnalysisPanel(QWidget):
         )
         form.addRow("Px uncertainty:", self._px_unc_spin)
 
+        px_note = QLabel(
+            "In session mode, each image uses its own calibrated pixel size automatically.\n"
+            "The default above is a fallback for images without a calibration set."
+        )
+        px_note.setStyleSheet("font-size: 10px; color: palette(mid);")
+        px_note.setWordWrap(True)
+        form.addRow("", px_note)
+
         self._method_combo = QComboBox()
         _METHODS = [
             ("Auto",              "auto",          "Auto-select based on shape metrics (recommended)"),
@@ -282,11 +290,23 @@ class AnalysisPanel(QWidget):
         unit_row = QHBoxLayout()
         unit_row.addWidget(QLabel("Display units:"))
         self._unit_combo = QComboBox()
-        self._unit_combo.addItem("\u03bcm\u00b2", userData="um2")
-        self._unit_combo.addItem("nm\u00b2", userData="nm2")
-        self._unit_combo.setFixedWidth(70)
+        self._unit_combo.addItem("nm\u00b2",         userData="nm2")
+        self._unit_combo.addItem("\u00c5\u00b2",      userData="ang2")
+        self._unit_combo.addItem("\u03bcm\u00b2",     userData="um2")
+        self._unit_combo.addItem("mm\u00b2",          userData="mm2")
+        self._unit_combo.setFixedWidth(80)
         self._unit_combo.currentIndexChanged.connect(self._on_unit_changed)
         unit_row.addWidget(self._unit_combo)
+
+        self._group_by_label_check = QCheckBox("Group same-label annotations across images")
+        self._group_by_label_check.setChecked(True)
+        self._group_by_label_check.setToolTip(
+            "When checked, annotations that share a label across different images are\n"
+            "combined into one distribution per label.\n"
+            "Uncheck to separate series by image, allowing within-vs-between image comparison."
+        )
+        self._group_by_label_check.toggled.connect(self._on_unit_changed)
+        unit_row.addWidget(self._group_by_label_check)
         unit_row.addStretch()
         particles_layout.addLayout(unit_row)
 
@@ -525,15 +545,24 @@ class AnalysisPanel(QWidget):
         if df is None or "SA_nm2" not in df.columns:
             return None
 
-        use_um2 = self._unit_combo.currentData() == "um2"
-        scale   = 1e-6 if use_um2 else 1.0
-        unit    = "\u03bcm\u00b2" if use_um2 else "nm\u00b2"
+        scale, unit = self._sa_scale_and_unit()
+        group_by_label = getattr(self, "_group_by_label_check", None)
+        group_by_label = group_by_label.isChecked() if group_by_label is not None else True
 
         import pandas as _pd
         plot_df = df.copy()
         plot_df["_sa"] = plot_df["SA_nm2"] * scale
 
-        groups = sorted(plot_df["label"].dropna().unique().tolist())
+        if group_by_label or "image" not in plot_df.columns:
+            plot_df["_group"] = plot_df["label"].fillna("unknown")
+        else:
+            plot_df["_group"] = (
+                plot_df["label"].fillna("unknown").astype(str)
+                + "  \u2014  "
+                + plot_df["image"].fillna("").astype(str)
+            )
+
+        groups = sorted(plot_df["_group"].dropna().unique().tolist())
         palette = ["#4878D0", "#EE854A", "#6ACC65", "#D65F5F",
                    "#956CB4", "#8C613C", "#DC7EC0", "#797979"]
         colors = {g: palette[i % len(palette)] for i, g in enumerate(groups)}
@@ -552,7 +581,7 @@ class AnalysisPanel(QWidget):
                 return None
             bin_edges = _smart_bins(all_vals, n=30)
             for name in groups:
-                data = plot_df[plot_df["label"] == name]["_sa"].dropna().values
+                data = plot_df[plot_df["_group"] == name]["_sa"].dropna().values
                 color = colors[name]
                 ax.hist(data, bins=bin_edges, alpha=0.38, color=color, density=True)
                 if len(data) > 3 and data.std() > 1e-12:
@@ -583,7 +612,7 @@ class AnalysisPanel(QWidget):
 
         elif plot_type == "Violin / Box":
             fig, ax = plt.subplots(figsize=(5.5, 3.8))
-            box_data = [plot_df[plot_df["label"] == g]["_sa"].dropna().values for g in groups]
+            box_data = [plot_df[plot_df["_group"] == g]["_sa"].dropna().values for g in groups]
             valid = [(g, d) for g, d in zip(groups, box_data) if len(d) > 1]
             if not valid:
                 plt.close(fig)
@@ -612,7 +641,7 @@ class AnalysisPanel(QWidget):
             fig, ax = plt.subplots(figsize=(5.5, 3.8))
             import numpy as _np
             for name in groups:
-                data = _np.sort(plot_df[plot_df["label"] == name]["_sa"].dropna().values)
+                data = _np.sort(plot_df[plot_df["_group"] == name]["_sa"].dropna().values)
                 if len(data) == 0:
                     continue
                 y = _np.arange(1, len(data)+1) / len(data)
@@ -629,9 +658,9 @@ class AnalysisPanel(QWidget):
             fig, axes = plt.subplots(1, 2, figsize=(7.5, 3.8))
             import numpy as _np
             # Left: bar chart of mean +/- std
-            means = [plot_df[plot_df["label"]==g]["_sa"].mean() for g in groups]
-            stds  = [plot_df[plot_df["label"]==g]["_sa"].std()  for g in groups]
-            ns    = [int((plot_df["label"]==g).sum()) for g in groups]
+            means = [plot_df[plot_df["_group"]==g]["_sa"].mean() for g in groups]
+            stds  = [plot_df[plot_df["_group"]==g]["_sa"].std()  for g in groups]
+            ns    = [int((plot_df["_group"]==g).sum()) for g in groups]
             x = range(len(groups))
             axes[0].bar(x, means, yerr=stds, color=[colors[g] for g in groups],
                         alpha=0.75, capsize=4, error_kw={"lw": 1.2})
@@ -642,7 +671,7 @@ class AnalysisPanel(QWidget):
             for xi, (m, n) in enumerate(zip(means, ns)):
                 axes[0].text(xi, 0, f"n={n}", ha="center", va="bottom", fontsize=7, color="#555")
             # Right: box
-            box_data = [plot_df[plot_df["label"]==g]["_sa"].dropna().values for g in groups]
+            box_data = [plot_df[plot_df["_group"]==g]["_sa"].dropna().values for g in groups]
             bp = axes[1].boxplot(box_data, patch_artist=True, widths=0.5,
                                  medianprops={"color": "#333", "lw": 1.5})
             for patch, g in zip(bp["boxes"], groups):
@@ -725,6 +754,7 @@ class AnalysisPanel(QWidget):
             "compound_mode":              compound_mode,
             "folder_items":               list(self._folder_items),
             "folder_path":                self._folder_edit.text().strip(),
+            "group_by_label":             self._group_by_label_check.isChecked(),
         })
 
     def _on_open_output_folder(self) -> None:
@@ -732,6 +762,16 @@ class AnalysisPanel(QWidget):
         if d and Path(d).exists():
             import subprocess
             subprocess.Popen(["xdg-open", str(d)])
+
+    def _sa_scale_and_unit(self) -> tuple[float, str]:
+        """Return (scale_from_nm2, unit_label) for the currently selected display unit."""
+        key = self._unit_combo.currentData()
+        return {
+            "ang2": (100.0,   "Å²"),
+            "nm2":  (1.0,     "nm²"),
+            "um2":  (1e-6,    "μm²"),
+            "mm2":  (1e-12,   "mm²"),
+        }.get(key, (1.0, "nm²"))
 
     def _on_unit_changed(self) -> None:
         df = getattr(self, "_particles_df", None)
@@ -742,9 +782,7 @@ class AnalysisPanel(QWidget):
         self._refresh_figure()
 
     def _populate_particles_table(self, df) -> None:
-        use_um2 = self._unit_combo.currentData() == "um2"
-        sa_unit = "\u03bcm\u00b2" if use_um2 else "nm\u00b2"
-        sa_scale = 1e-6 if use_um2 else 1.0
+        sa_scale, sa_unit = self._sa_scale_and_unit()
         _SA_COLS = {"SA_nm2", "SA_nm2_uncertainty", "SA_outer_nm2", "SA_inner_nm2"}
 
         COLS = [
@@ -809,10 +847,7 @@ class AnalysisPanel(QWidget):
             self._groups_text.setPlainText("Single group — no between-group statistics computed.")
             return
 
-        use_um2 = self._unit_combo.currentData() == "um2"
-        sa_unit = "\u03bcm\u00b2" if use_um2 else "nm\u00b2"
-        sa_scale = 1e-6 if use_um2 else 1.0
-
+        sa_scale, sa_unit = self._sa_scale_and_unit()
         lines: list[str] = []
         test = stats_dict.get("test_used", "none")
         n_groups = stats_dict.get("n_groups", 0)

@@ -122,7 +122,7 @@ class TrainPanel(QWidget):
         btn_row = QHBoxLayout()
         self._train_btn = QPushButton("Train")
         self._train_btn.setStyleSheet(
-            "background:#27ae60;color:white;font-weight:bold;"
+            "background:#00703C;color:white;font-weight:bold;"
         )
         self._train_btn.clicked.connect(self._on_train_clicked)
 
@@ -253,7 +253,7 @@ class TrainPanel(QWidget):
 
         self._yolo_download_hint = QLabel("")
         self._yolo_download_hint.setWordWrap(True)
-        self._yolo_download_hint.setStyleSheet("font-size: 10px; color: #e67e22;")
+        self._yolo_download_hint.setStyleSheet("font-size: 10px; color: #4d8ec4;")
         self._yolo_download_hint.setVisible(False)
         layout.addWidget(self._yolo_download_hint)
 
@@ -571,12 +571,12 @@ class TrainPanel(QWidget):
         except Exception:
             _MPL_OK = False
             return False
-        self._loss_fig = Figure(figsize=(4, 1.8), dpi=80, facecolor="#1e1e2e")
+        self._loss_fig = Figure(figsize=(4, 1.8), dpi=80, facecolor="#1a1a1a")
         self._loss_ax = self._loss_fig.add_subplot(111)
         self._loss_fig.subplots_adjust(left=0.12, right=0.98, top=0.88, bottom=0.22)
         self._loss_canvas = _FigCanvas(self._loss_fig)
         self._loss_canvas.setFixedHeight(145)
-        self._loss_canvas.setStyleSheet("background:#1e1e2e;")
+        self._loss_canvas.setStyleSheet("background:#1a1a1a;")
         self._loss_chart_layout.insertWidget(
             self._loss_chart_layout.count() - 1,  # before the log widget
             self._loss_canvas,
@@ -589,13 +589,13 @@ class TrainPanel(QWidget):
             return
         ax = self._loss_ax
         ax.cla()
-        ax.set_facecolor("#313244")
-        ax.tick_params(colors="#a6adc8", labelsize=8)
+        ax.set_facecolor("#1a1a1a")
+        ax.tick_params(colors="#888888", labelsize=8)
         for spine in ax.spines.values():
-            spine.set_edgecolor("#45475a")
-        ax.set_xlabel("Epoch", color="#a6adc8", fontsize=8)
-        ax.set_ylabel("Loss / Metric", color="#a6adc8", fontsize=8)
-        ax.set_title("Training Progress", color="#cdd6f4", fontsize=9, pad=4)
+            spine.set_edgecolor("#363636")
+        ax.set_xlabel("Epoch", color="#888888", fontsize=8)
+        ax.set_ylabel("Loss / Metric", color="#888888", fontsize=8)
+        ax.set_title("Training Progress", color="#e0e0e0", fontsize=9, pad=4)
         self._loss_fig.canvas.draw_idle()
 
     def update_loss_curve(self, epoch: int, train_loss: float, metric: float) -> None:
@@ -618,23 +618,23 @@ class TrainPanel(QWidget):
 
         ax = self._loss_ax
         ax.cla()
-        ax.set_facecolor("#313244")
-        ax.tick_params(colors="#a6adc8", labelsize=8)
+        ax.set_facecolor("#1a1a1a")
+        ax.tick_params(colors="#888888", labelsize=8)
         for spine in ax.spines.values():
-            spine.set_edgecolor("#45475a")
-        ax.set_xlabel("Epoch", color="#a6adc8", fontsize=8)
-        ax.set_title("Training Progress", color="#cdd6f4", fontsize=9, pad=4)
+            spine.set_edgecolor("#363636")
+        ax.set_xlabel("Epoch", color="#888888", fontsize=8)
+        ax.set_title("Training Progress", color="#e0e0e0", fontsize=9, pad=4)
 
         ax.plot(self._loss_epochs, self._loss_train,
-                color="#89b4fa", lw=1.5, label="loss")
+                color="#4dbb78", lw=1.5, label="loss")
         if any(v == v for v in self._loss_metric):  # skip if all NaN
             ax2 = ax.twinx()
-            ax2.set_facecolor("#313244")
-            ax2.tick_params(colors="#a6e3a1", labelsize=8)
-            ax2.spines["right"].set_edgecolor("#45475a")
+            ax2.set_facecolor("#1a1a1a")
+            ax2.tick_params(colors="#4d8ec4", labelsize=8)
+            ax2.spines["right"].set_edgecolor("#363636")
             ax2.plot(self._loss_epochs, self._loss_metric,
-                     color="#a6e3a1", lw=1.5, linestyle="--", label="metric")
-            ax2.set_ylabel("mAP50 / mF1", color="#a6e3a1", fontsize=8)
+                     color="#4d8ec4", lw=1.5, linestyle="--", label="metric")
+            ax2.set_ylabel("mAP50 / mF1", color="#4d8ec4", fontsize=8)
 
         self._loss_fig.canvas.draw_idle()
 

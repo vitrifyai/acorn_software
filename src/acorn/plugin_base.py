@@ -2,6 +2,7 @@
 from __future__ import annotations
 from typing import TYPE_CHECKING
 
+from typing import Optional
 from PyQt6.QtWidgets import QWidget
 
 if TYPE_CHECKING:
@@ -30,8 +31,8 @@ class AcornPlugin:
     def __init__(self, context: "AcornContext") -> None:
         self._context = context
 
-    def create_panel(self) -> QWidget:
-        """Return the QWidget to insert as a tab. Called once at startup."""
+    def create_panel(self) -> Optional[QWidget]:
+        """Return the QWidget to insert as a tab, or None to skip tab creation."""
         raise NotImplementedError
 
     def setup_menus(self, menubar: "QMenuBar") -> None:

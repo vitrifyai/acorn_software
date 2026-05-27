@@ -27,7 +27,7 @@ class LineProfileDialog(QDialog):
         self.setWindowTitle("Line Profile")
         self.resize(680, 380)
         self._result = result
-        self._line_color = "#00AAFF"
+        self._line_color = "#4dbb78"
 
         layout = QVBoxLayout(self)
 
@@ -54,7 +54,7 @@ class LineProfileDialog(QDialog):
         self._color_swatch = QPushButton()
         self._color_swatch.setFixedWidth(28)
         self._color_swatch.setStyleSheet(
-            f"background-color: {self._line_color}; border: 1px solid #888;"
+            f"background-color: {self._line_color}; border: 1px solid #363636;"
         )
         self._color_swatch.clicked.connect(self._pick_color)
         export_btn = QPushButton("Export CSV")
@@ -91,7 +91,7 @@ class LineProfileDialog(QDialog):
         if qcol.isValid():
             self._line_color = qcol.name()
             self._color_swatch.setStyleSheet(
-                f"background-color: {self._line_color}; border: 1px solid #888;"
+                f"background-color: {self._line_color}; border: 1px solid #363636;"
             )
             self._plot(self._result)
 

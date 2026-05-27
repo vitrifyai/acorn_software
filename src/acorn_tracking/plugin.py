@@ -21,6 +21,21 @@ class TrackingPlugin(AcornPlugin):
         self._tracking_df = None
         context.image_loaded.connect(self._refresh_status)
         context.annotations_changed.connect(self._refresh_status)
+        context.action_requested.connect(self._on_action_requested)
+
+    def _on_action_requested(self, action: str, params: dict) -> None:
+        if action != "track_particles":
+            return
+        track_params = {
+            "max_displacement_nm": float(params.get("max_displacement_nm", 500.0)),
+            "min_frames":          int(params.get("min_frames", 2)),
+            "max_gap":             int(params.get("max_gap", 1)),
+        }
+        if self._panel is not None:
+            self._panel._max_disp_spin.setValue(track_params["max_displacement_nm"])
+            self._panel._min_frames_spin.setValue(track_params["min_frames"])
+            self._panel._max_gap_spin.setValue(track_params["max_gap"])
+        self._on_track_requested(track_params)
 
     def _refresh_status(self, *_) -> None:
         if self._panel is None:

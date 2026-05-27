@@ -78,7 +78,7 @@ class ExportPanel(QWidget):
         # ── standard save buttons ─────────────────────────────────────────────
         btn_row = QHBoxLayout()
         save_btn = QPushButton("Save Image")
-        save_btn.setStyleSheet("background:#27ae60;color:white;font-weight:bold;")
+        save_btn.setStyleSheet("background:#00703C;color:white;font-weight:bold;")
         save_btn.clicked.connect(self._on_save)
         raw_btn = QPushButton("Save Raw TIFF")
         raw_btn.clicked.connect(self._on_save_raw)
@@ -96,7 +96,7 @@ class ExportPanel(QWidget):
         layout.addWidget(display_btn)
 
         mask_btn = QPushButton("Export ROI Masks")
-        mask_btn.setStyleSheet("background:#8e44ad;color:white;font-weight:bold;")
+        mask_btn.setStyleSheet("background:#1a5fa8;color:white;font-weight:bold;")
         mask_btn.setToolTip("Save labelled mask PNG + labels.json for segmentation")
         mask_btn.clicked.connect(self._on_save_masks)
         layout.addWidget(mask_btn)
@@ -179,7 +179,7 @@ class ExportPanel(QWidget):
         add_row = QHBoxLayout()
         add_row.setSpacing(4)
         queue_btn = QPushButton("Queue Image")
-        queue_btn.setStyleSheet("background:#1a6fa8;color:white;font-weight:bold;")
+        queue_btn.setStyleSheet("background:#1a5fa8;color:white;font-weight:bold;")
         queue_btn.setToolTip(
             "Snapshot this image's annotations into the export queue.\n"
             "Unannotated images are queued as pure negative examples.\n"
@@ -233,7 +233,7 @@ class ExportPanel(QWidget):
         batch_row = QHBoxLayout()
         batch_row.setSpacing(4)
         self._batch_btn = QPushButton("Export All Queued (0)")
-        self._batch_btn.setStyleSheet("background:#166534;color:white;font-weight:bold;")
+        self._batch_btn.setStyleSheet("background:#00703C;color:white;font-weight:bold;")
         self._batch_btn.setToolTip("Export all queued images to the dataset in one pass.")
         self._batch_btn.setEnabled(False)
         self._batch_btn.clicked.connect(self._on_batch_export)
@@ -322,7 +322,7 @@ class ExportPanel(QWidget):
         train_layout.addLayout(hub_form)
 
         hub_btn = QPushButton("Push Dataset to HuggingFace Hub")
-        hub_btn.setStyleSheet("background:#f39c12;color:black;font-weight:bold;")
+        hub_btn.setStyleSheet("background:#1a5fa8;color:white;font-weight:bold;")
         hub_btn.setToolTip(
             "Upload the training dataset to HuggingFace Hub.\n"
             "Requires: pip install datasets huggingface_hub"

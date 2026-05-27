@@ -133,7 +133,7 @@ class YOLOPanel(QWidget):
         model_layout.addRow("Model:", model_row)
 
         load_btn = QPushButton("Load Model")
-        load_btn.setStyleSheet("background:#2980b9;color:white;font-weight:bold;")
+        load_btn.setStyleSheet("background:#1a5fa8;color:white;font-weight:bold;")
         load_btn.setToolTip(
             "Load a YOLO model.  Provide a local .pt path, or a model name "
             "(e.g. yolo11n.pt, yolo11n-seg.pt) to download automatically."
@@ -187,13 +187,13 @@ class YOLOPanel(QWidget):
         run_layout = QVBoxLayout(run_box)
 
         detect_btn = QPushButton("Run Detection")
-        detect_btn.setStyleSheet("background:#1a6fa8;color:white;font-weight:bold;")
+        detect_btn.setStyleSheet("background:#1a5fa8;color:white;font-weight:bold;")
         detect_btn.setToolTip("Run YOLO detection — adds bounding boxes as annotations")
         detect_btn.clicked.connect(self.detect_requested)
         run_layout.addWidget(detect_btn)
 
         seg_btn = QPushButton("Detect + Segment (YOLO-seg)")
-        seg_btn.setStyleSheet("background:#1a6fa8;color:white;")
+        seg_btn.setStyleSheet("background:#1a5fa8;color:white;")
         seg_btn.setToolTip(
             "Run YOLO segmentation (requires a YOLO-seg .pt model).\n"
             "Each detected object gets a precise polygon mask."
@@ -202,7 +202,7 @@ class YOLOPanel(QWidget):
         run_layout.addWidget(seg_btn)
 
         sam_btn = QPushButton("Pipe Boxes to SAM")
-        sam_btn.setStyleSheet("background:#7d3c98;color:white;")
+        sam_btn.setStyleSheet("background:#1a5fa8;color:white;")
         sam_btn.setToolTip(
             "Use detected bounding boxes as prompts for the loaded SAM model.\n"
             "Run detection first, then click this to generate precise masks.\n"
@@ -220,7 +220,7 @@ class YOLOPanel(QWidget):
 
         ar_row = QHBoxLayout()
         accept_btn = QPushButton("Accept All")
-        accept_btn.setStyleSheet("background:#27ae60;color:white;font-weight:bold;")
+        accept_btn.setStyleSheet("background:#00703C;color:white;font-weight:bold;")
         accept_btn.setToolTip("Keep all pending YOLO annotations as permanent ROIs")
         accept_btn.clicked.connect(self.accept_all_requested)
 
@@ -243,7 +243,7 @@ class YOLOPanel(QWidget):
     # ── public API ────────────────────────────────────────────────────────────
 
     def set_model_status(self, msg: str, loaded: bool = False) -> None:
-        color = "#27ae60" if loaded else "palette(mid)"
+        color = "#4dbb78" if loaded else "palette(mid)"
         self._model_status.setStyleSheet(f"font-size: 11px; color: {color};")
         self._model_status.setText(msg)
 

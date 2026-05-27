@@ -72,7 +72,32 @@ class DM4Image:
 
     def __init__(self) -> None:
         self.raw: Optional[np.ndarray] = None
+        self._frames: Optional[np.ndarray] = None  # (n, h, w) float32 — set when file is a movie
         self.meta: DM4Metadata = DM4Metadata()
+
+    # ── movie properties ──────────────────────────────────────────────────────
+
+    @property
+    def is_color(self) -> bool:
+        """True when raw is an (H, W, 3) RGB array (not grayscale, not a movie frame)."""
+        return self.raw is not None and self.raw.ndim == 3 and self.raw.shape[-1] == 3
+
+    @property
+    def is_movie(self) -> bool:
+        return self._frames is not None
+
+    @property
+    def n_frames(self) -> int:
+        return int(self._frames.shape[0]) if self._frames is not None else 0
+
+    @property
+    def frames(self) -> Optional[np.ndarray]:
+        return self._frames
+
+    def get_frame(self, i: int) -> np.ndarray:
+        if self._frames is None:
+            raise ValueError("Not a movie — no individual frames stored.")
+        return self._frames[i % self._frames.shape[0]].astype(np.float32)
 
     # ── convenience properties ────────────────────────────────────────────────
 
@@ -141,7 +166,16 @@ class DM4Image:
         dm = nio.dm.fileDM(str(filepath))
         dm.parseHeader()
         dataset = dm.getDataset(0)
-        self.raw = dataset["data"]
+        data = dataset["data"]
+        if data.ndim == 3:
+            self._frames = data.astype(np.float32)
+            self.raw = self._frames.mean(axis=0)
+        elif data.ndim > 3:
+            while data.ndim > 2:
+                data = data[0]
+            self.raw = data.astype(np.float32)
+        else:
+            self.raw = data.astype(np.float32)
         self.meta.shape    = self.raw.shape
         self.meta.filepath = filepath
         self.meta.filename = filepath.stem
@@ -177,10 +211,25 @@ class DM4Image:
     def _load_tiff(self, filepath: Path) -> None:
         import tifffile
         data = tifffile.imread(str(filepath))
-        # If multi-page or multi-channel, take the first 2-D slice
-        while data.ndim > 2:
-            data = data[0]
-        self.raw = data.astype(np.float32)
+        if data.ndim == 3:
+            if data.shape[-1] in (3, 4):
+                # Color image (H, W, 3/4) — preserve RGB
+                rgb = data[..., :3].astype(np.float32)
+                mx = float(rgb.max())
+                self.raw = rgb / mx if mx > 0 else rgb
+            elif data.shape[-1] in (1, 2):
+                # Single/dual channel — convert to grayscale
+                self.raw = data[..., 0].astype(np.float32)
+            else:
+                # Multi-frame stack (n_frames, H, W)
+                self._frames = data.astype(np.float32)
+                self.raw = self._frames.mean(axis=0)
+        elif data.ndim > 3:
+            while data.ndim > 2:
+                data = data[0]
+            self.raw = data.astype(np.float32)
+        else:
+            self.raw = data.astype(np.float32)
         self.meta.shape    = self.raw.shape
         self.meta.filepath = filepath
         self.meta.filename = filepath.stem
@@ -223,10 +272,15 @@ class DM4Image:
 
         with mrcfile.open(str(filepath), mode="r", permissive=True) as mrc:
             data = mrc.data.copy()
-            # MRC data can be 3-D (volume) — take the middle slice
             if data.ndim == 3:
-                data = data[data.shape[0] // 2]
-            self.raw = data.astype(np.float32)
+                self._frames = data.astype(np.float32)
+                self.raw = self._frames.mean(axis=0)
+            elif data.ndim > 3:
+                while data.ndim > 2:
+                    data = data[0]
+                self.raw = data.astype(np.float32)
+            else:
+                self.raw = data.astype(np.float32)
             self.meta.shape    = self.raw.shape
             self.meta.filepath = filepath
             self.meta.filename = filepath.stem
@@ -243,10 +297,15 @@ class DM4Image:
     def _load_image(self, filepath: Path) -> None:
         from PIL import Image as PILImage
         img = PILImage.open(str(filepath))
-        # Convert to grayscale float
-        if img.mode not in ("L", "I", "F"):
+        if img.mode in ("RGB", "RGBA"):
+            # Preserve color: store as (H, W, 3) float32 in [0, 1]
+            rgb = img.convert("RGB")
+            self.raw = np.array(rgb, dtype=np.float32) / 255.0
+        elif img.mode not in ("L", "I", "F"):
             img = img.convert("L")
-        self.raw = np.array(img, dtype=np.float32)
+            self.raw = np.array(img, dtype=np.float32)
+        else:
+            self.raw = np.array(img, dtype=np.float32)
         self.meta.shape    = self.raw.shape
         self.meta.filepath = filepath
         self.meta.filename = filepath.stem

@@ -66,7 +66,7 @@ class AnnotationPanel(QWidget):
         style_layout = QFormLayout(style_box)
 
         self._color_btn = QPushButton("  Colour  ")
-        self._color = QColor("#FFFF00")
+        self._color = QColor("#4dbb78")
         self._update_color_btn()
         self._color_btn.clicked.connect(self._pick_color)
         style_layout.addRow("Colour:", self._color_btn)
@@ -114,9 +114,9 @@ class AnnotationPanel(QWidget):
         roi_label_layout.addWidget(self._roi_label)
 
         preset_row = QHBoxLayout()
-        for preset, color in [("Foreground", "#00FF88"), ("Background", "#FF4444"), ("Ignore", "#AAAAAA")]:
+        for preset, color, fg in [("Foreground", "#00703C", "white"), ("Background", "#c0392b", "white"), ("Ignore", "#555555", "white")]:
             btn = QPushButton(preset)
-            btn.setStyleSheet(f"background:{color};color:black;font-size:10px;")
+            btn.setStyleSheet(f"background:{color};color:{fg};font-size:10px;")
             btn.clicked.connect(lambda _, p=preset: self._roi_label.setText(p))
             preset_row.addWidget(btn)
         roi_label_layout.addLayout(preset_row)
@@ -127,7 +127,7 @@ class AnnotationPanel(QWidget):
         self._hint = QLabel("")
         self._hint.setWordWrap(True)
         self._hint.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self._hint.setStyleSheet("color: #6c7086; font-size: 11px;")
+        self._hint.setStyleSheet("color: #888888; font-size: 11px;")
         layout.addWidget(self._hint)
 
         # ── selected annotation ───────────────────────────────────────────────
@@ -136,7 +136,7 @@ class AnnotationPanel(QWidget):
         sel_layout.setSpacing(4)
 
         self._sel_type_label = QLabel("None selected")
-        self._sel_type_label.setStyleSheet("font-size: 11px; color: #6c7086;")
+        self._sel_type_label.setStyleSheet("font-size: 11px; color: #888888;")
         sel_layout.addWidget(self._sel_type_label)
 
         label_row = QHBoxLayout()
@@ -152,7 +152,7 @@ class AnnotationPanel(QWidget):
         sel_layout.addLayout(label_row)
 
         del_sel_btn = QPushButton("Delete Selected")
-        del_sel_btn.setStyleSheet("background:#8b0000;color:white;")
+        del_sel_btn.setStyleSheet("background:#c0392b;color:white;")
         del_sel_btn.clicked.connect(self.delete_selected_requested)
         sel_layout.addWidget(del_sel_btn)
 
@@ -169,7 +169,7 @@ class AnnotationPanel(QWidget):
         layout.addLayout(btn_row)
 
         clear_prof_btn = QPushButton("Clear Profiles")
-        clear_prof_btn.setStyleSheet("background:#7b3f00;color:white;")
+        clear_prof_btn.setStyleSheet("background:#1a5fa8;color:white;")
         clear_prof_btn.setToolTip("Remove all line profile overlays from the canvas")
         layout.addWidget(clear_prof_btn)
         layout.addStretch()

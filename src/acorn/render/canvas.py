@@ -21,7 +21,9 @@ from acorn.render.scalebar import nice_scalebar_nm
 
 # Maximum pixels per side passed to imshow.  Full-res is kept in self._norm for
 # export / intensity readout; only the display copy is shrunk.
-_DISPLAY_MAX_DIM = 2048
+# The figure canvas is 800px at default 100 DPI; 1024 is a 1.28x oversample
+# which is sharper than needed while cutting draw() time from ~470ms to ~150ms.
+_DISPLAY_MAX_DIM = 1024
 
 
 def _make_display_array(norm: np.ndarray) -> np.ndarray:
@@ -130,10 +132,16 @@ class CryoCanvas:
         """
         if self._dm4 is None or self._dm4.raw is None:
             return
-        self._norm = precomputed_norm if precomputed_norm is not None else apply_contrast(self._dm4.raw, params)
-        self._img_artist.set_data(_make_display_array(self._norm))
-        self._img_artist.set_clim(0, 1)
-        self._img_artist.set_cmap(params.colormap)
+        if self._dm4.is_color:
+            # Color (H, W, 3) image — display as-is; derive grayscale luminance for _norm
+            rgb = np.clip(self._dm4.raw, 0.0, 1.0)
+            self._norm = (rgb[..., 0] * 0.2126 + rgb[..., 1] * 0.7152 + rgb[..., 2] * 0.0722)
+            self._img_artist.set_data(_make_display_array(rgb))
+        else:
+            self._norm = precomputed_norm if precomputed_norm is not None else apply_contrast(self._dm4.raw, params)
+            self._img_artist.set_data(_make_display_array(self._norm))
+            self._img_artist.set_clim(0, 1)
+            self._img_artist.set_cmap(params.colormap)
         self._bg_cache = None          # image changed — invalidate blit cache
         if self.renderer:
             self.renderer.render_noblit(self.store, self)   # full draw + cache bg
@@ -210,6 +218,19 @@ class CryoCanvas:
             if n == self._last_store_len + 1:
                 # single item appended — incremental add, blit only
                 self.renderer.add_one_blit(items[-1], self)
+            elif n == self._last_store_len - 1 and self._bg_cache is not None:
+                # single item removed (undo/delete) — fast path: remove artists + blit,
+                # avoiding the 400 ms full draw() that render_noblit would trigger.
+                current_ids = {id(ann) for ann in items}
+                for ann_id in list(self.renderer._ann_to_artists):
+                    if ann_id not in current_ids:
+                        stale = self.renderer._id_to_ann.get(ann_id)
+                        if stale is not None:
+                            self.renderer.remove_one(stale)
+                        else:
+                            self.renderer._ann_to_artists.pop(ann_id, None)
+                        break
+                self.blit_annotations()
             else:
                 self.renderer.render_noblit(self.store, self)
         else:
@@ -234,8 +255,8 @@ class CryoCanvas:
 
         self._img_artist.set_visible(False)
 
-        bg  = "#0d0d1a"
-        ink = "#7068b0"
+        bg  = "#1a1a1a"
+        ink = "#00703C"
         lw  = 1.6
 
         self.fig.set_facecolor(bg)
@@ -282,15 +303,15 @@ class CryoCanvas:
         # ── typography ────────────────────────────────────────────────────────
         _add_text(self.ax.text(
             0.5, 0.380, "ACORN",
-            ha="center", va="center", fontsize=38, fontweight="bold",
-            color="#8880c4", fontfamily="monospace",
+            ha="center", va="center", fontsize=34, fontweight="bold",
+            color="#4dbb78", fontfamily="monospace",
             transform=self.ax.transAxes, zorder=10,
         ))
 
         rule = mlines.Line2D(
             [0.32, 0.68], [0.342, 0.342],
             transform=self.ax.transAxes,
-            color="#2a2550", linewidth=0.8, zorder=9,
+            color="#363636", linewidth=0.8, zorder=9,
         )
         self.ax.add_artist(rule)
         self._splash_artists.append(rule)
@@ -299,14 +320,14 @@ class CryoCanvas:
             0.5, 0.319,
             "Annotate  \u00b7  Curate  \u00b7  Observe  \u00b7  Review  \u00b7  Navigate",
             ha="center", va="center", fontsize=9,
-            color="#45416a",
+            color="#888888",
             transform=self.ax.transAxes, zorder=10,
         ))
 
         _add_text(self.ax.text(
             0.5, 0.260, "Open file  \u2014  Ctrl+O",
             ha="center", va="center", fontsize=8.5,
-            color="#2c2848",
+            color="#888888",
             transform=self.ax.transAxes, zorder=10,
         ))
 
@@ -316,7 +337,7 @@ class CryoCanvas:
             0.97, 0.032,
             r"an $e^{-}$MM$\AA$ designed software",
             ha="right", va="bottom", fontsize=7.5,
-            color="#3a3660",
+            color="#555555",
             transform=self.ax.transAxes, zorder=10,
         ))
 

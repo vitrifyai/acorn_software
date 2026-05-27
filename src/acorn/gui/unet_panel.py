@@ -102,7 +102,7 @@ class UNetPanel(QWidget):
         ckpt_layout.addRow("Checkpoint:", ckpt_row)
 
         load_btn = QPushButton("Load Model")
-        load_btn.setStyleSheet("background:#2980b9;color:white;font-weight:bold;")
+        load_btn.setStyleSheet("background:#1a5fa8;color:white;font-weight:bold;")
         load_btn.setToolTip(
             "Load the model weights from the selected checkpoint.\n"
             "The architecture and encoder must match the checkpoint."
@@ -163,7 +163,7 @@ class UNetPanel(QWidget):
         infer_layout.addRow("Label:", self._label_combo)
 
         run_btn = QPushButton("Run Segmentation")
-        run_btn.setStyleSheet("background:#1a6fa8;color:white;font-weight:bold;")
+        run_btn.setStyleSheet("background:#1a5fa8;color:white;font-weight:bold;")
         run_btn.setToolTip("Run UNet segmentation on the current image")
         run_btn.clicked.connect(self.segment_requested)
         infer_layout.addRow("", run_btn)
@@ -177,7 +177,7 @@ class UNetPanel(QWidget):
 
         ar_row = QHBoxLayout()
         accept_btn = QPushButton("Accept All")
-        accept_btn.setStyleSheet("background:#27ae60;color:white;font-weight:bold;")
+        accept_btn.setStyleSheet("background:#00703C;color:white;font-weight:bold;")
         accept_btn.setToolTip("Keep all pending UNet masks as permanent ROI annotations")
         accept_btn.clicked.connect(self.accept_all_requested)
 
@@ -200,7 +200,7 @@ class UNetPanel(QWidget):
     # ── public API ────────────────────────────────────────────────────────────
 
     def set_model_status(self, msg: str, loaded: bool = False) -> None:
-        color = "#27ae60" if loaded else "palette(mid)"
+        color = "#4dbb78" if loaded else "palette(mid)"
         self._model_status.setStyleSheet(f"font-size: 11px; color: {color};")
         self._model_status.setText(msg)
 

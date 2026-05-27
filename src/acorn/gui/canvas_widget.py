@@ -23,7 +23,7 @@ _ANNOTATION_TOOLS = _DRAG_TOOLS | frozenset({
     "text", "scalebar", "distance", "line_profile", "angle", "roi",
 })
 
-_PREVIEW_COLOR = "#FFFF00"
+_PREVIEW_COLOR = "#4dbb78"
 _PREVIEW_LW    = 1.5
 _PREVIEW_ALPHA = 0.75
 
@@ -146,13 +146,14 @@ class CanvasWidget(QWidget):
         self._tool = tool
         self._cancel_drag()
         self.clear_rubber_band()
-        # Deactivate matplotlib toolbar zoom/pan so annotation clicks go through
-        if tool != "none":
-            from matplotlib.backend_bases import _Mode
-            if self._toolbar.mode is _Mode.ZOOM:
-                self._toolbar.zoom()
-            elif self._toolbar.mode is _Mode.PAN:
-                self._toolbar.pan()
+        # Always deactivate matplotlib toolbar zoom/pan so annotation clicks go through.
+        # This must run even when tool == "none" so a previously-active zoom/pan mode
+        # does not silently swallow subsequent canvas clicks.
+        from matplotlib.backend_bases import _Mode
+        if self._toolbar.mode is _Mode.ZOOM:
+            self._toolbar.zoom()
+        elif self._toolbar.mode is _Mode.PAN:
+            self._toolbar.pan()
         self._sync_cursor()
 
     def _sync_cursor(self) -> None:
@@ -172,7 +173,7 @@ class CanvasWidget(QWidget):
 
     def add_sam_point_marker(self, x: float, y: float, positive: bool, label: str = ""):
         """Draw a shaped marker at (x, y) for a SAM point prompt.  Returns a list of artists."""
-        color = "#44ff77" if positive else "#ff4444"
+        color = "#6CC24A" if positive else "#ff4444"
         marker = "P" if positive else "X"   # filled + vs filled x
         dot, = self.canvas.ax.plot(
             [x], [y], marker,
@@ -198,7 +199,7 @@ class CanvasWidget(QWidget):
         p1: tuple[float, float],
         p2: tuple[float, float],
         intensities,   # 1-D array-like, values in [0, 1]
-        color: str = "#00AAFF",
+        color: str = "#4dbb78",
     ) -> list:
         """Draw an intensity profile curve directly on the image canvas.
 
@@ -251,7 +252,7 @@ class CanvasWidget(QWidget):
         p1: tuple[float, float],
         p2: tuple[float, float],
         intensities,
-        color: str = "#00AAFF",
+        color: str = "#4dbb78",
     ) -> None:
         """Replace the live (in-progress) profile overlay with updated data."""
         import numpy as np
@@ -389,7 +390,7 @@ class CanvasWidget(QWidget):
         rw, rh = abs(x1 - x0), abs(y1 - y0)
         border = mpatches.Rectangle(
             (rx, ry), rw, rh,
-            linewidth=2.0, edgecolor="#00aacc", facecolor="none",
+            linewidth=2.0, edgecolor="#4dbb78", facecolor="none",
             linestyle="-", alpha=0.85, zorder=9,
         )
         self.canvas.ax.add_patch(border)
@@ -428,7 +429,7 @@ class CanvasWidget(QWidget):
         rw, rh = abs(x2 - x0), abs(y2 - y0)
         rect = mpatches.Rectangle(
             (rx, ry), rw, rh,
-            linewidth=1.5, edgecolor="#bf7fff", facecolor="none",
+            linewidth=1.5, edgecolor="#4d8ec4", facecolor="none",
             linestyle="--", alpha=0.9,
         )
         self.canvas.ax.add_patch(rect)

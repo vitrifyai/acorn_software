@@ -15,10 +15,10 @@ from typing import Optional
 
 from PyQt6.QtCore import Qt, QThread, QTimer, pyqtSignal
 from PyQt6.QtWidgets import (
-    QApplication, QComboBox, QDialog, QDialogButtonBox, QDockWidget, QFileDialog,
+    QApplication, QCheckBox, QComboBox, QDialog, QDialogButtonBox, QDockWidget, QFileDialog,
     QDoubleSpinBox, QFormLayout, QGroupBox, QLabel, QLineEdit, QListWidget, QListWidgetItem,
     QMainWindow, QMessageBox,
-    QHBoxLayout, QPushButton, QSplitter, QStatusBar,
+    QHBoxLayout, QPushButton, QSpinBox, QSplitter, QStatusBar,
     QTabWidget, QVBoxLayout, QWidget,
 )
 
@@ -324,6 +324,343 @@ class ImageLoadThread(QThread):
             self.error.emit(self._idx, str(exc))
 
 
+# ── background frame-processing thread ───────────────────────────────────────
+
+class FrameProcessThread(QThread):
+    """Run frame averaging/motion correction off the main thread."""
+
+    finished         = pyqtSignal(object)   # np.ndarray averaged result
+    shifts_available = pyqtSignal(object)   # np.ndarray (n,2) shifts — motion_corrected only
+    error            = pyqtSignal(str)
+
+    def __init__(self, frames, method: str, dose_per_frame: float = 1.0,
+                 pixel_size_nm: float = 1.0, parent=None) -> None:
+        super().__init__(parent)
+        self._frames         = frames
+        self._method         = method
+        self._dose_per_frame = dose_per_frame
+        self._pixel_size_nm  = pixel_size_nm
+
+    def run(self) -> None:
+        try:
+            from acorn.core.frame_processor import (
+                mean_average, motion_correct_frames, dose_weighted_average,
+            )
+            if self._method == "motion_corrected":
+                result, shifts = motion_correct_frames(self._frames)
+                self.finished.emit(result)
+                self.shifts_available.emit(shifts)
+            elif self._method == "dose_weighted":
+                result = dose_weighted_average(
+                    self._frames, self._dose_per_frame, self._pixel_size_nm
+                )
+                self.finished.emit(result)
+            else:
+                self.finished.emit(mean_average(self._frames))
+        except Exception as exc:
+            self.error.emit(str(exc))
+
+
+# ── motion plot dialog ────────────────────────────────────────────────────────
+
+class MotionPlotDialog(QDialog):
+    """Drift trajectory and per-frame displacement from motion correction."""
+
+    def __init__(
+        self,
+        shifts: "np.ndarray",       # (n_frames, 2) total (dy, dx) applied shifts
+        pixel_size_nm: float = 1.0,
+        start_frame: int = 1,
+        parent=None,
+    ) -> None:
+        super().__init__(parent)
+        self.setWindowTitle("Motion Correction — Drift Analysis")
+        self.setMinimumSize(960, 460)
+
+        import numpy as np
+        from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg
+        from matplotlib.figure import Figure
+        import matplotlib.cm as cm
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(6, 6, 6, 6)
+        layout.setSpacing(4)
+
+        n = len(shifts)
+        px_A  = pixel_size_nm * 10.0
+        calibrated = pixel_size_nm > 0 and pixel_size_nm != 1.0
+        unit  = "Å" if calibrated else "px"
+        scale = px_A if calibrated else 1.0
+
+        # Sample drift = where the sample WAS before correction (negative of applied shift)
+        drift_y =  shifts[:, 0] * scale   # row direction → Y
+        drift_x =  shifts[:, 1] * scale   # col direction → X
+        magnitude = np.sqrt(drift_y**2 + drift_x**2)
+        frame_nums = np.arange(start_frame, start_frame + n)
+
+        fig = Figure(figsize=(11.5, 4.2), facecolor="#1a1a1a")
+        canvas = FigureCanvasQTAgg(fig)
+        layout.addWidget(canvas, 1)
+
+        cmap = cm.plasma
+
+        # ── Left: drift trajectory ─────────────────────────────────────────
+        ax1 = fig.add_subplot(121)
+        ax1.set_facecolor("#1e2a30")
+
+        ax1.plot(drift_x, drift_y, color="#333", linewidth=0.9, zorder=1)
+        sc = ax1.scatter(
+            drift_x, drift_y,
+            c=frame_nums, cmap=cmap, s=22, zorder=2, edgecolors="none",
+        )
+        ax1.scatter(drift_x[0],  drift_y[0],  s=70, color="#4dbb78",
+                    zorder=3, marker="o", label=f"start (frame {start_frame})")
+        ax1.scatter(drift_x[-1], drift_y[-1], s=70, color="#c0392b",
+                    zorder=3, marker="s", label=f"end (frame {start_frame + n - 1})")
+
+        cbar = fig.colorbar(sc, ax=ax1, pad=0.02)
+        cbar.set_label("Frame", color="#e0e0e0", fontsize=9)
+        cbar.ax.yaxis.set_tick_params(color="#888", labelcolor="#e0e0e0")
+
+        ax1.axhline(0, color="#444", linewidth=0.5, linestyle="--")
+        ax1.axvline(0, color="#444", linewidth=0.5, linestyle="--")
+        ax1.set_xlabel(f"X drift ({unit})", color="#e0e0e0")
+        ax1.set_ylabel(f"Y drift ({unit})", color="#e0e0e0")
+        ax1.set_title("Drift trajectory", color="#4dbb78", fontweight="bold")
+        ax1.tick_params(colors="#888", labelcolor="#e0e0e0")
+        for sp in ax1.spines.values():
+            sp.set_edgecolor("#333")
+        ax1.legend(fontsize=8, facecolor="#1e2a30", edgecolor="#444",
+                   labelcolor="#e0e0e0", loc="best")
+
+        # ── Right: per-frame displacement ──────────────────────────────────
+        ax2 = fig.add_subplot(122)
+        ax2.set_facecolor("#1e2a30")
+
+        bar_colors = [cmap(i / max(n - 1, 1)) for i in range(n)]
+        ax2.bar(frame_nums, magnitude, color=bar_colors, width=max(0.8, n * 0.006))
+        ax2.set_xlabel("Frame", color="#e0e0e0")
+        ax2.set_ylabel(f"Displacement ({unit})", color="#e0e0e0")
+        ax2.set_title("Per-frame displacement", color="#4dbb78", fontweight="bold")
+        ax2.tick_params(colors="#888", labelcolor="#e0e0e0")
+        for sp in ax2.spines.values():
+            sp.set_edgecolor("#333")
+
+        # ── Summary footer ─────────────────────────────────────────────────
+        total_path   = float(np.sum(np.sqrt(np.diff(drift_x)**2 + np.diff(drift_y)**2)))
+        max_disp     = float(magnitude.max())
+        mean_disp    = float(magnitude.mean())
+        info = (
+            f"Frames {start_frame}–{start_frame + n - 1}  |  "
+            f"Max displacement: {max_disp:.2f} {unit}  |  "
+            f"Mean: {mean_disp:.2f} {unit}  |  "
+            f"Total drift path: {total_path:.2f} {unit}"
+        )
+        fig.text(0.5, 0.005, info, ha="center", color="#888", fontsize=9)
+        fig.tight_layout(rect=[0, 0.04, 1, 1])
+        canvas.draw()
+
+        close_btn = QPushButton("Close")
+        close_btn.clicked.connect(self.accept)
+        layout.addWidget(close_btn)
+
+
+# ── dose series dialog ────────────────────────────────────────────────────────
+
+class DoseSeriesDialog(QDialog):
+    """
+    Splits the movie into equal dose bins and displays per-bin averages plus
+    difference images to visualise dose-dependent structural changes.
+    """
+
+    def __init__(
+        self,
+        frames: "np.ndarray",       # (n, H, W) float32
+        pixel_size_nm: float = 1.0,
+        dose_per_frame: float = 1.0,
+        start_frame: int = 1,
+        parent=None,
+    ) -> None:
+        super().__init__(parent)
+        self.setWindowTitle("Dose Series — Frame Comparison")
+        self.setMinimumSize(1100, 560)
+
+        self._frames        = frames
+        self._px_nm         = pixel_size_nm
+        self._start_frame   = start_frame
+
+        from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg
+        from matplotlib.figure import Figure
+        self._Figure        = Figure
+        self._FigureCanvas  = FigureCanvasQTAgg
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(6, 6, 6, 6)
+        layout.setSpacing(4)
+
+        # ── controls ──────────────────────────────────────────────────────
+        ctrl = QHBoxLayout()
+        ctrl.setSpacing(10)
+
+        ctrl.addWidget(QLabel("Bins:"))
+        self._n_bins_spin = QSpinBox()
+        self._n_bins_spin.setRange(2, min(20, len(frames)))
+        self._n_bins_spin.setValue(min(4, len(frames)))
+        self._n_bins_spin.setFixedWidth(56)
+        self._n_bins_spin.setToolTip("Number of equal-dose bins to split the movie into")
+        ctrl.addWidget(self._n_bins_spin)
+
+        ctrl.addWidget(QLabel("Dose/frame (e/Å²):"))
+        self._dose_spin = QDoubleSpinBox()
+        self._dose_spin.setRange(0.0, 200.0)
+        self._dose_spin.setValue(max(0.0, dose_per_frame))
+        self._dose_spin.setDecimals(2)
+        self._dose_spin.setFixedWidth(72)
+        self._dose_spin.setToolTip(
+            "Electron dose per frame — used to label cumulative dose on each bin. "
+            "Set to 0 to show frame numbers only."
+        )
+        ctrl.addWidget(self._dose_spin)
+
+        self._diff_chk = QCheckBox("Show difference from first bin")
+        self._diff_chk.setChecked(True)
+        self._diff_chk.setToolTip(
+            "Show a second row with (bin N) − (bin 1) difference images.\n"
+            "Blue = signal decreased; red = signal increased with dose."
+        )
+        ctrl.addWidget(self._diff_chk)
+
+        ctrl.addStretch()
+
+        update_btn = QPushButton("Update")
+        update_btn.setStyleSheet("background:#00703C;color:white;font-weight:bold;")
+        update_btn.setFixedWidth(70)
+        update_btn.clicked.connect(self._update_figure)
+        ctrl.addWidget(update_btn)
+        layout.addLayout(ctrl)
+
+        # ── figure ────────────────────────────────────────────────────────
+        self._fig    = self._Figure(facecolor="#1a1a1a")
+        self._canvas = self._FigureCanvas(self._fig)
+        layout.addWidget(self._canvas, 1)
+
+        # ── close button ──────────────────────────────────────────────────
+        close_btn = QPushButton("Close")
+        close_btn.setFixedWidth(70)
+        close_btn.clicked.connect(self.accept)
+        btn_row = QHBoxLayout()
+        btn_row.addStretch()
+        btn_row.addWidget(close_btn)
+        layout.addLayout(btn_row)
+
+        # Auto-update when controls change
+        self._n_bins_spin.valueChanged.connect(self._update_figure)
+        self._diff_chk.stateChanged.connect(self._update_figure)
+        self._update_figure()
+
+    def _update_figure(self) -> None:
+        import numpy as np
+        from acorn.core.frame_processor import dose_series
+
+        n_bins   = self._n_bins_spin.value()
+        dose_pf  = self._dose_spin.value()
+        show_diff = self._diff_chk.isChecked()
+        n_total  = len(self._frames)
+
+        averages, ranges = dose_series(self._frames, n_bins)
+
+        # Global contrast for the raw-average row (consistent across bins)
+        all_vals = np.concatenate([a.ravel() for a in averages])
+        vmin, vmax = np.percentile(all_vals, [0.5, 99.5])
+
+        # Difference row: symmetric ± range across all non-reference diffs
+        ref = averages[0]
+        diffs = [a - ref for a in averages]
+        if n_bins > 1:
+            max_abs = max(float(np.abs(d).max()) for d in diffs[1:])
+            max_abs = max(max_abs, 1e-6)
+        else:
+            max_abs = 1.0
+
+        n_rows = 2 if show_diff else 1
+        self._fig.clear()
+
+        calibrated = self._px_nm > 0 and self._px_nm != 1.0
+
+        for col, (avg, (s, e)) in enumerate(zip(averages, ranges)):
+            frame_s = s + self._start_frame
+            frame_e = e + self._start_frame - 1
+
+            # cumulative dose label
+            if dose_pf > 0:
+                cum_start = s       * dose_pf
+                cum_end   = (e - 1) * dose_pf
+                dose_label = f"\n{cum_start:.1f}–{cum_end:.1f} e/Å²"
+            else:
+                dose_label = ""
+
+            title = (
+                f"Bin {col + 1}{'  (ref)' if col == 0 else ''}\n"
+                f"Frames {frame_s}–{frame_e}{dose_label}"
+            )
+
+            ax = self._fig.add_subplot(n_rows, n_bins, col + 1)
+            ax.imshow(avg, cmap="gray", vmin=vmin, vmax=vmax,
+                      aspect="equal", interpolation="nearest")
+            ax.set_facecolor("#1e2a30")
+            ax.set_title(title, color="#4dbb78" if col == 0 else "#e0e0e0",
+                         fontsize=8, pad=3)
+            ax.axis("off")
+
+            if show_diff:
+                ax2 = self._fig.add_subplot(n_rows, n_bins, n_bins + col + 1)
+                ax2.set_facecolor("#1e2a30")
+                if col == 0:
+                    ax2.text(
+                        0.5, 0.5, "reference\n(no diff)",
+                        ha="center", va="center", color="#666",
+                        fontsize=9, transform=ax2.transAxes,
+                    )
+                    ax2.axis("off")
+                else:
+                    diff = diffs[col]
+                    im = ax2.imshow(
+                        diff, cmap="RdBu_r",
+                        vmin=-max_abs, vmax=max_abs,
+                        aspect="equal", interpolation="nearest",
+                    )
+                    self._fig.colorbar(im, ax=ax2, fraction=0.046, pad=0.02,
+                                       format="%.2g").ax.yaxis.set_tick_params(
+                        color="#888", labelcolor="#aaa", labelsize=7)
+                    ax2.set_title(
+                        f"Δ bin {col + 1} − bin 1",
+                        color="#c0392b", fontsize=8, pad=3,
+                    )
+                    ax2.axis("off")
+
+        # Row labels on the left edge
+        if n_rows >= 1:
+            self._fig.text(0.005, 0.75 if show_diff else 0.5,
+                           "Dose average", va="center", rotation=90,
+                           color="#4dbb78", fontsize=9)
+        if show_diff:
+            self._fig.text(0.005, 0.25,
+                           "Δ vs bin 1", va="center", rotation=90,
+                           color="#c0392b", fontsize=9)
+
+        # Footer
+        frame_range = f"Frames {self._start_frame}–{self._start_frame + n_total - 1}"
+        dose_total  = f"  |  Total dose: {n_total * dose_pf:.1f} e/Å²" if dose_pf > 0 else ""
+        self._fig.text(
+            0.5, 0.003,
+            f"{frame_range}  |  {n_bins} bins  ({n_total // n_bins} frames/bin approx){dose_total}",
+            ha="center", color="#888", fontsize=8,
+        )
+
+        self._fig.tight_layout(rect=[0.015, 0.03, 1, 1])
+        self._canvas.draw()
+
+
 # ── main window ───────────────────────────────────────────────────────────────
 
 class _PngMaskMapDialog(QDialog):
@@ -349,7 +686,7 @@ class _PngMaskMapDialog(QDialog):
             swatch = QLabel()
             swatch.setFixedSize(24, 24)
             swatch.setStyleSheet(
-                f"background: rgb({r},{g},{b}); border: 1px solid #555; border-radius: 3px;"
+                f"background: rgb({r},{g},{b}); border: 1px solid #363636; border-radius: 3px;"
             )
             count_lbl = QLabel(f"{count:,} px")
             count_lbl.setFixedWidth(80)
@@ -363,7 +700,7 @@ class _PngMaskMapDialog(QDialog):
 
         btns = QHBoxLayout()
         ok_btn = QPushButton("Import")
-        ok_btn.setStyleSheet("background:#27ae60;color:white;font-weight:bold;")
+        ok_btn.setStyleSheet("background:#00703C;color:white;font-weight:bold;")
         ok_btn.clicked.connect(self.accept)
         cancel_btn = QPushButton("Cancel")
         cancel_btn.clicked.connect(self.reject)
@@ -396,30 +733,30 @@ class MainWindow(QMainWindow):
                 font-size: 12px;
             }
             QMainWindow, QDialog {
-                background-color: #1e1e2e;
+                background-color: #1a1a1a;
             }
             QWidget {
-                color: #cdd6f4;
+                color: #e0e0e0;
             }
             QSplitter {
-                background: #1e1e2e;
+                background: #1a1a1a;
             }
             QSplitter::handle {
-                background: #313244;
+                background: #252525;
                 width: 2px;
                 height: 2px;
             }
             QTabWidget::pane {
-                background: #1e1e2e;
-                border: 1px solid #45475a;
+                background: #1a1a1a;
+                border: 1px solid #363636;
                 border-top: none;
             }
             QTabBar {
-                background: #1e1e2e;
+                background: #1a1a1a;
             }
             QTabBar::tab {
-                background: #313244;
-                color: #a6adc8;
+                background: #252525;
+                color: #888888;
                 padding: 6px 13px;
                 min-width: 58px;
                 border-top-left-radius: 5px;
@@ -427,21 +764,21 @@ class MainWindow(QMainWindow):
                 margin-right: 2px;
             }
             QTabBar::tab:selected {
-                background: #7c3aed;
+                background: #00703C;
                 color: #ffffff;
                 font-weight: bold;
             }
             QTabBar::tab:hover:!selected {
-                background: #45475a;
-                color: #cdd6f4;
+                background: #363636;
+                color: #e0e0e0;
             }
             QGroupBox {
                 font-weight: bold;
-                border: 1px solid #45475a;
+                border: 1px solid #363636;
                 border-radius: 6px;
                 margin-top: 10px;
                 padding: 8px 4px 4px 4px;
-                color: #89b4fa;
+                color: #4dbb78;
             }
             QGroupBox::title {
                 subcontrol-origin: margin;
@@ -449,99 +786,99 @@ class MainWindow(QMainWindow):
                 padding: 0 6px;
             }
             QLabel {
-                color: #cdd6f4;
+                color: #e0e0e0;
             }
             QPushButton {
-                background: #313244;
-                color: #cdd6f4;
+                background: #252525;
+                color: #e0e0e0;
                 padding: 4px 12px;
                 min-height: 26px;
-                border: 1px solid #45475a;
+                border: 1px solid #363636;
                 border-radius: 5px;
                 font-weight: 500;
             }
             QPushButton:hover {
-                background: #45475a;
-                border-color: #89b4fa;
+                background: #363636;
+                border-color: #4dbb78;
                 color: #ffffff;
             }
             QPushButton:pressed {
-                background: #181825;
+                background: #141414;
             }
             QComboBox, QDoubleSpinBox, QSpinBox, QLineEdit {
-                background: #313244;
-                color: #cdd6f4;
+                background: #252525;
+                color: #e0e0e0;
                 padding: 3px 6px;
                 min-height: 24px;
-                border: 1px solid #45475a;
+                border: 1px solid #363636;
                 border-radius: 4px;
             }
             QComboBox:focus, QDoubleSpinBox:focus, QSpinBox:focus, QLineEdit:focus {
-                border-color: #a6e3a1;
+                border-color: #4dbb78;
             }
             QComboBox::drop-down {
                 border: none;
                 padding-right: 4px;
             }
             QRadioButton {
-                color: #cdd6f4;
+                color: #e0e0e0;
                 spacing: 6px;
             }
             QRadioButton::indicator {
                 width: 14px;
                 height: 14px;
                 border-radius: 7px;
-                border: 2px solid #585b70;
-                background: #313244;
+                border: 2px solid #454545;
+                background: #252525;
             }
             QRadioButton::indicator:checked {
-                background: #cba6f7;
-                border-color: #cba6f7;
+                background: #1a5fa8;
+                border-color: #1a5fa8;
             }
             QRadioButton::indicator:hover {
-                border-color: #89b4fa;
+                border-color: #4dbb78;
             }
             QCheckBox {
-                color: #cdd6f4;
+                color: #e0e0e0;
                 spacing: 6px;
             }
             QCheckBox::indicator {
                 width: 14px;
                 height: 14px;
                 border-radius: 3px;
-                border: 2px solid #585b70;
-                background: #313244;
+                border: 2px solid #454545;
+                background: #252525;
             }
             QCheckBox::indicator:checked {
-                background: #a6e3a1;
-                border-color: #a6e3a1;
+                background: #00703C;
+                border-color: #00703C;
             }
             QCheckBox::indicator:hover {
-                border-color: #89b4fa;
+                border-color: #4dbb78;
             }
             QSlider::groove:horizontal {
                 height: 5px;
                 border-radius: 2px;
-                background: #45475a;
+                background: #363636;
             }
             QSlider::handle:horizontal {
                 width: 14px;
                 height: 14px;
                 margin: -5px 0;
                 border-radius: 7px;
-                background: #89b4fa;
+                background: #4dbb78;
             }
             QSlider::sub-page:horizontal {
-                background: #7c3aed;
+                background: #00703C;
                 border-radius: 2px;
             }
             QScrollBar:vertical {
-                background: #1e1e2e;
+                background: #1a1a1a;
                 width: 10px;
                 margin: 0;
             }
             QScrollBar::handle:vertical {
-                background: #585b70;
+                background: #454545;
                 border-radius: 5px;
                 min-height: 20px;
             }
@@ -549,12 +886,12 @@ class MainWindow(QMainWindow):
                 height: 0;
             }
             QScrollBar:horizontal {
-                background: #1e1e2e;
+                background: #1a1a1a;
                 height: 10px;
                 margin: 0;
             }
             QScrollBar::handle:horizontal {
-                background: #585b70;
+                background: #454545;
                 border-radius: 5px;
                 min-width: 20px;
             }
@@ -562,9 +899,9 @@ class MainWindow(QMainWindow):
                 width: 0;
             }
             QMenuBar {
-                background: #181825;
-                color: #cdd6f4;
-                border-bottom: 1px solid #45475a;
+                background: #141414;
+                color: #e0e0e0;
+                border-bottom: 1px solid #363636;
                 padding: 2px;
             }
             QMenuBar::item {
@@ -572,12 +909,12 @@ class MainWindow(QMainWindow):
                 border-radius: 4px;
             }
             QMenuBar::item:selected {
-                background: #45475a;
+                background: #363636;
             }
             QMenu {
-                background: #1e1e2e;
-                color: #cdd6f4;
-                border: 1px solid #45475a;
+                background: #1a1a1a;
+                color: #e0e0e0;
+                border: 1px solid #363636;
                 border-radius: 6px;
                 padding: 4px;
             }
@@ -586,41 +923,41 @@ class MainWindow(QMainWindow):
                 border-radius: 4px;
             }
             QMenu::item:selected {
-                background: #313244;
-                color: #cba6f7;
+                background: #252525;
+                color: #4d8ec4;
             }
             QMenu::separator {
                 height: 1px;
-                background: #45475a;
+                background: #363636;
                 margin: 4px 8px;
             }
             QStatusBar {
-                background: #181825;
-                color: #a6adc8;
-                border-top: 1px solid #45475a;
+                background: #141414;
+                color: #888888;
+                border-top: 1px solid #363636;
                 font-size: 11px;
             }
             QMessageBox {
-                background: #1e1e2e;
+                background: #1a1a1a;
             }
             QAbstractItemView {
-                background: #313244;
-                color: #cdd6f4;
-                border: 1px solid #45475a;
-                selection-background-color: #7c3aed;
+                background: #252525;
+                color: #e0e0e0;
+                border: 1px solid #363636;
+                selection-background-color: #00703C;
                 selection-color: #ffffff;
-                alternate-background-color: #1e1e2e;
+                alternate-background-color: #1a1a1a;
             }
             QHeaderView::section {
-                background: #1e1e2e;
-                color: #89b4fa;
+                background: #1a1a1a;
+                color: #4dbb78;
                 border: none;
-                border-bottom: 1px solid #45475a;
+                border-bottom: 1px solid #363636;
                 padding: 4px 6px;
                 font-weight: bold;
             }
             QToolBar {
-                background: #181825;
+                background: #141414;
                 border: none;
                 spacing: 3px;
             }
@@ -629,38 +966,38 @@ class MainWindow(QMainWindow):
                 border: none;
                 border-radius: 4px;
                 padding: 3px;
-                color: #cdd6f4;
+                color: #e0e0e0;
             }
             QToolButton:hover {
-                background: #45475a;
+                background: #363636;
             }
             QToolButton:checked, QToolButton:pressed {
-                background: #313244;
+                background: #252525;
             }
             QDockWidget {
-                color: #cdd6f4;
+                color: #e0e0e0;
                 font-weight: bold;
             }
             QDockWidget::title {
-                background: #181825;
+                background: #141414;
                 padding: 4px 6px;
-                border-bottom: 1px solid #45475a;
+                border-bottom: 1px solid #363636;
             }
             QListWidget {
-                background: #1e1e2e;
+                background: #1a1a1a;
                 border: none;
                 font-size: 11px;
             }
             QListWidget::item {
                 padding: 5px 8px;
-                border-bottom: 1px solid #313244;
+                border-bottom: 1px solid #252525;
             }
             QListWidget::item:selected {
-                background: #7c3aed;
+                background: #00703C;
                 color: #ffffff;
             }
             QListWidget::item:hover:!selected {
-                background: #313244;
+                background: #252525;
             }
         """)
 
@@ -676,6 +1013,9 @@ class MainWindow(QMainWindow):
         self._contrast_states: dict[int, ContrastParams] = {}
         self._ann_states: dict[int, list] = {}   # per-image annotation snapshots
         self._image_load_thread: Optional[ImageLoadThread] = None  # active background load
+        self._frame_proc_thread: Optional[FrameProcessThread] = None
+        self._last_motion_shifts = None    # (n_frames, 2) shifts from last motion correction
+        self._last_motion_start_frame = 1  # which frame the plot starts at
         self._pending_contrast: Optional[ContrastParams] = None
         self._contrast_timer = QTimer()
         self._contrast_timer.setSingleShot(True)
@@ -690,6 +1030,7 @@ class MainWindow(QMainWindow):
         # SAM state
         self._sam_predictor = None      # SAMPredictor, loaded on demand
         self._sam_thread: Optional[SAMThread] = None   # active background thread
+        self._batch_proc: Optional[dict] = None        # active batch-SAM state machine
         self._sam_mode: Optional[str] = None   # "pos_point" | "neg_point" | "box" | "exclude_zone" | "crop_region"
         self._sam_box_click: Optional[tuple[float, float]] = None
         self._pending_sam_masks: list = []
@@ -719,10 +1060,17 @@ class MainWindow(QMainWindow):
         # ── central splitter ──────────────────────────────────────────────────
         splitter = QSplitter(Qt.Orientation.Horizontal)
 
-        # canvas
+        # canvas + movie bar
         self._canvas_widget = CanvasWidget()
         self._canvas_widget.canvas.store.on_change(self._on_store_changed_autosave)
-        splitter.addWidget(self._canvas_widget)
+        _canvas_container = QWidget()
+        _canvas_vbox = QVBoxLayout(_canvas_container)
+        _canvas_vbox.setContentsMargins(0, 0, 0, 0)
+        _canvas_vbox.setSpacing(0)
+        _canvas_vbox.addWidget(self._canvas_widget, 1)
+        self._movie_bar = self._build_movie_bar()
+        _canvas_vbox.addWidget(self._movie_bar)
+        splitter.addWidget(_canvas_container)
 
         # right control panel
         control = QTabWidget()
@@ -754,7 +1102,8 @@ class MainWindow(QMainWindow):
         for plugin in self._plugins:
             try:
                 panel = plugin.create_panel()
-                control.addTab(panel, plugin.TAB_LABEL)
+                if panel is not None:
+                    control.addTab(panel, plugin.TAB_LABEL)
             except Exception as _plugin_exc:
                 import logging as _logging
                 _logging.getLogger(__name__).warning(
@@ -778,7 +1127,7 @@ class MainWindow(QMainWindow):
         self._px_btn.setFlat(True)
         self._px_btn.setToolTip("Click to set pixel size manually")
         self._px_btn.setStyleSheet(
-            "QPushButton { color: #aaaaaa; font-size: 11px; padding: 0 6px; border: none; }"
+            "QPushButton { color: #888888; font-size: 11px; padding: 0 6px; border: none; }"
             "QPushButton:hover { color: #ffffff; text-decoration: underline; }"
         )
         self._px_btn.clicked.connect(self._on_edit_pixel_size)
@@ -786,7 +1135,7 @@ class MainWindow(QMainWindow):
 
         # ── image list dock ───────────────────────────────────────────────────
         self._image_list = QListWidget()
-        self._image_list.setFixedWidth(220)
+        self._image_list.setMinimumWidth(120)
         self._image_list.currentRowChanged.connect(self._on_image_list_select)
         self._image_list.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self._image_list.customContextMenuRequested.connect(self._on_image_list_context_menu)
@@ -890,6 +1239,9 @@ class MainWindow(QMainWindow):
         self._train_panel.load_unet_requested.connect(self._on_train_load_unet)
         self._train_thread: Optional[SAMThread] = None
         self._train_proc = None
+
+        # LLM assistant action dispatcher
+        self._context.action_requested.connect(self._on_action_requested)
 
         # Intercept key events from all child widgets (e.g. matplotlib canvas
         # consumes key events and never lets them reach MainWindow.keyPressEvent)
@@ -1072,23 +1424,25 @@ class MainWindow(QMainWindow):
             path.write_text(json.dumps(data))
         except OSError:
             pass  # NAS write failure — silently skip, in-memory state is preserved
-        self._save_annotated_overlay(idx)
 
-    def _save_annotated_overlay(self, idx: int) -> None:
-        """Render the current image with annotations overlaid and save to annotated/ subfolder.
-
-        Saves to: {image_parent}/annotated/{stem}_annotated.png
-        Only runs when idx matches the currently displayed image (norm array is in memory).
-        Silently skips if the norm image is unavailable or PIL is not installed.
-        """
-        if idx != self._img_idx:
-            return
+        # PNG overlay save is slow (PIL encode + disk write); run off the main thread
+        # so the GUI never freezes waiting for it.
         norm = self._canvas_widget.canvas.norm_image
-        if norm is None:
+        if norm is None or idx < 0 or idx >= len(self._image_paths):
             return
-        if idx < 0 or idx >= len(self._image_paths):
-            return
-        src_path = self._image_paths[idx]
+        src_path  = self._image_paths[idx]
+        ann_snap  = list(self._canvas_widget.canvas.store)  # snapshot for the thread
+        norm_copy = norm.copy()
+        import threading
+        threading.Thread(
+            target=self._save_annotated_overlay_bg,
+            args=(norm_copy, src_path, ann_snap),
+            daemon=True,
+        ).start()
+
+    @staticmethod
+    def _save_annotated_overlay_bg(norm, src_path, anns) -> None:
+        """Save annotated overlay PNG — runs on a background thread, no GUI access."""
         try:
             import numpy as np
             from PIL import Image as _PILImage, ImageDraw as _ImageDraw
@@ -1112,7 +1466,7 @@ class MainWindow(QMainWindow):
             except ValueError:
                 return (255, 140, 0)
 
-        for ann in self._canvas_widget.canvas.store:
+        for ann in anns:
             color = _hex_to_rgb(getattr(ann, "color", "#FF8C00"))
             lw = max(1, int(getattr(ann, "linewidth", 2.0)))
             t = ann.type
@@ -1338,7 +1692,13 @@ class MainWindow(QMainWindow):
         path = self._image_paths[idx]
         # Resolve contrast params now (before thread starts) so the
         # background thread can pre-compute the normalised image.
-        contrast_params = self._contrast_states.get(idx) or self._contrast_panel.params()
+        # For cryo-EM formats with no saved state, default to bandpass so the
+        # background thread computes the norm with the correct params from the start.
+        _EM_EXTS = {".dm4", ".mrc", ".mrcs"}
+        contrast_params = (
+            self._contrast_states.get(idx)
+            or (ContrastParams(method="bandpass") if path.suffix.lower() in _EM_EXTS else self._contrast_panel.params())
+        )
         self._statusbar.showMessage(f"Loading {path.name}…")
         self._image_load_thread = ImageLoadThread(idx, path, contrast_params, parent=self)
         self._image_load_thread.finished.connect(self._on_image_loaded)
@@ -1400,8 +1760,16 @@ class MainWindow(QMainWindow):
         saved_contrast = self._contrast_states.get(idx)
         if saved_contrast is not None:
             self._contrast_panel.set_params(saved_contrast)
+        elif img.filepath and img.filepath.suffix.lower() in (".dm4", ".mrc", ".mrcs"):
+            # Cryo-EM formats — bandpass is the correct default
+            _em_default = ContrastParams(method="bandpass")
+            self._contrast_panel.set_params(_em_default)
+            self._contrast_states[idx] = _em_default
+        elif img.is_color:
+            pass  # color images — display as-is, don't touch the contrast panel
         # Pass pre-computed norm so canvas.load_image skips apply_contrast on the main thread
         canvas.load_image(img, self._contrast_panel.params(), precomputed_norm=precomputed_norm)
+        self._update_movie_bar(img)
 
         # Invalidate SAM embedding cache — new image, old embedding is stale
         if self._sam_predictor is not None:
@@ -1459,10 +1827,10 @@ class MainWindow(QMainWindow):
         manually_set = self._img_idx in self._px_overrides
         if from_header:
             text  = f"{px_nm:.4f} nm/px  (header)"
-            color = "#88ccff"
+            color = "#4dbb78"
         elif manually_set:
             text  = f"{px_nm:.4f} nm/px  (manual)"
-            color = "#ffcc66"
+            color = "#4d8ec4"
         else:
             text  = "px: not set  (click to enter)"
             color = "#ff6b6b"
@@ -1723,6 +2091,267 @@ class MainWindow(QMainWindow):
             ann.label = new_label
             self._canvas_widget.canvas.store._notify()
             self._statusbar.showMessage(f"Renamed to: {new_label}")
+
+    # ── movie bar ─────────────────────────────────────────────────────────────
+
+    def _build_movie_bar(self) -> QWidget:
+        bar = QWidget()
+        bar.setStyleSheet("background:#1a2535;border-top:1px solid #2a3a4a;")
+        bar.hide()
+
+        row = QHBoxLayout(bar)
+        row.setContentsMargins(8, 4, 8, 4)
+        row.setSpacing(10)
+
+        self._movie_label = QLabel("Movie: 0 frames")
+        self._movie_label.setStyleSheet("color:#aaaaaa;font-size:11px;")
+        row.addWidget(self._movie_label)
+
+        row.addWidget(QLabel("Method:"))
+        self._movie_method_combo = QComboBox()
+        self._movie_method_combo.addItem("Mean average",      "mean")
+        self._movie_method_combo.addItem("Motion-corrected",  "motion_corrected")
+        self._movie_method_combo.addItem("Dose-weighted",     "dose_weighted")
+        self._movie_method_combo.setFixedWidth(160)
+        self._movie_method_combo.currentIndexChanged.connect(self._on_movie_method_ui_changed)
+        row.addWidget(self._movie_method_combo)
+
+        self._movie_dose_label = QLabel("Dose e/A²/frame:")
+        self._movie_dose_label.setStyleSheet("font-size:11px;")
+        self._movie_dose_label.hide()
+        row.addWidget(self._movie_dose_label)
+
+        self._movie_dose_spin = QDoubleSpinBox()
+        self._movie_dose_spin.setRange(0.01, 200.0)
+        self._movie_dose_spin.setValue(1.0)
+        self._movie_dose_spin.setDecimals(2)
+        self._movie_dose_spin.setFixedWidth(72)
+        self._movie_dose_spin.hide()
+        row.addWidget(self._movie_dose_spin)
+
+        row.addWidget(QLabel("Frames:"))
+        self._movie_start_spin = QSpinBox()
+        self._movie_start_spin.setRange(1, 1)
+        self._movie_start_spin.setValue(1)
+        self._movie_start_spin.setFixedWidth(64)
+        self._movie_start_spin.setToolTip("First frame to include in compression (1 = frame 1)")
+        row.addWidget(self._movie_start_spin)
+        row.addWidget(QLabel("to"))
+        self._movie_end_spin = QSpinBox()
+        self._movie_end_spin.setRange(1, 1)
+        self._movie_end_spin.setValue(1)
+        self._movie_end_spin.setFixedWidth(64)
+        self._movie_end_spin.setToolTip("Last frame to include in compression")
+        row.addWidget(self._movie_end_spin)
+
+        apply_btn = QPushButton("Apply")
+        apply_btn.setFixedWidth(56)
+        apply_btn.setStyleSheet("background:#00703C;color:white;font-weight:bold;")
+        apply_btn.clicked.connect(self._on_movie_apply_clicked)
+        row.addWidget(apply_btn)
+
+        row.addSpacing(16)
+        row.addWidget(QLabel("View frame:"))
+        self._movie_frame_spin = QSpinBox()
+        self._movie_frame_spin.setRange(0, 0)
+        self._movie_frame_spin.setSpecialValueText("avg")
+        self._movie_frame_spin.setFixedWidth(72)
+        self._movie_frame_spin.setToolTip("0 = averaged view  |  1..N = jump to individual frame")
+        self._movie_frame_spin.valueChanged.connect(self._on_movie_frame_changed)
+        row.addWidget(self._movie_frame_spin)
+
+        row.addSpacing(16)
+        self._motion_plot_btn = QPushButton("Motion plot")
+        self._motion_plot_btn.setFixedWidth(96)
+        self._motion_plot_btn.setStyleSheet(
+            "background:#1a5fa8;color:white;font-weight:bold;"
+        )
+        self._motion_plot_btn.setToolTip(
+            "Show drift trajectory and per-frame displacement from the last motion correction"
+        )
+        self._motion_plot_btn.clicked.connect(self._on_motion_plot_clicked)
+        self._motion_plot_btn.hide()
+        row.addWidget(self._motion_plot_btn)
+
+        self._dose_series_btn = QPushButton("Dose series")
+        self._dose_series_btn.setFixedWidth(96)
+        self._dose_series_btn.setStyleSheet(
+            "background:#5a3a8a;color:white;font-weight:bold;"
+        )
+        self._dose_series_btn.setToolTip(
+            "Split the movie into equal-dose bins and compare averaged images "
+            "to visualise dose-dependent structural changes"
+        )
+        self._dose_series_btn.clicked.connect(self._on_dose_series_clicked)
+        row.addWidget(self._dose_series_btn)
+
+        row.addStretch()
+        return bar
+
+    def _update_movie_bar(self, img) -> None:
+        if img is None or not img.is_movie:
+            self._movie_bar.hide()
+            return
+        n = img.n_frames
+        self._movie_label.setText(f"Movie: {n} frames")
+        for spin in (self._movie_start_spin, self._movie_end_spin, self._movie_frame_spin):
+            spin.blockSignals(True)
+        self._movie_start_spin.setRange(1, n)
+        self._movie_start_spin.setValue(1)
+        self._movie_end_spin.setRange(1, n)
+        self._movie_end_spin.setValue(n)
+        self._movie_frame_spin.setRange(0, n)
+        self._movie_frame_spin.setValue(0)
+        for spin in (self._movie_start_spin, self._movie_end_spin, self._movie_frame_spin):
+            spin.blockSignals(False)
+        self._last_motion_shifts = None
+        self._motion_plot_btn.hide()
+        self._movie_bar.show()
+        self._statusbar.showMessage(
+            f"Movie loaded: {n} frames averaged for display. "
+            "Use the bar below to change method or step through frames. "
+            "Ask CLU to fix contrast if the image is hard to see.",
+            8000,
+        )
+
+    def _on_movie_method_ui_changed(self) -> None:
+        is_dose = self._movie_method_combo.currentData() == "dose_weighted"
+        self._movie_dose_label.setVisible(is_dose)
+        self._movie_dose_spin.setVisible(is_dose)
+
+    def _on_movie_frame_changed(self, value: int) -> None:
+        img = self._canvas_widget.canvas.dm4
+        if img is None or not img.is_movie:
+            return
+        if value == 0:
+            img.raw = img._frames.mean(axis=0)
+        else:
+            img.raw = img.get_frame(value - 1)
+        self._pending_contrast = self._contrast_panel.params()
+        self._contrast_timer.start()
+
+    def _on_movie_apply_clicked(self) -> None:
+        method     = self._movie_method_combo.currentData()
+        dose       = self._movie_dose_spin.value()
+        start_frame = self._movie_start_spin.value()
+        end_frame   = self._movie_end_spin.value()
+        self._compress_frames(method, dose, start_frame, end_frame)
+
+    def _compress_frames(
+        self,
+        method: str = "mean",
+        dose_per_frame: float = 1.0,
+        start_frame: int = 1,
+        end_frame: int = 0,   # 0 = use all
+    ) -> None:
+        img = self._canvas_widget.canvas.dm4
+        if img is None or not img.is_movie:
+            self._statusbar.showMessage("No movie loaded — open a multi-frame file first.")
+            return
+
+        n = img.n_frames
+        s = max(1, start_frame) - 1              # convert 1-indexed to 0-indexed
+        e = (n if end_frame <= 0 else min(end_frame, n))  # inclusive end
+        if s >= e:
+            self._statusbar.showMessage("Invalid frame range — start must be < end.")
+            return
+
+        frames_slice = img._frames[s:e]
+        n_used = e - s
+
+        method_labels = {
+            "mean": "mean average",
+            "motion_corrected": "motion correction",
+            "dose_weighted": "dose-weighted average",
+        }
+        range_label = f"frames {s+1}–{e}" if (s > 0 or e < n) else f"all {n} frames"
+        self._statusbar.showMessage(
+            f"Processing {n_used} frames ({range_label}, {method_labels.get(method, method)})…"
+        )
+
+        # Update UI to match params
+        idx = self._movie_method_combo.findData(method)
+        if idx >= 0:
+            self._movie_method_combo.blockSignals(True)
+            self._movie_method_combo.setCurrentIndex(idx)
+            self._movie_method_combo.blockSignals(False)
+        self._movie_dose_spin.setValue(dose_per_frame)
+        for spin, val in ((self._movie_start_spin, s + 1), (self._movie_end_spin, e)):
+            spin.blockSignals(True)
+            spin.setValue(val)
+            spin.blockSignals(False)
+
+        self._last_motion_start_frame = s + 1  # remember for the plot x-axis
+        self._frame_proc_thread = FrameProcessThread(
+            frames_slice, method, dose_per_frame, img.pixel_size, parent=self
+        )
+        self._frame_proc_thread.finished.connect(self._on_frame_proc_done)
+        self._frame_proc_thread.shifts_available.connect(self._on_motion_shifts_ready)
+        self._frame_proc_thread.error.connect(self._on_frame_proc_error)
+        self._frame_proc_thread.start()
+
+    def _on_frame_proc_done(self, result) -> None:
+        img = self._canvas_widget.canvas.dm4
+        if img is not None:
+            img.raw = result
+            self._movie_frame_spin.blockSignals(True)
+            self._movie_frame_spin.setValue(0)
+            self._movie_frame_spin.blockSignals(False)
+            self._pending_contrast = self._contrast_panel.params()
+            self._contrast_timer.start()
+        self._statusbar.showMessage("Frame processing complete.", 3000)
+
+    def _on_frame_proc_error(self, msg: str) -> None:
+        self._statusbar.showMessage(f"Frame processing failed: {msg}", 5000)
+
+    def _on_motion_shifts_ready(self, shifts) -> None:
+        self._last_motion_shifts = shifts
+        self._motion_plot_btn.show()
+        img = self._canvas_widget.canvas.dm4
+        px_nm = img.pixel_size if img else 1.0
+        px_A  = px_nm * 10.0
+        import numpy as np
+        mag = np.sqrt((shifts**2).sum(axis=1))
+        max_drift_A = float(mag.max()) * px_A
+        unit = "Å" if (px_nm > 0 and px_nm != 1.0) else "px"
+        val  = max_drift_A if unit == "Å" else float(mag.max())
+        self._statusbar.showMessage(
+            f"Motion correction complete. Max drift: {val:.1f} {unit}. "
+            "Click 'Motion plot' to view the drift trajectory.",
+            6000,
+        )
+
+    def _on_motion_plot_clicked(self) -> None:
+        if self._last_motion_shifts is None:
+            return
+        img = self._canvas_widget.canvas.dm4
+        px_nm = img.pixel_size if img else 1.0
+        dlg = MotionPlotDialog(
+            self._last_motion_shifts,
+            pixel_size_nm=px_nm,
+            start_frame=self._last_motion_start_frame,
+            parent=self,
+        )
+        dlg.exec()
+
+    def _on_dose_series_clicked(self) -> None:
+        img = self._canvas_widget.canvas.dm4
+        if img is None or not img.is_movie:
+            return
+        s = max(0, self._movie_start_spin.value() - 1)
+        e = min(img.n_frames, self._movie_end_spin.value())
+        frames_slice = img._frames[s:e]
+        if len(frames_slice) < 2:
+            self._statusbar.showMessage("Need at least 2 frames for dose series.", 3000)
+            return
+        dlg = DoseSeriesDialog(
+            frames_slice,
+            pixel_size_nm=img.pixel_size,
+            dose_per_frame=self._movie_dose_spin.value(),
+            start_frame=s + 1,
+            parent=self,
+        )
+        dlg.exec()
 
     # ── contrast ──────────────────────────────────────────────────────────────
 
@@ -2534,15 +3163,15 @@ class MainWindow(QMainWindow):
         canvas always corresponds visually to the button used to create it.
         """
         _FIXED = {
-            "foreground": "#27ae60",
-            "background": "#e74c3c",
+            "foreground": "#00703C",
+            "background": "#c0392b",
         }
         key = label.strip().lower()
         if key in _FIXED:
             return _FIXED[key]
         # Deterministic colour for any custom label — cycle through the same
         # palette used by SAMPanel._user_label_colors
-        _PALETTE = ["#8e44ad", "#1a6fa8", "#d35400", "#16a085", "#2c3e50"]
+        _PALETTE = ["#1a5fa8", "#00703C", "#e67e22", "#006e8a", "#363636"]
         return _PALETTE[hash(key) % len(_PALETTE)]
 
     def _on_sam_load_model(self, checkpoint: str, model_cfg: str, backend: str) -> None:
@@ -2668,7 +3297,7 @@ class MainWindow(QMainWindow):
             self._sam_mode = None
         self._statusbar.showMessage("SAM crop region cleared — SAM will use the full image.")
 
-    def _on_sam_auto_segment(self) -> None:
+    def _on_sam_auto_segment(self, _batch_done_cb=None) -> None:
         if self._sam_busy():
             self._sam_panel.set_sam_status("SAM is busy — please wait.")
             return
@@ -2684,15 +3313,44 @@ class MainWindow(QMainWindow):
         if img8 is None:
             self._sam_panel.set_sam_status("No image loaded.")
             return
+
+        # SAM's image encoder processes at 1024×1024 internally.  Passing a
+        # larger image only causes SAM2's mask generator to allocate O(N_points
+        # × H × W) float32 tensors at the input resolution — 67 GiB for a
+        # typical 4096×4096 cryo-EM image.  Cap here; upscale masks in _done.
+        import numpy as np
+        _SAM_MAX_DIM = 1024
+        h0, w0 = img8.shape[:2]
+        _sam_scale = min(1.0, _SAM_MAX_DIM / max(h0, w0, 1))
+        if _sam_scale < 1.0:
+            from PIL import Image as _PILImg
+            _nh, _nw = max(1, int(h0 * _sam_scale)), max(1, int(w0 * _sam_scale))
+            img8_sam = np.array(_PILImg.fromarray(img8).resize((_nw, _nh), _PILImg.LANCZOS))
+        else:
+            img8_sam = img8
+
         params = self._sam_panel.auto_params
         active = self._sam_predictor.backend or "SAM"
         crop_note = " (cropped region)" if self._sam_crop_region is not None else ""
         self._sam_panel.set_sam_status(f"Running {active}{crop_note}…")
 
         def _run():
-            return self._sam_predictor.predict_everything(img8, **params)
+            return self._sam_predictor.predict_everything(img8_sam, **params)
 
         def _done(masks):
+            # Upscale masks from SAM-input space back to working-image space.
+            if _sam_scale < 1.0 and masks:
+                from PIL import Image as _PILImg
+                import numpy as np
+                upscaled = []
+                for m in masks:
+                    m_up = np.array(
+                        _PILImg.fromarray(m.astype(np.uint8) * 255).resize(
+                            (w0, h0), _PILImg.NEAREST
+                        )
+                    ).astype(bool)
+                    upscaled.append(m_up)
+                masks = upscaled
             self._add_sam_masks_to_store(masks, offset=(ox, oy))
             n = len(self._pending_sam_masks)
             # Switch to select mode so user can click masks to delete individually.
@@ -2705,11 +3363,101 @@ class MainWindow(QMainWindow):
                 "Accept All to keep all remaining masks."
             )
             self._statusbar.showMessage(f"{active} auto-segment: {n} masks found — click to select, Delete to remove.")
+            if _batch_done_cb is not None:
+                _batch_done_cb()
 
         self._sam_thread = SAMThread(_run, self)
         self._sam_thread.finished.connect(_done)
-        self._sam_thread.error.connect(lambda e: self._sam_panel.set_sam_status(f"Error: {e}"))
+        self._sam_thread.error.connect(
+            lambda e: (
+                self._sam_panel.set_sam_status(f"Error: {e}"),
+                _batch_done_cb() if _batch_done_cb else None,
+            )
+        )
         self._sam_thread.start()
+
+    # ── batch SAM state machine ───────────────────────────────────────────────
+
+    def _start_batch_sam(self, params: dict) -> None:
+        """Kick off the batch SAM pipeline: segment → accept → queue across all images."""
+        label           = params.get("label", "")
+        points_per_side = int(params.get("points_per_side", 32))
+        skip_annotated  = bool(params.get("skip_annotated", True))
+
+        queue: list[int] = []
+        for i in range(len(self._image_paths)):
+            if skip_annotated:
+                existing = self._ann_states.get(i, [])
+                if i == self._img_idx:
+                    existing = list(self._canvas_widget.canvas.store)
+                if existing:
+                    continue
+            queue.append(i)
+
+        if not queue:
+            self._statusbar.showMessage("Batch SAM: all images already annotated — nothing to do.")
+            return
+
+        self._batch_proc = {
+            "queue":          queue,
+            "label":          label,
+            "points_per_side": points_per_side,
+            "processed":      0,
+            "total":          len(queue),
+        }
+        n = len(queue)
+        self._statusbar.showMessage(f"Batch SAM: starting — {n} image(s) to process…")
+        self._batch_next_image()
+
+    def _batch_next_image(self) -> None:
+        bp = self._batch_proc
+        if bp is None:
+            return
+        if not bp["queue"]:
+            n, total = bp["processed"], bp["total"]
+            self._batch_proc = None
+            self._statusbar.showMessage(f"Batch SAM complete — {n}/{total} images processed and queued.")
+            return
+        target = bp["queue"][0]
+        # Use the image_loaded signal as the trigger to start SAM on this image
+        self._context.image_loaded.connect(self._batch_on_image_loaded)
+        self._on_image_list_select(target)
+
+    def _batch_on_image_loaded(self, img) -> None:
+        bp = self._batch_proc
+        try:
+            self._context.image_loaded.disconnect(self._batch_on_image_loaded)
+        except Exception:
+            pass
+        if bp is None or not bp["queue"]:
+            return
+        if self._img_idx != bp["queue"][0]:
+            return  # spurious signal from a different navigation
+        # Configure SAM label and points_per_side
+        label = bp["label"]
+        if label:
+            combo = self._sam_panel._label_combo
+            txt_idx = combo.findText(label)
+            if txt_idx < 0:
+                combo.addItem(label)
+                txt_idx = combo.count() - 1
+            combo.setCurrentIndex(txt_idx)
+        self._sam_panel._pts_per_side.setValue(bp["points_per_side"])
+        n, total = bp["processed"], bp["total"]
+        self._statusbar.showMessage(f"Batch SAM: running on image {n+1}/{total} — {img.filename if hasattr(img,'filename') else ''}…")
+        self._on_sam_auto_segment(_batch_done_cb=self._batch_after_sam)
+
+    def _batch_after_sam(self) -> None:
+        bp = self._batch_proc
+        if bp is None:
+            return
+        if self._pending_sam_masks:
+            self._on_sam_accept()
+        self._on_queue_image("")
+        if bp["queue"]:
+            bp["queue"].pop(0)
+        bp["processed"] += 1
+        self._batch_next_image()
 
     def _on_sam_point_mode(self, positive: bool) -> None:
         self._sam_mode      = "pos_point" if positive else "neg_point"
@@ -2896,34 +3644,50 @@ class MainWindow(QMainWindow):
         offset : (ox, oy) pixel offset to add to all polygon vertices.
                  Non-zero when SAM was run on a cropped sub-image.
         """
-        store = self._canvas_widget.canvas.store
-        label = self._sam_panel.label
+        canvas = self._canvas_widget.canvas
+        store  = canvas.store
+        label  = self._sam_panel.label
         ox, oy = offset
         self._pending_sam_masks.clear()
-        for mask in masks:
-            vertices = self._sam_predictor.mask_to_polygon(mask)
-            if len(vertices) < 3:
-                continue
-            if ox != 0 or oy != 0:
-                vertices = [(vx + ox, vy + oy) for vx, vy in vertices]
-            # Filter: discard masks whose centroid falls inside the exclude zone
-            if self._sam_exclude_zone is not None:
-                ex0, ey0, ex1, ey1 = self._sam_exclude_zone
-                cx = sum(v[0] for v in vertices) / len(vertices)
-                cy = sum(v[1] for v in vertices) / len(vertices)
-                if ex0 <= cx <= ex1 and ey0 <= cy <= ey1:
+
+        # Suppress incremental renders while adding many masks so we don't pay
+        # O(N) blits.  A single render_noblit at the end is cheaper and more
+        # reliable (incremental draw_artist calls can silently fail for patches
+        # that haven't gone through a full draw() cycle).
+        canvas._loading = True
+        try:
+            for mask in masks:
+                vertices = self._sam_predictor.mask_to_polygon(mask)
+                if len(vertices) < 3:
                     continue
-            from acorn.core.annotations import ROIAnnotation
-            roi = ROIAnnotation(
-                vertices  = vertices,
-                area_nm2  = 0.0,
-                stats     = {},
-                color     = self._sam_color_for_label(label),
-                linewidth = 1.5,
-                label     = label,
-            )
-            store.add(roi)
-            self._pending_sam_masks.append(roi)
+                if ox != 0 or oy != 0:
+                    vertices = [(vx + ox, vy + oy) for vx, vy in vertices]
+                # Filter: discard masks whose centroid falls inside the exclude zone
+                if self._sam_exclude_zone is not None:
+                    ex0, ey0, ex1, ey1 = self._sam_exclude_zone
+                    cx = sum(v[0] for v in vertices) / len(vertices)
+                    cy = sum(v[1] for v in vertices) / len(vertices)
+                    if ex0 <= cx <= ex1 and ey0 <= cy <= ey1:
+                        continue
+                from acorn.core.annotations import ROIAnnotation
+                roi = ROIAnnotation(
+                    vertices  = vertices,
+                    area_nm2  = 0.0,
+                    stats     = {},
+                    color     = self._sam_color_for_label(label),
+                    linewidth = 1.5,
+                    label     = label,
+                )
+                store.add(roi)
+                self._pending_sam_masks.append(roi)
+        finally:
+            canvas._loading = False
+
+        # Single authoritative redraw after all masks are in the store
+        if canvas.renderer is not None:
+            canvas.renderer.render_noblit(canvas.store, canvas)
+        else:
+            canvas.fig.canvas.draw_idle()
 
     def _sam_point_prompt(self, x: float, y: float, positive: bool) -> None:
         if self._sam_busy():
@@ -3285,25 +4049,33 @@ class MainWindow(QMainWindow):
     def _add_yolo_detections_to_store(
         self, detections: list, use_masks: bool
     ) -> None:
-        store = self._canvas_widget.canvas.store
-        label = self._yolo_panel.label
-        color = "#FFD700"
+        canvas = self._canvas_widget.canvas
+        store  = canvas.store
+        label  = self._yolo_panel.label
+        color  = "#4dbb78"
         self._pending_yolo_anns.clear()
-
-        has_masks = use_masks and any("mask" in d for d in detections)
-        if has_masks:
-            from acorn.core.yolo_predictor import masks_to_roi_annotations
-            n = masks_to_roi_annotations(detections, store, label=label, color=color)
-            for _ in range(n):
-                self._pending_yolo_anns.append(True)
+        canvas._loading = True
+        try:
+            has_masks = use_masks and any("mask" in d for d in detections)
+            if has_masks:
+                from acorn.core.yolo_predictor import masks_to_roi_annotations
+                n = masks_to_roi_annotations(detections, store, label=label, color=color)
+                for _ in range(n):
+                    self._pending_yolo_anns.append(True)
+            else:
+                from acorn.core.yolo_predictor import boxes_to_roi_annotations
+                n = boxes_to_roi_annotations(
+                    detections, store, label=label, color=color,
+                    as_rectangles=self._yolo_panel.as_rectangles,
+                )
+                for _ in range(n):
+                    self._pending_yolo_anns.append(True)
+        finally:
+            canvas._loading = False
+        if canvas.renderer is not None:
+            canvas.renderer.render_noblit(canvas.store, canvas)
         else:
-            from acorn.core.yolo_predictor import boxes_to_roi_annotations
-            n = boxes_to_roi_annotations(
-                detections, store, label=label, color=color,
-                as_rectangles=self._yolo_panel.as_rectangles,
-            )
-            for _ in range(n):
-                self._pending_yolo_anns.append(True)
+            canvas.fig.canvas.draw_idle()
 
     def _on_yolo_pipe_to_sam(self) -> None:
         if self._yolo_busy() or self._sam_busy():
@@ -3443,21 +4215,30 @@ class MainWindow(QMainWindow):
         self._unet_thread.start()
 
     def _add_unet_masks_to_store(self, masks: list) -> None:
-        store  = self._canvas_widget.canvas.store
+        canvas = self._canvas_widget.canvas
+        store  = canvas.store
         label  = self._unet_panel.label
-        color  = "#00CED1"
+        color  = "#1a5fa8"
         self._pending_unet_masks.clear()
-        for mask in masks:
-            vertices = self._unet_predictor.mask_to_polygon(mask)
-            if len(vertices) < 3:
-                continue
-            from acorn.core.annotations import ROIAnnotation
-            roi = ROIAnnotation(
-                vertices=vertices, area_nm2=0.0, stats={},
-                color=color, linewidth=1.5, label=label,
-            )
-            store.add(roi)
-            self._pending_unet_masks.append(roi)
+        canvas._loading = True
+        try:
+            for mask in masks:
+                vertices = self._unet_predictor.mask_to_polygon(mask)
+                if len(vertices) < 3:
+                    continue
+                from acorn.core.annotations import ROIAnnotation
+                roi = ROIAnnotation(
+                    vertices=vertices, area_nm2=0.0, stats={},
+                    color=color, linewidth=1.5, label=label,
+                )
+                store.add(roi)
+                self._pending_unet_masks.append(roi)
+        finally:
+            canvas._loading = False
+        if canvas.renderer is not None:
+            canvas.renderer.render_noblit(canvas.store, canvas)
+        else:
+            canvas.fig.canvas.draw_idle()
 
     def _on_unet_accept(self) -> None:
         self._pending_unet_masks.clear()
@@ -3637,6 +4418,360 @@ class MainWindow(QMainWindow):
         t.error.connect(_err)
         t.start()
 
+    # ── LLM assistant action dispatcher ──────────────────────────────────────
+
+    def _on_action_requested(self, action: str, params: dict) -> None:
+        print(f"[_on_action_requested] action={action} params={params}", flush=True)
+        if action == "run_sam_auto":
+            label = params.get("label", "")
+            if label:
+                combo = self._sam_panel._label_combo
+                idx = combo.findText(label)
+                if idx < 0:
+                    combo.addItem(label)
+                    idx = combo.count() - 1
+                combo.setCurrentIndex(idx)
+            pts = params.get("points_per_side")
+            if pts is not None:
+                self._sam_panel._pts_per_side.setValue(int(pts))
+            self._on_sam_auto_segment()
+
+        elif action == "run_yolo_detect":
+            label = params.get("label", "")
+            if label:
+                combo = self._yolo_panel._label_combo
+                idx = combo.findText(label)
+                if idx < 0:
+                    combo.addItem(label)
+                    idx = combo.count() - 1
+                combo.setCurrentIndex(idx)
+            self._on_yolo_detect()
+
+        elif action == "run_yolo_segment":
+            label = params.get("label", "")
+            if label:
+                combo = self._yolo_panel._label_combo
+                idx = combo.findText(label)
+                if idx < 0:
+                    combo.addItem(label)
+                    idx = combo.count() - 1
+                combo.setCurrentIndex(idx)
+            self._on_yolo_detect_seg()
+
+        elif action == "accept_annotations":
+            model = params.get("model", "all")
+            if model in ("sam", "all") and self._pending_sam_masks:
+                self._on_sam_accept()
+            if model in ("yolo", "all") and self._pending_yolo_anns:
+                self._on_yolo_accept()
+            if model in ("unet", "all") and self._pending_unet_masks:
+                self._on_unet_accept()
+
+        elif action == "queue_for_export":
+            self._on_queue_image("")
+
+        elif action == "start_training":
+            self._train_panel._on_train_clicked()
+
+        elif action == "finalize_dataset":
+            val_frac  = params.get("val_frac")
+            test_frac = params.get("test_frac")
+            if val_frac is not None:
+                self._export_panel._val_frac.setValue(float(val_frac))
+            if test_frac is not None:
+                self._export_panel._test_frac.setValue(float(test_frac))
+            self._export_panel._on_finalize()
+
+        elif action == "load_sam":
+            backend = params.get("backend")
+            if backend:
+                combo = self._sam_panel._backend_combo
+                idx = combo.findData(backend)
+                if idx >= 0:
+                    combo.setCurrentIndex(idx)
+            self._sam_panel._on_load_model()
+
+        elif action == "load_yolo":
+            self._yolo_panel._on_load_model()
+
+        elif action == "load_unet":
+            self._unet_panel._on_load_model()
+
+        elif action == "run_unet":
+            label = params.get("label", "")
+            if label:
+                combo = self._unet_panel._label_combo
+                idx = combo.findText(label)
+                if idx < 0:
+                    combo.addItem(label)
+                    idx = combo.count() - 1
+                combo.setCurrentIndex(idx)
+            self._on_unet_segment()
+
+        elif action == "reject_annotations":
+            model = params.get("model", "all")
+            if model in ("sam", "all"):
+                self._on_sam_reject()
+            if model in ("yolo", "all"):
+                self._on_yolo_reject()
+            if model in ("unet", "all"):
+                self._on_unet_reject()
+
+        elif action == "undo_annotation":
+            self._on_undo()
+
+        elif action == "clear_annotations":
+            self._on_clear_annotations()
+
+        elif action == "set_contrast":
+            import dataclasses
+            from acorn.core.contrast import ContrastParams
+            method = params.get("method", "percentile")
+            p = self._contrast_panel.params()
+            kwargs: dict = {"method": method}
+            low  = params.get("low")
+            high = params.get("high")
+            if method == "percentile":
+                if low  is not None: kwargs["low_pct"]  = float(low)
+                if high is not None: kwargs["high_pct"] = float(high)
+            elif method == "sigma":
+                if low  is not None: kwargs["n_sigma"] = float(low)
+            elif method == "adaptive":
+                if low  is not None: kwargs["clip_limit"] = float(low)
+            elif method == "bandpass":
+                if low  is not None: kwargs["bp_low_sigma"]  = float(low)
+                if high is not None: kwargs["bp_high_sigma"] = float(high)
+            elif method == "fourier":
+                if low  is not None: kwargs["fbp_hp_px"] = float(low)
+                if high is not None: kwargs["fbp_lp_px"] = float(high)
+            new_p = dataclasses.replace(p, **kwargs)
+            self._contrast_panel.set_params(new_p)
+            self._on_contrast_changed(new_p)
+
+        elif action == "pipe_yolo_to_sam":
+            label = params.get("label", "")
+            if label:
+                combo = self._yolo_panel._label_combo
+                idx = combo.findText(label)
+                if idx < 0:
+                    combo.addItem(label)
+                    idx = combo.count() - 1
+                combo.setCurrentIndex(idx)
+            self._on_yolo_pipe_to_sam()
+
+        elif action == "check_quality":
+            self._on_check_quality()
+
+        elif action == "next_image":
+            self._on_next()
+
+        elif action == "prev_image":
+            self._on_prev()
+
+        elif action == "go_to_image":
+            target = int(params.get("index", 1)) - 1
+            if 0 <= target < len(self._image_paths):
+                self._on_image_list_select(target)
+
+        elif action == "configure_training":
+            tp = self._train_panel
+            model_type = params.get("model_type")
+            if model_type == "yolo":
+                tp._yolo_radio.setChecked(True)
+            elif model_type == "unet":
+                tp._unet_radio.setChecked(True)
+            dataset_dir = params.get("dataset_dir")
+            if dataset_dir:
+                tp._dir_edit.setText(dataset_dir)
+                from pathlib import Path
+                tp._scan_dataset(Path(dataset_dir))
+            epochs = params.get("epochs")
+            if epochs is not None:
+                tp._epochs.setValue(int(epochs))
+            batch = params.get("batch")
+            if batch is not None:
+                tp._batch.setValue(int(batch))
+            # YOLO-specific
+            yolo_base = params.get("yolo_base_model")
+            if yolo_base:
+                existing = [tp._yolo_base.itemText(i) for i in range(tp._yolo_base.count())]
+                if yolo_base not in existing:
+                    tp._yolo_base.addItem(yolo_base)
+                tp._yolo_base.setCurrentText(yolo_base)
+            # UNet-specific
+            unet_arch = params.get("unet_arch")
+            if unet_arch:
+                idx = tp._unet_arch.findText(unet_arch)
+                if idx >= 0:
+                    tp._unet_arch.setCurrentIndex(idx)
+            unet_encoder = params.get("unet_encoder")
+            if unet_encoder:
+                idx = tp._unet_encoder.findText(unet_encoder)
+                if idx >= 0:
+                    tp._unet_encoder.setCurrentIndex(idx)
+
+        elif action == "set_pixel_size":
+            ps_nm = float(params.get("pixel_size_nm", 0))
+            if ps_nm > 0 and self._img_idx >= 0:
+                img = self._image_cache.get(self._img_idx)
+                if img is not None:
+                    self._px_overrides[self._img_idx] = ps_nm
+                    self._autosave_timer.start()
+                    img.meta.pixel_size = ps_nm
+                    img.meta.pixel_size_from_header = False
+                    self._engine = MeasurementEngine(pixel_size=ps_nm)
+                    self._canvas_widget.canvas.set_pixel_size(ps_nm)
+                    w = img.shape[1] if img.shape else 512
+                    self._ann_panel.set_scalebar_nm(nice_scalebar_nm(ps_nm, w))
+                    self._update_px_btn(ps_nm, False)
+                    self._statusbar.showMessage(f"Pixel size set to {ps_nm:.4f} nm/px by AI assistant.")
+
+        elif action == "apply_contrast_preset":
+            name = params.get("preset_name", "")
+            if name:
+                all_presets = self._contrast_panel._all_presets()
+                if name in all_presets:
+                    preset_p = all_presets[name]
+                    self._contrast_panel.set_params(preset_p)
+                    self._on_contrast_changed(preset_p)
+                    self._statusbar.showMessage(f"Contrast preset applied: {name}")
+                else:
+                    self._statusbar.showMessage(f"Preset not found: {name}")
+
+        elif action == "export_masks":
+            stem = ""
+            img = self._canvas_widget.canvas.dm4
+            if img is not None and img.filepath:
+                stem = str(img.filepath.parent / img.filepath.stem)
+            self._on_export_masks(stem)
+
+        elif action == "export_display_image":
+            self._on_display_export()
+
+        elif action == "push_to_hub":
+            repo_id = params.get("repo_id", "")
+            token   = params.get("token", "")
+            dataset_dir = self._export_panel.dataset_dir
+            if not repo_id:
+                self._statusbar.showMessage("push_to_hub: repo_id is required.")
+            elif not dataset_dir:
+                self._statusbar.showMessage("push_to_hub: no export dataset dir configured.")
+            else:
+                self._on_push_hub(dataset_dir, repo_id, token)
+
+        elif action == "import_star_file":
+            self._import_star()
+
+        elif action == "compress_frames":
+            method      = params.get("method", "mean")
+            dose        = float(params.get("dose_per_frame", 1.0))
+            start_frame = int(params.get("start_frame", 1))
+            end_frame   = int(params.get("end_frame", 0))
+            img = self._canvas_widget.canvas.dm4
+            print(f"[compress_frames] method={method} is_movie={img.is_movie if img else None} n_frames={img.n_frames if img and img.is_movie else 0}", flush=True)
+            self._compress_frames(method, dose, start_frame, end_frame)
+
+        elif action == "dose_comparison":
+            img = self._canvas_widget.canvas.dm4
+            print(f"[dose_comparison] is_movie={img.is_movie if img else None} n_frames={img.n_frames if img and img.is_movie else 0}", flush=True)
+            if img is None or not img.is_movie:
+                self._statusbar.showMessage("No movie loaded for dose comparison — open a multi-frame DM4/TIFF/MRC file first.", 6000)
+                return
+            n_bins = int(params.get("n_bins", 4))
+            dose   = float(params.get("dose_per_frame", self._movie_dose_spin.value()))
+            s = max(0, self._movie_start_spin.value() - 1)
+            e = min(img.n_frames, self._movie_end_spin.value())
+            frames_slice = img._frames[s:e]
+            print(f"[dose_comparison] s={s} e={e} frames_slice.shape={frames_slice.shape}", flush=True)
+            if len(frames_slice) >= 2:
+                dlg = DoseSeriesDialog(
+                    frames_slice,
+                    pixel_size_nm=img.pixel_size,
+                    dose_per_frame=dose,
+                    start_frame=s + 1,
+                    parent=self,
+                )
+                dlg._n_bins_spin.setValue(min(n_bins, len(frames_slice)))
+                dlg._update_figure()
+                dlg.exec()
+            else:
+                self._statusbar.showMessage(f"Not enough frames for dose comparison ({len(frames_slice)} selected, need at least 2).", 6000)
+
+        elif action == "batch_run_sam":
+            self._start_batch_sam(params)
+
+        elif action == "add_scalebar":
+            color = params.get("color", "#FFFFFF")
+            self._canvas_widget.canvas.add_default_scalebar(color=color)
+            self._autosave_timer.start()
+            self._statusbar.showMessage("Scale bar added.")
+
+        elif action == "rename_label":
+            old_lbl = params.get("old_label", "")
+            new_lbl = params.get("new_label", "")
+            if old_lbl and new_lbl:
+                store = self._canvas_widget.canvas.store
+                modified = 0
+                for ann in list(store):
+                    if getattr(ann, "label", None) == old_lbl:
+                        ann.label = new_lbl
+                        modified += 1
+                if modified:
+                    # Fire store change so annotations re-render with updated labels
+                    store.replace_all(list(store))
+                    self._autosave_timer.start()
+                    self._statusbar.showMessage(f"Renamed {modified} annotation(s): '{old_lbl}' → '{new_lbl}'.")
+                else:
+                    self._statusbar.showMessage(f"No annotations found with label '{old_lbl}'.")
+
+        elif action == "save_contrast_preset":
+            preset_name = params.get("name", "").strip()
+            if preset_name:
+                try:
+                    from acorn.gui.contrast_panel import (
+                        _load_user_presets, _save_user_presets, _params_to_dict, _BUILTIN_PRESETS,
+                    )
+                    if preset_name in _BUILTIN_PRESETS:
+                        self._statusbar.showMessage(f"Cannot overwrite built-in preset '{preset_name}'.")
+                    else:
+                        user = _load_user_presets()
+                        user[preset_name] = _params_to_dict(self._contrast_panel.params())
+                        _save_user_presets(user)
+                        self._contrast_panel._refresh_preset_combo(select=preset_name)
+                        self._statusbar.showMessage(f"Contrast preset saved: {preset_name}")
+                except Exception as exc:
+                    self._statusbar.showMessage(f"save_contrast_preset error: {exc}")
+
+        elif action == "export_measurements":
+            img = self._canvas_widget.canvas.dm4
+            store = self._canvas_widget.canvas.store
+            if img is None or img.filepath is None:
+                self._statusbar.showMessage("No image loaded — cannot export measurements.")
+            else:
+                import csv, io as _io
+                from pathlib import Path as _Path
+                rows: list[dict] = []
+                for ann in store:
+                    row: dict = {
+                        "image":   img.filepath.name,
+                        "type":    getattr(ann, "type", ""),
+                        "label":   getattr(ann, "label", "") or getattr(ann, "text", ""),
+                        "area_nm2": getattr(ann, "area_nm2", ""),
+                        "distance_nm": getattr(ann, "distance_nm", ""),
+                        "distance_px": getattr(ann, "distance_px", ""),
+                        "calibrated":  getattr(ann, "calibrated", ""),
+                    }
+                    rows.append(row)
+                if rows:
+                    out_path = _Path(img.filepath).parent / f"{img.filepath.stem}_measurements.csv"
+                    with open(out_path, "w", newline="") as f:
+                        writer = csv.DictWriter(f, fieldnames=list(rows[0].keys()))
+                        writer.writeheader()
+                        writer.writerows(rows)
+                    self._statusbar.showMessage(f"Measurements exported: {out_path.name}  ({len(rows)} rows)")
+                else:
+                    self._statusbar.showMessage("No annotations to export.")
+
     # ── application quit ──────────────────────────────────────────────────────
 
     def closeEvent(self, event) -> None:
@@ -3797,6 +4932,11 @@ def launch(files: list[str] | None = None) -> None:
     try:
         app = QApplication(sys.argv)
         app.setApplicationName("ACORN")
+        import os as _os
+        _icon_path = _os.path.join(_os.path.dirname(__file__), "acorn.png")
+        if _os.path.exists(_icon_path):
+            from PyQt6.QtGui import QIcon
+            app.setWindowIcon(QIcon(_icon_path))
     finally:
         os.dup2(_saved_stderr, _stderr_fd)
         os.close(_saved_stderr)
@@ -3808,24 +4948,24 @@ def launch(files: list[str] | None = None) -> None:
 
     pal = QPalette()
     _c = QColor  # shorthand
-    pal.setColor(QPalette.ColorRole.Window,          _c("#1e1e2e"))
-    pal.setColor(QPalette.ColorRole.WindowText,      _c("#cdd6f4"))
-    pal.setColor(QPalette.ColorRole.Base,            _c("#313244"))
-    pal.setColor(QPalette.ColorRole.AlternateBase,   _c("#1e1e2e"))
-    pal.setColor(QPalette.ColorRole.ToolTipBase,     _c("#313244"))
-    pal.setColor(QPalette.ColorRole.ToolTipText,     _c("#cdd6f4"))
-    pal.setColor(QPalette.ColorRole.Text,            _c("#cdd6f4"))
-    pal.setColor(QPalette.ColorRole.Button,          _c("#313244"))
-    pal.setColor(QPalette.ColorRole.ButtonText,      _c("#cdd6f4"))
+    pal.setColor(QPalette.ColorRole.Window,          _c("#1a1a1a"))
+    pal.setColor(QPalette.ColorRole.WindowText,      _c("#e0e0e0"))
+    pal.setColor(QPalette.ColorRole.Base,            _c("#252525"))
+    pal.setColor(QPalette.ColorRole.AlternateBase,   _c("#1a1a1a"))
+    pal.setColor(QPalette.ColorRole.ToolTipBase,     _c("#252525"))
+    pal.setColor(QPalette.ColorRole.ToolTipText,     _c("#e0e0e0"))
+    pal.setColor(QPalette.ColorRole.Text,            _c("#e0e0e0"))
+    pal.setColor(QPalette.ColorRole.Button,          _c("#252525"))
+    pal.setColor(QPalette.ColorRole.ButtonText,      _c("#e0e0e0"))
     pal.setColor(QPalette.ColorRole.BrightText,      _c("#ffffff"))
-    pal.setColor(QPalette.ColorRole.Highlight,       _c("#7c3aed"))
+    pal.setColor(QPalette.ColorRole.Highlight,       _c("#00703C"))
     pal.setColor(QPalette.ColorRole.HighlightedText, _c("#ffffff"))
-    pal.setColor(QPalette.ColorRole.Link,            _c("#89b4fa"))
-    pal.setColor(QPalette.ColorRole.Mid,             _c("#45475a"))
-    pal.setColor(QPalette.ColorRole.Shadow,          _c("#11111b"))
-    pal.setColor(QPalette.ColorGroup.Disabled, QPalette.ColorRole.Text,       _c("#6c7086"))
-    pal.setColor(QPalette.ColorGroup.Disabled, QPalette.ColorRole.ButtonText, _c("#6c7086"))
-    pal.setColor(QPalette.ColorGroup.Disabled, QPalette.ColorRole.WindowText, _c("#6c7086"))
+    pal.setColor(QPalette.ColorRole.Link,            _c("#4dbb78"))
+    pal.setColor(QPalette.ColorRole.Mid,             _c("#363636"))
+    pal.setColor(QPalette.ColorRole.Shadow,          _c("#0d0d0d"))
+    pal.setColor(QPalette.ColorGroup.Disabled, QPalette.ColorRole.Text,       _c("#888888"))
+    pal.setColor(QPalette.ColorGroup.Disabled, QPalette.ColorRole.ButtonText, _c("#888888"))
+    pal.setColor(QPalette.ColorGroup.Disabled, QPalette.ColorRole.WindowText, _c("#888888"))
     app.setPalette(pal)
 
     _log("building main window")

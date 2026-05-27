@@ -24,6 +24,54 @@ class AnalysisPlugin(AcornPlugin):
         self._sem_thread = None
         context.image_loaded.connect(self._on_image_loaded)
         context.annotations_changed.connect(self._on_annotations_changed)
+        context.action_requested.connect(self._on_action_requested)
+
+    def _on_action_requested(self, action: str, params: dict) -> None:
+        if action != "run_surface_area" or self._panel is None:
+            return
+        labels = params.get("labels") or []
+        if not labels:
+            # use all roi labels present in current annotations
+            store = self._context.annotation_store
+            seen: dict[str, int] = {}
+            if store is not None:
+                for ann in store:
+                    if getattr(ann, "type", None) == "roi":
+                        lbl = getattr(ann, "label", "")
+                        seen[lbl] = seen.get(lbl, 0) + 1
+            for state_list in self._context.all_annotation_states.values():
+                for ann in state_list:
+                    if getattr(ann, "type", None) == "roi":
+                        lbl = getattr(ann, "label", "")
+                        seen[lbl] = seen.get(lbl, 0) + 1
+            labels = list(seen.keys())
+        # Select matching checkboxes and kick off analysis
+        self._panel.refresh_labels(labels)
+        for lbl, cb in self._panel._label_checks.items():
+            cb.setChecked(lbl in labels)
+        px = self._context.current_pixel_size_nm
+        self._panel._px_spin.setValue(px)
+        method = params.get("method", "auto")
+        method_idx = self._panel._method_combo.findData(method)
+        if method_idx >= 0:
+            self._panel._method_combo.setCurrentIndex(method_idx)
+        compound_mode = params.get("compound_mode", "separate")
+        if compound_mode == "separate":
+            self._panel._compound_check.setChecked(False)
+        else:
+            self._panel._compound_check.setChecked(True)
+            if compound_mode == "subtract_inner":
+                self._panel._cm_sub.setChecked(True)
+            elif compound_mode == "union":
+                self._panel._cm_union.setChecked(True)
+            else:
+                self._panel._cm_auto.setChecked(True)
+        mode = params.get("mode", "single")
+        if mode == "batch":
+            self._panel._mode_batch.setChecked(True)
+        else:
+            self._panel._mode_single.setChecked(True)
+        self._panel._on_run_clicked()
 
     def _on_image_loaded(self, img) -> None:
         if self._panel is not None:
