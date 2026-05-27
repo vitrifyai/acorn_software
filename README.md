@@ -8,7 +8,7 @@ integrates SAM 3, SAM 2, YOLO, and UNet for AI-assisted segmentation, ships a pl
 extending functionality, and includes **CLU** — a natural-language AI assistant that can drive
 any feature in the application from a chat panel.
 
-Developed by **Alexis Williams** and **Chanda Harris** of the
+Developed by **Alexis N. Williams** and **Chanda R. Harris** of the
 [eMMA (electron Microscopy and Microanalysis) group](https://www.ornl.gov/group/electron-microscopy-and-microanalysis),
 Center for Nanophase Materials Sciences, Oak Ridge National Laboratory.
 
@@ -20,32 +20,32 @@ Center for Nanophase Materials Sciences, Oak Ridge National Laboratory.
 
 ### Core image viewing and annotation
 - Multi-format loading: DM4, TIFF (single and multi-frame), MRC/MRCS, PNG, JPEG
-- Movie / multi-frame file support — automatic frame detection for DM4, TIFF, and MRC/MRCS stacks
+- Movie / multi-frame file support: automatic frame detection for DM4, TIFF, and MRC/MRCS stacks
 - Interactive contrast: bandpass, percentile, sigma, CLAHE, manual, with saveable presets
 - Manual annotation: ROI polygons, rectangles, arrows, circles, text, scale bars, distance and angle measurements
-- RELION .star file import — particle picks loaded as circular ROI annotations
+- RELION .star file import: particle picks loaded as circular ROI annotations
 
 ### AI-assisted segmentation
-- **SAM 3 / SAM 2** (Meta) — point, box, scribble, automatic mask generation
-- **micro-SAM** — SAM checkpoints fine-tuned for electron and light microscopy
-- **YOLO 11 / v8 / v9 / v10** (Ultralytics) — object detection and instance segmentation
-- **UNet / UNet++ / FPN / DeepLabV3+ / MAnet / PAN** (segmentation-models-pytorch) — semantic segmentation
+- **SAM 3 / SAM 2** (Meta): point, box, scribble, automatic mask generation
+- **micro-SAM**: SAM checkpoints fine-tuned for electron and light microscopy
+- **YOLO 11 / v8 / v9 / v10** (Ultralytics): object detection and instance segmentation
+- **UNet / UNet++ / FPN / DeepLabV3+ / MAnet / PAN** (segmentation-models-pytorch): semantic segmentation
 - Pipe YOLO boxes directly into SAM for instance-accurate masks at detection speed
 
 ### Movie processing (multi-frame)
-- **Frame averaging** — mean, motion-corrected, or dose-weighted (Grant & Grigorieff 2015)
-- **Motion correction** — two-pass phase cross-correlation alignment (skimage); sub-pixel accurate
-- **Drift trajectory plot** — MotionCor2-style per-frame displacement chart and drift path
-- **Dose series analysis** — split movie into equal-dose bins, view averaged images and
+- **Frame averaging**: mean, motion-corrected, or dose-weighted (Grant & Grigorieff 2015)
+- **Motion correction**: two-pass phase cross-correlation alignment (skimage); sub-pixel accurate
+- **Drift trajectory plot**: MotionCor2-style per-frame displacement chart and drift path
+- **Dose series analysis**: split movie into equal-dose bins, view averaged images and
   difference maps (`bin N − bin 1`) to visualise beam-induced structural changes
-- Configurable frame range (start / end frame) — skip early high-motion frames or cap total dose
-- Individual frame viewer — step through any frame in the movie
+- Configurable frame range (start / end frame): skip early high-motion frames or cap total dose
+- Individual frame viewer: step through any frame in the movie
 
 ### Analysis
-- **Surface area estimation** — 3D surface area from 2D ROI masks using four auto-selected
+- **Surface area estimation**: 3D surface area from 2D ROI masks using four auto-selected
   methods (ellipsoid, Cauchy, Fourier, fractal for rough surfaces); uncertainty propagation,
   hollow/aggregate detection, multi-GPU batch
-- **Particle tracking** — link annotations across image series using nearest-neighbour matching;
+- **Particle tracking**: link annotations across image series using nearest-neighbour matching;
   configurable max displacement (nm), minimum track length, frame gap tolerance
 
 ### Training pipeline
@@ -115,7 +115,7 @@ plugin functionality.
 
 ## AI assistant — CLU
 
-CLU is ACORN's built-in natural-language assistant. It lives in the **CLU** tab (added by the
+CLU (is ACORN's built-in natural-language assistant. It lives in the **CLU** tab (added by the
 `acorn_llm` plugin) and can perform any ACORN action from a chat message — segmentation,
 contrast adjustment, training, dataset management, movie processing, and more.
 
@@ -399,12 +399,11 @@ For direct correspondence: **williamsan@ornl.gov**
 
 The [electron Microscopy and Microanalysis (eMMA) group](https://www.ornl.gov/group/electron-microscopy-and-microanalysis)
 is part of the Center for Nanophase Materials Sciences (CNMS) at Oak Ridge National Laboratory.
-The group develops and applies advanced multi-scale materials characterization techniques —
-including aberration-corrected STEM, in-situ and cryo-EM, electron spectroscopy (EELS/EDX),
-and atom probe tomography — to uncover structure-property-function relationships across
+The group develops and applies advanced multi-scale materials characterization techniques (including aberration-corrected STEM, in-situ and cryo-EM, electron spectroscopy (EELS/EDX),
+and atom probe tomography)to uncover structure-property-function relationships across
 metals, ceramics, composites, nanomaterials, and biological specimens.
 
-ACORN was developed to accelerate data analysis workflows for the group's cryo-EM and
+ACORN was developed to accelerate data analysis workflows for the group's low-dose cryo-EM and
 analytical STEM programs, with a focus on ease of use for domain experts and compatibility
 with standard ML training pipelines.
 
