@@ -46,3 +46,6 @@ htmlcov/
 # Secrets
 .env
 *.token
+
+# Private documents
+paper_draft.md

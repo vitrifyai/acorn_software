@@ -18,15 +18,32 @@ class AnalysisPlugin(AcornPlugin):
 
     def __init__(self, context: "AcornContext") -> None:
         super().__init__(context)
-        self._panel     = None
-        self._sem_panel = None
-        self._thread     = None
-        self._sem_thread = None
+        self._panel          = None
+        self._sem_panel      = None
+        self._particle_panel = None
+        self._thread         = None
+        self._sem_thread     = None
+        self._particle_thread = None
         context.image_loaded.connect(self._on_image_loaded)
         context.annotations_changed.connect(self._on_annotations_changed)
         context.action_requested.connect(self._on_action_requested)
 
     def _on_action_requested(self, action: str, params: dict) -> None:
+        if action == "run_particle_analysis" and self._particle_panel is not None:
+            labels = params.get("labels") or []
+            mode = params.get("mode", "single")
+            if mode == "batch":
+                self._particle_panel._mode_batch.setChecked(True)
+            else:
+                self._particle_panel._mode_single.setChecked(True)
+            if labels:
+                for lbl, cb in self._particle_panel._label_checks.items():
+                    cb.setChecked(lbl in labels)
+            else:
+                for cb in self._particle_panel._label_checks.values():
+                    cb.setChecked(True)
+            self._particle_panel._on_run()
+            return
         if action != "run_surface_area" or self._panel is None:
             return
         labels = params.get("labels") or []
@@ -78,31 +95,48 @@ class AnalysisPlugin(AcornPlugin):
             self._panel.set_pixel_size(img.pixel_size)
         if self._sem_panel is not None:
             self._sem_panel.set_pixel_size(img.pixel_size)
+        if self._particle_panel is not None:
+            self._particle_panel.set_pixel_size(img.pixel_size)
 
     def _on_annotations_changed(self, store) -> None:
-        labels: list[str] = []
+        roi_labels: list[str] = []
+        all_labels: list[str] = []
         for ann in store:
-            if getattr(ann, "type", None) == "roi":
-                labels.append(getattr(ann, "label", ""))
+            t   = getattr(ann, "type", None)
+            lbl = getattr(ann, "label", "")
+            if t == "roi":
+                roi_labels.append(lbl)
+            if t in ("roi", "circle", "rectangle"):
+                all_labels.append(lbl)
         idx = self._context.current_image_index
         for i, state_list in self._context.all_annotation_states.items():
             if i == idx:
                 continue
             for ann in state_list:
-                if getattr(ann, "type", None) == "roi":
-                    labels.append(getattr(ann, "label", ""))
+                t   = getattr(ann, "type", None)
+                lbl = getattr(ann, "label", "")
+                if t == "roi":
+                    roi_labels.append(lbl)
+                if t in ("roi", "circle", "rectangle"):
+                    all_labels.append(lbl)
         if self._panel is not None:
-            self._panel.refresh_labels(labels)
+            self._panel.refresh_labels(roi_labels)
         if self._sem_panel is not None:
-            self._sem_panel.refresh_labels(labels)
+            self._sem_panel.refresh_labels(roi_labels)
+        if self._particle_panel is not None:
+            self._particle_panel.refresh_labels(all_labels)
 
     def create_panel(self) -> QWidget:
         from PyQt6.QtWidgets import QTabWidget
         from acorn_analysis.panel import AnalysisPanel
         from acorn_analysis.sem_panel import SEMPanel
+        from acorn_analysis.particle_panel import ParticlePanel
 
         self._panel = AnalysisPanel()
         self._panel.analysis_requested.connect(self._on_analysis_requested)
+
+        self._particle_panel = ParticlePanel()
+        self._particle_panel.analysis_requested.connect(self._on_particle_analysis_requested)
 
         self._sem_panel = SEMPanel()
         self._sem_panel.sem_requested.connect(self._on_sem_requested)
@@ -111,8 +145,9 @@ class AnalysisPlugin(AcornPlugin):
         self._sem_panel.pick_flat_region_requested.connect(self._on_pick_flat_region)
 
         tabs = QTabWidget()
-        tabs.addTab(self._panel,     "Mask-Based")
-        tabs.addTab(self._sem_panel, "SEM 3D")
+        tabs.addTab(self._panel,          "Surface Area Analysis")
+        tabs.addTab(self._particle_panel, "Particle Measurements")
+        tabs.addTab(self._sem_panel,      "SEM 3D")
         return tabs
 
     def _on_analysis_requested(self, config: dict) -> None:
@@ -233,6 +268,65 @@ class AnalysisPlugin(AcornPlugin):
     def _on_error(self, msg: str) -> None:
         self._panel.set_running(False)
         QMessageBox.critical(None, "Analysis error", msg)
+
+    # ------------------------------------------------------------------
+    # Particle measurements
+    # ------------------------------------------------------------------
+
+    def _on_particle_analysis_requested(self, config: dict) -> None:
+        from acorn_analysis.particle_panel import ParticleThread
+
+        mode            = config["mode"]
+        selected_labels = set(config.get("selected_labels") or [])
+        fallback_px     = config.get("pixel_size_nm") or 1.0
+
+        paths = self._context.image_paths
+        idx   = self._context.current_image_index
+        store = self._context.annotation_store
+        items: list[dict] = []
+
+        def _collect(s, img_name: str, px: float) -> None:
+            items.append({"store": list(s), "px_nm": px or fallback_px, "image": img_name})
+
+        if mode == "single":
+            if idx >= 0 and store is not None:
+                px = self._context.pixel_size_for_index(idx)
+                _collect(store, paths[idx].name if idx < len(paths) else "image", px)
+        elif mode == "batch":
+            if idx >= 0 and store is not None:
+                px = self._context.pixel_size_for_index(idx)
+                _collect(store, paths[idx].name if idx < len(paths) else "image", px)
+            for i, state_list in self._context.all_annotation_states.items():
+                if i == idx:
+                    continue
+                if i < len(paths):
+                    px = self._context.pixel_size_for_index(i)
+                    _collect(state_list, paths[i].name, px)
+
+        if not items:
+            QMessageBox.information(
+                None, "Particle Measurements",
+                "No annotations found.\n"
+                "Add ROI, circle, or rectangle annotations first."
+            )
+            return
+
+        self._particle_panel.set_running(True)
+        self._particle_thread = ParticleThread(items, selected_labels)
+        self._particle_thread.progress.connect(self._particle_panel.show_progress)
+        self._particle_thread.finished.connect(self._on_particle_finished)
+        self._particle_thread.error.connect(self._on_particle_error)
+        self._particle_thread.start()
+
+    def _on_particle_finished(self, df) -> None:
+        self._particle_panel.set_running(False)
+        self._particle_panel.show_results(df)
+        n = len(df) if df is not None and not df.empty else 0
+        self._context.set_status(f"Particle measurements complete -- {n} annotations measured")
+
+    def _on_particle_error(self, msg: str) -> None:
+        self._particle_panel.set_running(False)
+        QMessageBox.critical(None, "Particle Measurements error", msg)
 
     # ------------------------------------------------------------------
     # SEM 3D analysis
@@ -442,3 +536,6 @@ class AnalysisPlugin(AcornPlugin):
         if self._sem_thread and self._sem_thread.isRunning():
             self._sem_thread.stop()
             self._sem_thread.wait(3000)
+        if self._particle_thread and self._particle_thread.isRunning():
+            self._particle_thread.quit()
+            self._particle_thread.wait(3000)

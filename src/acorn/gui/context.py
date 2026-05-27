@@ -271,6 +271,38 @@ class AcornContext(QObject):
                 state["distance_measurements"] = distances
             if roi_areas:
                 state["roi_areas"] = roi_areas
+
+            # Per-annotation shape metrics for CLU measurement queries
+            px = float(self.current_pixel_size_nm)
+            shape_measurements: list[dict] = []
+            try:
+                from acorn_analysis.particle_panel import (
+                    _polygon_metrics, _circle_metrics, _rect_metrics,
+                )
+                for a in anns:
+                    t   = getattr(a, "type", "")
+                    lbl = getattr(a, "label", "") or ""
+                    m: dict = {}
+                    if t == "roi":
+                        verts = getattr(a, "vertices", [])
+                        if len(verts) >= 3:
+                            m = _polygon_metrics(verts, px)
+                    elif t == "circle":
+                        r = getattr(a, "r", 0.0)
+                        if r > 0:
+                            m = _circle_metrics(r, px)
+                    elif t == "rectangle":
+                        m = _rect_metrics(
+                            getattr(a, "x0", 0), getattr(a, "y0", 0),
+                            getattr(a, "x1", 0), getattr(a, "y1", 0),
+                            px,
+                        )
+                    if m:
+                        shape_measurements.append({"type": t, "label": lbl, **m})
+            except Exception:
+                pass
+            if shape_measurements:
+                state["shape_measurements"] = shape_measurements
         else:
             state["annotation_count"]  = 0
             state["annotation_labels"] = {}
