@@ -316,7 +316,7 @@ class AssistantPanel(QWidget):
         self._chat.setHtml("".join(parts))
 
         if at_end:
-            sb.setValue(sb.maximum())
+            QTimer.singleShot(0, lambda: sb.setValue(sb.maximum()))
 
 
 # ------------------------------------------------------------------

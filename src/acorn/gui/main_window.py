@@ -59,7 +59,21 @@ class FolderPickerDialog(QDialog):
         layout = QVBoxLayout(self)
         layout.setSpacing(6)
 
-        layout.addWidget(QLabel(f"Found {len(files)} supported file(s).  Select which to open:"))
+        filter_row = QHBoxLayout()
+        filter_row.addWidget(QLabel("File type:"))
+        self._type_filter = QComboBox()
+        self._type_filter.addItem("All supported", None)
+        self._type_filter.addItem("DM4",           {".dm4"})
+        self._type_filter.addItem("TIFF",          {".tif", ".tiff"})
+        self._type_filter.addItem("MRC / MRCS",    {".mrc", ".mrcs"})
+        self._type_filter.addItem("PNG / JPEG",    {".png", ".jpg", ".jpeg"})
+        self._type_filter.currentIndexChanged.connect(self._apply_filter)
+        filter_row.addWidget(self._type_filter)
+        filter_row.addStretch()
+        layout.addLayout(filter_row)
+
+        self._count_label = QLabel(f"Found {len(files)} supported file(s).  Select which to open:")
+        layout.addWidget(self._count_label)
 
         self._list = QListWidget()
         self._list.setSelectionMode(QListWidget.SelectionMode.NoSelection)
@@ -87,19 +101,35 @@ class FolderPickerDialog(QDialog):
         buttons.rejected.connect(self.reject)
         layout.addWidget(buttons)
 
+    def _apply_filter(self) -> None:
+        exts = self._type_filter.currentData()
+        visible = 0
+        for i in range(self._list.count()):
+            item = self._list.item(i)
+            p: Path = item.data(Qt.ItemDataRole.UserRole)
+            show = exts is None or p.suffix.lower() in exts
+            item.setHidden(not show)
+            if show:
+                visible += 1
+        self._count_label.setText(f"{visible} file(s) shown.  Select which to open:")
+
     def _select_all(self) -> None:
         for i in range(self._list.count()):
-            self._list.item(i).setCheckState(Qt.CheckState.Checked)
+            item = self._list.item(i)
+            if not item.isHidden():
+                item.setCheckState(Qt.CheckState.Checked)
 
     def _deselect_all(self) -> None:
         for i in range(self._list.count()):
-            self._list.item(i).setCheckState(Qt.CheckState.Unchecked)
+            item = self._list.item(i)
+            if not item.isHidden():
+                item.setCheckState(Qt.CheckState.Unchecked)
 
     def selected_paths(self) -> list[Path]:
         result = []
         for i in range(self._list.count()):
             item = self._list.item(i)
-            if item.checkState() == Qt.CheckState.Checked:
+            if not item.isHidden() and item.checkState() == Qt.CheckState.Checked:
                 result.append(item.data(Qt.ItemDataRole.UserRole))
         return result
 
@@ -1977,15 +2007,17 @@ class MainWindow(QMainWindow):
             self._switch_to(row)
 
     def _on_image_list_context_menu(self, pos) -> None:
-        """Right-click menu on the image list — clear annotations for any image."""
+        """Right-click menu on the image list."""
         from PyQt6.QtWidgets import QMenu
         item = self._image_list.itemAt(pos)
         if item is None:
             return
         row = self._image_list.row(item)
         menu = QMenu(self)
-        clear_act = menu.addAction(f"Clear all annotations for: {item.text()}")
+        clear_act  = menu.addAction(f"Clear annotations: {item.text()}")
+        remove_act = menu.addAction(f"Remove from session: {item.text()}")
         action = menu.exec(self._image_list.mapToGlobal(pos))
+
         if action == clear_act:
             reply = QMessageBox.question(
                 self, "Clear annotations",
@@ -1997,6 +2029,49 @@ class MainWindow(QMainWindow):
                 if row == self._img_idx:
                     self._canvas_widget.canvas.store.clear()
                 self._autosave_timer.start()
+
+        elif action == remove_act:
+            reply = QMessageBox.question(
+                self, "Remove image",
+                f"Remove {item.text()} from this session?\n(The file will not be deleted.)",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            )
+            if reply == QMessageBox.StandardButton.Yes:
+                self._remove_image_at(row)
+
+    def _remove_image_at(self, row: int) -> None:
+        """Remove image at *row* from the session without deleting the file."""
+        if row < 0 or row >= len(self._image_paths):
+            return
+
+        # Rebuild index-keyed dicts shifting keys above row down by one
+        self._image_paths.pop(row)
+        self._ann_states     = {(k if k < row else k - 1): v
+                                 for k, v in self._ann_states.items() if k != row}
+        self._contrast_states = {(k if k < row else k - 1): v
+                                  for k, v in self._contrast_states.items() if k != row}
+        self._px_overrides    = {(k if k < row else k - 1): v
+                                  for k, v in getattr(self, "_px_overrides", {}).items()
+                                  if k != row}
+        stem = None
+        if hasattr(self, "_export_queue"):
+            # Remove from export queue if present (queue stores dicts with 'stem' key)
+            pass  # queue is stem-based, not index-based; no action needed
+
+        self._populate_image_list()
+
+        if not self._image_paths:
+            self._img_idx = -1
+            self._canvas_widget.canvas.clear()
+            self._canvas_widget.update_nav_label(0, 0)
+            self._canvas_widget.set_nav_enabled(False)
+            return
+
+        # Navigate to a valid index
+        new_idx = min(row, len(self._image_paths) - 1)
+        self._img_idx = -1  # force reload
+        self._switch_to(new_idx)
+        self._canvas_widget.set_nav_enabled(len(self._image_paths) > 1)
 
     def _on_prev(self) -> None:
         if self._image_paths:
