@@ -42,6 +42,12 @@ htmlcov/
 
 # Output / results
 *.log
+runs/          # YOLO/UNet training output directories
+datasets/      # exported training datasets
+
+# Jupyter
+.ipynb_checkpoints/
+*.ipynb
 
 # Secrets
 .env
