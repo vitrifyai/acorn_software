@@ -84,6 +84,17 @@ def draw_scalebar(
     ax.add_patch(rect)
     artists.append(rect)
 
+    # Invisible tall rectangle so the scale bar is easy to click.
+    # The visible bar can be only 3-7px tall; this gives a ~10x larger hit area.
+    hit_h = max(bar_h * 8, h_img * 0.04)
+    hit_rect = Rectangle(
+        (x0 - bar_px * 0.05, y0 - hit_h * 0.4),
+        bar_px * 1.1, hit_h,
+        color="none", alpha=0, zorder=5, linewidth=0,
+    )
+    ax.add_patch(hit_rect)
+    artists.append(hit_rect)
+
     label = format_scale_label(length_nm)
     txt = ax.text(
         x0 + bar_px / 2, y0 - bar_h * 1.6, label,
