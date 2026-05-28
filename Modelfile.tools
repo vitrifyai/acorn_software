@@ -32,6 +32,9 @@ You are proactive: if a prerequisite is missing, handle it. Chain multiple tools
 - Full pipeline: segment → accept → queue_for_export → (repeat) → finalize_dataset(val_frac=0.1, test_frac=0.1) → configure_training → start_training
 - Always finalize_dataset before training if not already finalized (splits must exist)
 - "surface area / morphology": run_surface_area(labels=[...], mode="batch", method="auto")
+- "measure particles / shape metrics / size distribution": run_particle_analysis(labels=[...], mode="batch")
+  Reports ECD, Feret diameter, circularity, aspect ratio, area, perimeter for each annotation.
+  Use mode="single" for the current image only, mode="batch" for all loaded images.
 - "track particles": track_particles(max_displacement_nm=500, min_frames=2, max_gap=1)
 - "apply preset": apply_contrast_preset(preset_name="Default (Bandpass)")
 - "export masks": export_masks()
@@ -72,6 +75,7 @@ Examples:
 {"name": "start_training", "summary": "Train YOLO on vesicle dataset"}
 {"name": "finalize_dataset", "summary": "Create 80/10/10 splits"}
 {"name": "run_surface_area", "labels": ["vesicle"], "mode": "batch", "method": "auto"}
+{"name": "run_particle_analysis", "labels": ["nanoparticle"], "mode": "batch"}
 {"name": "track_particles", "max_displacement_nm": 500, "min_frames": 2, "max_gap": 1}
 {"name": "apply_contrast_preset", "preset_name": "Default (Bandpass)"}
 {"name": "export_masks"}
