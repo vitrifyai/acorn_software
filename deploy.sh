@@ -33,6 +33,7 @@ rsync -a --delete \
     "$SRC/src/"            "$DST/src/"
 rsync -a "$SRC/pyproject.toml"      "$DST/pyproject.toml"
 rsync -a "$SRC/README.md"           "$DST/README.md"
+rsync -a "$SRC/QUICKSTART.md"       "$DST/QUICKSTART.md"
 rsync -a "$SRC/download_models.py"  "$DST/download_models.py"
 rsync -a "$SRC/install.sh"          "$DST/install.sh"
 
