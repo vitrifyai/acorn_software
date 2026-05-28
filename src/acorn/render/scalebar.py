@@ -65,6 +65,7 @@ def draw_scalebar(
     list of matplotlib artists added (for removal on redraw)
     """
     from matplotlib.patches import Rectangle
+    from matplotlib.lines import Line2D
 
     artists = []
     h_ax, w_ax = ax.get_ylim()[0], ax.get_xlim()[1]   # image dims in data coords
@@ -84,16 +85,15 @@ def draw_scalebar(
     ax.add_patch(rect)
     artists.append(rect)
 
-    # Invisible tall rectangle so the scale bar is easy to click.
-    # The visible bar can be only 3-7px tall; this gives a ~10x larger hit area.
-    hit_h = max(bar_h * 8, h_img * 0.04)
-    hit_rect = Rectangle(
-        (x0 - bar_px * 0.05, y0 - hit_h * 0.4),
-        bar_px * 1.1, hit_h,
-        color="none", alpha=0, zorder=5, linewidth=0,
+    # Invisible Line2D with pickradius so the scale bar is easy to click.
+    # Line2D.contains() uses display-pixel distance, giving a reliable hit area
+    # regardless of zoom — same technique used for arrow hit testing.
+    hit_line = Line2D(
+        [x0, x0 + bar_px], [y0 + bar_h / 2, y0 + bar_h / 2],
+        color="none", lw=0, alpha=0, zorder=5, pickradius=12,
     )
-    ax.add_patch(hit_rect)
-    artists.append(hit_rect)
+    ax.add_line(hit_line)
+    artists.append(hit_line)
 
     label = format_scale_label(length_nm)
     txt = ax.text(
