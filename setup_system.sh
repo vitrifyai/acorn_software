@@ -18,7 +18,8 @@ SRC="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 DST="/opt/acorn"
 VENV="$DST/.venv"
 OWNER="vnw"                          # user who owns /opt/acorn and can deploy
-PYTHON="/opt/conda/bin/python3"      # system-wide Python (3.13, readable by all)
+# System Python — prefers the shared conda install; falls back to any python3 >= 3.10
+PYTHON="${ACORN_PYTHON:-$(command -v /opt/conda/bin/python3 2>/dev/null || command -v python3)}"
 UV="$(command -v uv || echo /home/vnw/.local/bin/uv)"
 SAM3_SRC="/home/vnw/repos/sam3"      # editable sam3 dev source — install as regular package
 
