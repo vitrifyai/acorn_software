@@ -145,7 +145,7 @@ EOF
     success "Desktop shortcut created."
 fi
 
-# ── 7. Done ───────────────────────────────────────────────────────────────────
+# ── 8. Done ───────────────────────────────────────────────────────────────────
 echo ""
 echo -e "${GREEN}${BOLD}========================================${RESET}"
 echo -e "${GREEN}${BOLD}   Installation complete!               ${RESET}"
