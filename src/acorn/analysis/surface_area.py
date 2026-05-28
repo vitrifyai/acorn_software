@@ -302,6 +302,17 @@ def _detect_hollow(mask_u8: np.ndarray, raw_image: Optional[np.ndarray] = None) 
     if len(ys) < 10:
         return False, 0.0
 
+    # When the annotation overlaps the image edge, raw_image may be smaller
+    # than mask_u8.  Drop any pixels that fall outside raw_image bounds so the
+    # radial-profile lookup never goes out of range.
+    if raw_image is not None:
+        h_raw, w_raw = raw_image.shape[:2]
+        within = (ys < h_raw) & (xs < w_raw)
+        ys = ys[within]
+        xs = xs[within]
+        if len(ys) < 10:
+            return False, 0.0
+
     cy, cx = ys.mean(), xs.mean()
     r_all = np.sqrt((ys - cy) ** 2 + (xs - cx) ** 2)
     r_max = r_all.max()
