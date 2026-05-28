@@ -82,7 +82,7 @@ Go to **File > Open** (or press **Ctrl+O**) and select your image file.
 | **UNet** | Semantic segmentation using a custom-trained model |
 | **Export** | Save annotated images, measurement data, or training datasets |
 | **Train** | Prepare labelled data and train a custom YOLO or UNet model on your images |
-| **Analysis** | Estimate 3D surface areas from 2D ROI masks; plot distributions in Å², nm², µm², or mm²; group results by label across all images |
+| **Analysis** | Two sub-tabs: **Surface Area Analysis** — estimate 3D surface areas from 2D ROI masks, plot distributions by label; **Particle Measurements** — compute ECD, Feret diameter, circularity, aspect ratio, area, and perimeter for every annotated particle |
 | **Track** | Link annotations across image series to track particle or feature motion |
 | **3D** | Volume rendering and z-slice navigation for MRC tomograms |
 | **CLU** | Natural-language AI assistant — type what you want to do, the AI does it |
@@ -254,9 +254,15 @@ You can ask CLU to do this entire workflow in plain English:
 
 The **Analysis** tab's batch mode automatically uses each image's own calibrated pixel size,
 so you do not need to set a uniform pixel size when images were acquired at different
-magnifications. Enable **Group same-label annotations across images** to combine all
+magnifications.
+
+**Surface Area Analysis**: enable **Group same-label annotations across images** to combine all
 *vesicle* annotations from all images into one distribution — or uncheck it to compare
 image-by-image variation.
+
+**Particle Measurements**: select labels and click **Run** to compute shape metrics (ECD,
+Feret diameter, circularity, aspect ratio, area, perimeter) across all loaded images in one
+pass. Results appear in a sortable table and can be exported as CSV.
 
 ---
 
