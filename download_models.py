@@ -113,6 +113,11 @@ PRESETS: dict[str, dict] = {
         "yolo":  ["yolo11n-seg.pt", "yolo11s-seg.pt", "yolo11m-seg.pt",
                   "yolo11l-seg.pt", "yolo11x-seg.pt"],
     },
+    "lm": {
+        "label": "Light microscopy  —  LM-tuned SAM vit_b + vit_l + YOLO nano seg",
+        "usam":  ["vit_b_lm", "vit_l_lm"],
+        "yolo":  ["yolo11n-seg.pt"],
+    },
     "all": {
         "label": "Everything  —  every SAM variant + every YOLO size",
         "usam":  list(USAM_MODELS),
