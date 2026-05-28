@@ -138,7 +138,25 @@ class CryoCanvas:
             self._norm = (rgb[..., 0] * 0.2126 + rgb[..., 1] * 0.7152 + rgb[..., 2] * 0.0722)
             self._img_artist.set_data(_make_display_array(rgb))
         else:
-            self._norm = precomputed_norm if precomputed_norm is not None else apply_contrast(self._dm4.raw, params)
+            if precomputed_norm is not None:
+                self._norm = precomputed_norm
+            else:
+                # Compute on full-res raw so _norm is full-resolution (needed
+                # for correct ROI stats, line profiles, and display export).
+                # Scale spatial sigma/cutoff params by the stride factor so
+                # bandpass and Fourier methods produce the same visual result
+                # as the display-res precomputed path used at load time.
+                h, w = self._dm4.raw.shape[:2]
+                step = max(1, (max(h, w) + _DISPLAY_MAX_DIM - 1) // _DISPLAY_MAX_DIM)
+                if step > 1:
+                    from dataclasses import replace
+                    params = replace(params,
+                        bp_low_sigma=params.bp_low_sigma * step,
+                        bp_high_sigma=params.bp_high_sigma * step,
+                        fbp_hp_px=params.fbp_hp_px * step,
+                        fbp_lp_px=params.fbp_lp_px * step,
+                    )
+                self._norm = apply_contrast(self._dm4.raw, params)
             self._img_artist.set_data(_make_display_array(self._norm))
             self._img_artist.set_clim(0, 1)
             self._img_artist.set_cmap(params.colormap)

@@ -339,16 +339,25 @@ class ImageLoadThread(QThread):
             from acorn.render.canvas import _DISPLAY_MAX_DIM
             img = DM4Image.from_file(self._path)
 
-            # Pre-downsample large images before contrast computation.
-            # The display never uses more than _DISPLAY_MAX_DIM px per side,
-            # so computing contrast on the full-res raw is wasted work.
-            # img.raw stays full-resolution for all analysis and export.
+            # Compute contrast on full-res raw so the precomputed norm is
+            # full-resolution (required for correct ROI stats, line profiles,
+            # and display export).  Scale spatial sigma/cutoff params by the
+            # same stride factor used for display so bandpass / Fourier methods
+            # give the same visual result as they would on the downsampled image.
             raw = img.raw
             h, w = raw.shape[:2]
             step = max(1, (max(h, w) + _DISPLAY_MAX_DIM - 1) // _DISPLAY_MAX_DIM)
-            raw_display = raw[::step, ::step] if step > 1 else raw
-
-            norm = apply_contrast(raw_display, self._params)
+            if step > 1:
+                from dataclasses import replace
+                scaled_params = replace(self._params,
+                    bp_low_sigma=self._params.bp_low_sigma * step,
+                    bp_high_sigma=self._params.bp_high_sigma * step,
+                    fbp_hp_px=self._params.fbp_hp_px * step,
+                    fbp_lp_px=self._params.fbp_lp_px * step,
+                )
+            else:
+                scaled_params = self._params
+            norm = apply_contrast(raw, scaled_params)
             self.finished.emit(self._idx, img, norm)
         except Exception as exc:
             self.error.emit(self._idx, str(exc))
@@ -3319,9 +3328,13 @@ class MainWindow(QMainWindow):
         img = self._canvas_widget.canvas.dm4
         if img is None or img.raw is None:
             return None, 0, 0
-        from acorn.core.contrast import apply_contrast
         import numpy as np
-        norm = apply_contrast(img.raw, self._contrast_panel.params())
+        # Reuse canvas.norm_image so SAM sees exactly what's on screen and
+        # the preload encoder cache (_cached_img_hash) is hit.
+        norm = self._canvas_widget.canvas.norm_image
+        if norm is None:
+            from acorn.core.contrast import apply_contrast
+            norm = apply_contrast(img.raw, self._contrast_panel.params())
         img8 = (np.clip(norm, 0.0, 1.0) * 255).astype(np.uint8)
         if self._sam_crop_region is None:
             return img8, 0, 0
