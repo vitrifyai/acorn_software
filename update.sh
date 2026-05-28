@@ -87,6 +87,24 @@ else
     success "  UNet already installed."
 fi
 
+info "Checking analysis tools (opencv, pandas)..."
+if ! "$VENV_PYTHON" -c "import cv2; import pandas" 2>/dev/null; then
+    uv pip install --python "$VENV_PYTHON" "opencv-python>=4.8" "pandas>=1.5" \
+        && success "  Analysis tools installed." \
+        || warn "  Analysis tools install failed."
+else
+    success "  Analysis tools already installed."
+fi
+
+info "Checking CLU assistant (anthropic, openai)..."
+if ! "$VENV_PYTHON" -c "import anthropic" 2>/dev/null; then
+    uv pip install --python "$VENV_PYTHON" "anthropic>=0.52" "openai>=1.0" \
+        && success "  CLU assistant installed." \
+        || warn "  CLU assistant install failed."
+else
+    success "  CLU assistant already installed."
+fi
+
 echo ""
 echo -e "${GREEN}${BOLD}Update complete. Launch with: ./acorn.sh${RESET}"
 echo ""
