@@ -45,6 +45,9 @@ Center for Nanophase Materials Sciences, Oak Ridge National Laboratory.
 - **Surface area estimation**: 3D surface area from 2D ROI masks using four auto-selected
   methods (ellipsoid, Cauchy, Fourier, fractal for rough surfaces); uncertainty propagation,
   hollow/aggregate detection, multi-GPU batch
+- **Particle measurements**: ECD, Feret diameter, circularity, aspect ratio, area, and perimeter
+  for every annotated particle; single-image or batch mode across all loaded images; results
+  shown in a sortable table and exported as CSV; uses each image's calibrated pixel size
 - **Particle tracking**: link annotations across image series using nearest-neighbour matching;
   configurable max displacement (nm), minimum track length, frame gap tolerance
 
@@ -75,7 +78,7 @@ signal on `AcornContext`.
 
 | Plugin package | Tab label | What it adds |
 |----------------|-----------|--------------|
-| `acorn_analysis` | **Analysis** | 3D surface area estimation from ROI masks; single or batch mode; multi-GPU support |
+| `acorn_analysis` | **Analysis** | Surface area estimation and particle shape measurements (ECD, Feret, circularity) from ROI masks; single or batch; multi-GPU |
 | `acorn_tracking` | **Track** | Particle / feature tracking across image sequences; configurable displacement and gap tolerance |
 | `acorn_3d` | **3D** | Volume rendering and z-slice navigation for MRC tomograms |
 | `acorn_llm` | **CLU** | Natural-language AI assistant chat panel (see below) |
