@@ -3205,7 +3205,8 @@ class MainWindow(QMainWindow):
         if norm is None:
             return
         import numpy as np
-        img8 = (np.clip(norm, 0.0, 1.0) * 255).astype(np.uint8)
+        from acorn.render.canvas import _make_display_array
+        img8 = (_make_display_array(np.clip(norm, 0.0, 1.0)) * 255).astype(np.uint8)
         self._sam_panel.set_sam_status("Encoding image…")
 
         def _run():
@@ -3328,13 +3329,9 @@ class MainWindow(QMainWindow):
         img = self._canvas_widget.canvas.dm4
         if img is None or img.raw is None:
             return None, 0, 0
+        from acorn.core.contrast import apply_contrast
         import numpy as np
-        # Reuse canvas.norm_image so SAM sees exactly what's on screen and
-        # the preload encoder cache (_cached_img_hash) is hit.
-        norm = self._canvas_widget.canvas.norm_image
-        if norm is None:
-            from acorn.core.contrast import apply_contrast
-            norm = apply_contrast(img.raw, self._contrast_panel.params())
+        norm = apply_contrast(img.raw, self._contrast_panel.params())
         img8 = (np.clip(norm, 0.0, 1.0) * 255).astype(np.uint8)
         if self._sam_crop_region is None:
             return img8, 0, 0
