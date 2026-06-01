@@ -47,7 +47,11 @@ Center for Nanophase Materials Sciences, Oak Ridge National Laboratory.
   hollow/aggregate detection, multi-GPU batch
 - **Particle measurements**: ECD, Feret diameter, circularity, aspect ratio, area, and perimeter
   for every annotated particle; single-image or batch mode across all loaded images; results
-  shown in a sortable table and exported as CSV; uses each image's calibrated pixel size
+  shown in a sortable table with a configurable histogram (count or density, adjustable bins,
+  switchable x-axis metric); exported as CSV; uses each image's calibrated pixel size
+- **Measurement export**: CLU's `export_measurements` command writes a combined summary CSV
+  for all loaded images to `acorn_measurements/measurements.csv` inside the image folder;
+  the file and histogram populate the Analysis tab automatically
 - **Particle tracking**: link annotations across image series using nearest-neighbour matching;
   configurable max displacement (nm), minimum track length, frame gap tolerance
 
@@ -175,8 +179,13 @@ model configuration, export queue, training settings) and can:
 - Drive the full training pipeline: *"prep this for training"*, *"train a YOLO model"*
 - Process movies: *"average the frames"*, *"run motion correction on frames 3 to 50"*,
   *"show me how the membrane changes with dose"*
-- Run analysis: *"measure surface areas of all vesicles"*, *"track particles across images"*
-- Answer questions without tools: *"how many vesicles are annotated?"*, *"what's the pixel size?"*
+- Run analysis: *"measure the particle diameters"*, *"give me Feret lengths for all particles"*,
+  *"measure surface areas of all vesicles"*, *"track particles across images"*
+- Control the histogram: *"show as raw counts"*, *"plot Feret length"*, *"use 50 bins"*
+- Export measurements: *"export measurements"* — writes `acorn_measurements/measurements.csv`
+  in the image folder and opens the results in the Analysis tab
+- Answer questions without tools: *"how many vesicles are annotated?"*, *"what's the pixel size?"*,
+  *"what's the mean ECD?"*
 
 ### Ollama / local model setup
 

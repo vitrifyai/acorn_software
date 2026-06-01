@@ -82,7 +82,7 @@ Go to **File > Open** (or press **Ctrl+O**) and select your image file.
 | **UNet** | Semantic segmentation using a custom-trained model |
 | **Export** | Save annotated images, measurement data, or training datasets |
 | **Train** | Prepare labelled data and train a custom YOLO or UNet model on your images |
-| **Analysis** | Two sub-tabs: **Surface Area Analysis** — estimate 3D surface areas from 2D ROI masks, plot distributions by label; **Particle Measurements** — compute ECD, Feret diameter, circularity, aspect ratio, area, and perimeter for every annotated particle |
+| **Analysis** | Two sub-tabs: **Surface Area Analysis** — estimate 3D surface area of large objects (vesicles, cells) from 2D ROI masks; **Particle Measurements** — ECD, Feret diameter, circularity, aspect ratio, area, and perimeter for nanoparticles and small objects; histogram with count/density toggle and adjustable bins |
 | **Track** | Link annotations across image series to track particle or feature motion |
 | **3D** | Volume rendering and z-slice navigation for MRC tomograms |
 | **CLU** | Natural-language AI assistant — type what you want to do, the AI does it |
@@ -156,7 +156,10 @@ CLU understands microscopy intent, not just commands. You can say things like:
 - *"detect all the particles"* — CLU runs YOLO detection
 - *"prep this for training"* — CLU annotates, accepts, and queues the image for export
 - *"train a YOLO model"* — CLU configures and starts training
-- *"annotate all images at once"* — CLU runs SAM on every loaded image sequentially
+- *"annotate all images at once"* — CLU runs SAM on every loaded image in one go
+- *"measure particle diameters"* — CLU runs batch particle analysis and shows ECD/Feret in the Analysis tab
+- *"show as raw counts"* / *"plot Feret length"* / *"use 50 bins"* — CLU adjusts the histogram live
+- *"export measurements"* — saves `acorn_measurements/measurements.csv` in your image folder and opens the data in the Analysis tab
 - *"average the frames"* — CLU compresses with mean averaging
 - *"run motion correction on frames 3 to 50"* — CLU clips the frame range and motion-corrects
 - *"show me how the membrane changes with dose"* — CLU opens the dose series tool
