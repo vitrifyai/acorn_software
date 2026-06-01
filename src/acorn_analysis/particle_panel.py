@@ -348,6 +348,24 @@ class ParticlePanel(QWidget):
             )
         self._metric_combo.currentIndexChanged.connect(self._refresh_figure)
         ctrl.addWidget(self._metric_combo)
+
+        ctrl.addWidget(QLabel("Y-axis:"))
+        self._plot_type_combo = QComboBox()
+        self._plot_type_combo.addItem("Count",   "count")
+        self._plot_type_combo.addItem("Density", "density")
+        self._plot_type_combo.setFixedWidth(80)
+        self._plot_type_combo.currentIndexChanged.connect(self._refresh_figure)
+        ctrl.addWidget(self._plot_type_combo)
+
+        ctrl.addWidget(QLabel("Bins:"))
+        self._bins_spin = QDoubleSpinBox()
+        self._bins_spin.setDecimals(0)
+        self._bins_spin.setRange(5, 200)
+        self._bins_spin.setValue(30)
+        self._bins_spin.setFixedWidth(56)
+        self._bins_spin.valueChanged.connect(self._refresh_figure)
+        ctrl.addWidget(self._bins_spin)
+
         ctrl.addStretch()
         for fmt in ("PNG", "SVG", "PDF"):
             b = QPushButton(fmt)
@@ -510,6 +528,8 @@ class ParticlePanel(QWidget):
         palette = ["#4878D0","#EE854A","#6ACC65","#D65F5F","#956CB4","#8C613C","#DC7EC0","#797979"]
         colors = {g: palette[i % len(palette)] for i, g in enumerate(groups)}
         xlabel = _METRIC_LABEL.get(key, key)
+        use_density = getattr(self, "_plot_type_combo", None) and self._plot_type_combo.currentData() == "density"
+        n_bins = int(getattr(self, "_bins_spin", None) and self._bins_spin.value() or 30)
 
         import matplotlib
         matplotlib.use("QtAgg")
@@ -523,35 +543,34 @@ class ParticlePanel(QWidget):
             return None
 
         lo, hi = all_vals.min(), all_vals.max()
-        bins = np.linspace(lo, hi, 31) if hi > lo else 30
+        bins = np.linspace(lo, hi, n_bins + 1) if hi > lo else n_bins
 
         for grp in groups:
             sub = df[df[label_col] == grp][key].dropna().values if label_col else all_vals
             if len(sub) == 0:
                 continue
             c = colors[grp]
-            ax.hist(sub, bins=bins, alpha=0.38, color=c, density=True)
-            if len(sub) > 3 and sub.std() > 1e-12:
+            ax.hist(sub, bins=bins, alpha=0.38, color=c, density=use_density)
+            if use_density and len(sub) > 3 and sub.std() > 1e-12:
                 try:
                     from scipy.stats import gaussian_kde
                     kde = gaussian_kde(sub)
                     xs = np.linspace(lo, hi, 300)
-                    ax.plot(xs, kde(xs), color=c, lw=1.8, label=f"{grp} (n={len(sub)})")
+                    ax.plot(xs, kde(xs), color=c, lw=1.8)
                 except Exception:
-                    ax.plot([], [], color=c, lw=1.8, label=f"{grp} (n={len(sub)})")
-            else:
-                ax.plot([], [], color=c, lw=1.8, label=f"{grp} (n={len(sub)})")
-            ax.axvline(sub.mean(),   color=c, lw=1.2, ls="-")
+                    pass
+            ax.axvline(sub.mean(),     color=c, lw=1.2, ls="-")
             ax.axvline(np.median(sub), color=c, lw=1.2, ls="--")
 
         legend_handles = [
-            *[plt.Rectangle((0,0),1,1,color=colors[g],alpha=0.5,label=g) for g in groups],
+            *[plt.Rectangle((0,0),1,1,color=colors[g],alpha=0.5,
+                             label=f"{g} (n={len(df[df[label_col]==g]) if label_col else len(df)})") for g in groups],
             Line2D([0],[0],color="k",lw=1.2,ls="-", label="mean"),
             Line2D([0],[0],color="k",lw=1.2,ls="--",label="median"),
         ]
         ax.legend(handles=legend_handles, fontsize=7, frameon=False)
         ax.set_xlabel(xlabel, fontsize=9)
-        ax.set_ylabel("Density", fontsize=9)
+        ax.set_ylabel("Density" if use_density else "Count", fontsize=9)
         ax.spines["top"].set_visible(False)
         ax.spines["right"].set_visible(False)
         ax.tick_params(direction="out", length=3, width=0.8, labelsize=8)

@@ -203,10 +203,10 @@ _TOOLS: list[dict] = [
     },
     {
         "name": "clear_annotations",
-        "description": "Clear ALL annotations from the current image. A confirmation dialog will appear first.",
+        "description": "Clear ALL accepted annotations from the current image.",
         "properties": {},
         "required": [],
-        "needs_confirm": True,
+        "needs_confirm": False,
     },
     {
         "name": "set_contrast",
@@ -257,9 +257,8 @@ _TOOLS: list[dict] = [
     {
         "name": "run_surface_area",
         "description": (
-            "Run surface area estimation on annotated ROI polygons. "
-            "Computes per-particle surface area (nm²) using the selected method. "
-            "Use when the user asks for surface area, particle size, or morphology analysis. "
+            "Estimate 3D projected surface area of large annotated structures (cells, organelles, vesicles, liposomes). "
+            "NOT for nanoparticle size/diameter — use run_particle_analysis for that. "
             "Requires ROI annotations to be present."
         ),
         "properties": {
@@ -282,6 +281,58 @@ _TOOLS: list[dict] = [
                 "type": "string",
                 "enum": ["separate", "auto", "subtract_inner", "union"],
                 "description": "How to handle multiple same-label polygons on one image. separate=treat individually. auto=subtract if inner/outer pair detected. subtract_inner=hollow particles (liposomes, donuts). union=aggregate particles.",
+            },
+        },
+        "required": [],
+        "needs_confirm": False,
+    },
+    {
+        "name": "run_particle_analysis",
+        "description": (
+            "Measure 2D shape metrics (ECD/diameter, Feret length, area, perimeter, circularity, aspect ratio) "
+            "for every annotated ROI. Use for nanoparticles, quantum dots, nanostructures, or any case where "
+            "the user asks for size, diameter, Feret length, or particle measurements. "
+            "Results appear in the Analysis tab → Particles table and Figures histogram. "
+            "Requires ROI annotations to be present."
+        ),
+        "properties": {
+            "labels": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": "Annotation labels to measure (e.g. ['particle', 'vesicle']). Empty = all labels.",
+            },
+            "mode": {
+                "type": "string",
+                "enum": ["single", "batch"],
+                "description": "single=current image, batch=all loaded images.",
+            },
+        },
+        "required": [],
+        "needs_confirm": False,
+    },
+    {
+        "name": "configure_analysis_plot",
+        "description": (
+            "Control the histogram in the Analysis → Figures tab. "
+            "Set x-axis metric, y-axis type (count or density), and number of bins. "
+            "Use when the user asks to change the plot, show raw counts, switch to density, "
+            "change what's on the x-axis, or adjust the number of bins."
+        ),
+        "properties": {
+            "metric": {
+                "type": "string",
+                "enum": ["ecd_nm", "feret_nm", "area_nm2", "perimeter_nm",
+                         "circularity", "aspect_ratio", "bbox_w_nm", "bbox_h_nm"],
+                "description": "Metric to plot on x-axis. ecd_nm=diameter, feret_nm=Feret length, area_nm2=area.",
+            },
+            "plot_type": {
+                "type": "string",
+                "enum": ["count", "density"],
+                "description": "count=raw bar histogram, density=KDE normalised density.",
+            },
+            "n_bins": {
+                "type": "integer",
+                "description": "Number of histogram bins (5–200). Default 30.",
             },
         },
         "required": [],
@@ -439,7 +490,7 @@ _TOOLS: list[dict] = [
             "skip_annotated": {"type": "boolean", "description": "Skip images that already have annotations. Default true."},
         },
         "required": ["label"],
-        "needs_confirm": True,
+        "needs_confirm": False,
     },
     {
         "name": "add_scalebar",
@@ -481,8 +532,11 @@ _TOOLS: list[dict] = [
     {
         "name": "export_measurements",
         "description": (
-            "Export all annotation measurements from the current image to a CSV file "
-            "saved next to the source image. Includes ROI areas, distances, and label counts."
+            "Export measurements from ALL loaded images into a single summary CSV. "
+            "Saved as acorn_measurements/measurements.csv inside the same folder the images were opened from. "
+            "Overwrites the file each time so it always reflects the full current dataset. "
+            "Includes image name, pixel size, ROI areas, distances, and label counts. "
+            "Results are also shown in the Analysis tab."
         ),
         "properties": {},
         "required": [],
@@ -779,24 +833,43 @@ You are proactive: if a prerequisite is missing (model not loaded, no image open
   - Default recommendation: YOLO for most cryo-EM particle and organelle tasks. UNet for membrane/surface segmentation.
 
 ## Reasoning guidelines
-- Before calling a tool, reason briefly about what makes sense given the image and state.
-- After tools complete, interpret the results scientifically: comment on count, size, density, distribution.
-- If there are existing annotations, acknowledge them and ask if they should be kept or cleared.
-- If pixel size is not set, flag it when reporting distances or areas.
-- Suggest logical next steps after completing a task (e.g. after segmenting: "accept and queue for training?").
-- Before training: check that the dataset is finalized (splits exist). If not, call finalize_dataset first. The export dataset dir and train dataset dir must match.
-- If the export queue has images but the dataset dir is not finalized, suggest or run finalize_dataset before start_training.
-- For vague requests like "analyze this", first assess contrast and quality, then segment dominant structures.
-- **If the current image is a movie** (is_movie=True in state), always tell the user it is a multi-frame movie and that the frames have been averaged for display. The user may not know what a movie is — explain it plainly: "This file contains N individual exposure frames stacked together. ACORN has averaged them so you can see the image."
-- **"I can't see anything" / "bad contrast" / "blank image" on a movie**: First check that frames are averaged (compress_frames method=mean is instant and already done on load). Then apply bandpass contrast, which is best for cryo-EM movies. Workflow: compress_frames(method="mean") → set_contrast(method="bandpass"). Explain what you did in plain language.
-- **"I can't see anything" on any image**: Reason about image type (cryo-EM → bandpass; SEM/TEM → percentile), then call set_contrast with the appropriate method. Don't just ask — act.
-- **Never assume the user knows microscopy jargon**. When you do something technical, give a one-sentence plain-language explanation of what it does and why.
+
+### Act first, report once
+- **For any multi-step workflow, execute all tools in sequence first. Give ONE summary message at the end. Do not narrate between steps, do not ask permission mid-workflow, do not pause to say "I'll now do X" before doing X.**
+- If a prerequisite is missing (model not loaded, no image), handle it silently as part of the same response.
+- Only ask a clarifying question if the user's intent is genuinely ambiguous and the wrong choice would be destructive. Otherwise, make a reasonable assumption and proceed.
+- Do not ask "should I keep existing annotations?" — if the task implies segmenting, just do it. Only clear annotations if the user explicitly says to.
+
+### Multi-image / batch work
+- When the user says "do all", "whole folder", "all images", "process everything", or any instruction implying the full dataset: use `batch_run_sam` (not `next_image` loops) then chain with `run_particle_analysis(mode=batch)` and `export_measurements`. Execute everything without stopping for confirmation.
+- **Multi-image pixel size**: Images not yet navigated to may show 1.0 nm/px (default). Navigate to each before reporting per-image pixel sizes. For batch operations, pixel size is read automatically on each load.
+
+### Measurement tool selection
+- **Nanoparticles, quantum dots, small discrete objects** → `run_particle_analysis` (ECD/diameter, Feret length, area, circularity). This is almost always the right choice.
+- **3D surface area of large hollow objects (vesicles, liposomes, cells)** → `run_surface_area`. Only use this when the user explicitly asks for surface area.
+- When unsure, use `run_particle_analysis`.
+
+### Scientific reporting
+- After measurements complete, always report: n, mean ± std, median, min–max for the primary metric (ECD or Feret). Pull values from shape_measurements or roi_areas in state.
+- Then set the plot to count histogram by default: configure_analysis_plot(plot_type="count", metric="feret_nm") or metric="ecd_nm" as appropriate.
+- If pixel size is not calibrated, note measurements are in pixels only.
+- Flag scientifically odd results (FFT image loaded by mistake, pixel size looks wrong, all particles same size = segmentation artefact).
+
+### Contrast / visibility
+- **"I can't see anything" on a movie**: compress_frames(method="mean") → set_contrast(method="bandpass")
+- **"I can't see anything" on a still image**: reason about type (cryo-EM → bandpass; SEM/TEM → percentile) → set_contrast. Don't ask, act.
+- **Never assume the user knows microscopy jargon**. One plain-language sentence when doing something technical.
+
+### Training pipeline
+- Before training: dataset must be finalized. If not, call finalize_dataset first.
+- Export dataset dir and train dataset dir must be the same path.
 
 ## Common multi-step workflows
-**"Find / segment X"**: load_sam if needed → run_sam_auto(label=X) → report count → suggest accept_annotations
-**"Detect X"**: load_yolo if needed → run_yolo_detect(label=X) → report count
-**"High-quality segmentation of X"**: load_yolo + load_sam → pipe_yolo_to_sam(label=X) → accept
-**"Prep for training"**: run_sam_auto → accept_annotations → queue_for_export → next_image → repeat
+**"Find / segment X"**: load_sam if needed → run_sam_auto(label=X) → accept_annotations → report count
+**"Detect X"**: load_yolo if needed → run_yolo_detect(label=X) → accept_annotations → report count
+**"High-quality segmentation of X"**: load_yolo + load_sam → pipe_yolo_to_sam(label=X) → accept_annotations
+**"Measure / analyze X"**: ensure annotations exist (segment first if not) → run_particle_analysis(labels=[X], mode=batch) → export_measurements
+**"Prep for training"**: load_sam if needed → batch_run_sam(label=X, skip_annotated=true) — one call handles all images
 **Full training pipeline**:
   1. Annotate each image: segment → accept_annotations → queue_for_export → next_image → repeat
   2. When all images queued: finalize_dataset(val_frac=0.1, test_frac=0.1) — creates 80/10/10 splits
@@ -810,7 +883,13 @@ You are proactive: if a prerequisite is missing (model not loaded, no image open
 **"What are the sizes?"**: read roi_areas from state — no tool needed
 **"Go to image N"**: go_to_image(N)
 **"Load SAM"**: load_sam → inform user loading takes ~30s
-**"Surface area / morphology analysis"**: ensure ROI annotations exist → run_surface_area(labels=[...], mode=single/batch, method=auto)
+**"Nanoparticle / particle size (diameter, Feret, ECD)"**: ensure ROI annotations exist → run_particle_analysis(labels=[...], mode=single/batch) — gives ECD, Feret length, area, circularity in Analysis tab
+**"Show raw count histogram"**: configure_analysis_plot(plot_type="count")
+**"Show density / distribution"**: configure_analysis_plot(plot_type="density")
+**"Plot Feret length / diameter / area / circularity"**: configure_analysis_plot(metric="feret_nm") etc.
+**"Change bins / more bins / fewer bins"**: configure_analysis_plot(n_bins=N)
+**"What are the stats / mean / std / distribution"**: read shape_measurements or roi_areas from state — report mean, median, std, min, max, n. No tool needed.
+**"Surface area of large objects (vesicles, cells, organelles)"**: ensure ROI annotations exist → run_surface_area(labels=[...], mode=single/batch, method=auto)
 **"Track particles"**: ensure multiple images with annotations → track_particles(max_displacement_nm=500)
 **"Apply [preset name]"**: apply_contrast_preset(preset_name=...) — use exact name from available presets list
 **"Export masks / ground truth"**: export_masks()
@@ -820,7 +899,7 @@ You are proactive: if a prerequisite is missing (model not loaded, no image open
 **"Dose series" / "compare bins" / "beam damage" / "membrane recession" / "how does it look at different doses"**: dose_comparison(n_bins=4, dose_per_frame=1.0) — opens dialog showing averaged bins + difference images vs first bin; blue = signal lost, red = signal gained
 **"Compress / average movie frames"**: compress_frames(method=mean/motion_corrected/dose_weighted, start_frame=1, end_frame=0) — use mean for quick look, motion_corrected for annotation, dose_weighted when the user mentions dose filtering or cryoSPARC-style output
 **"Try different frame ranges"** / "play with compression" / "use only early frames" / "skip first N frames": adjust start_frame and end_frame — e.g. skip early high-motion frames (start_frame=3), limit cumulative dose (end_frame=20), or compare subsets
-**"Annotate / process all images at once"**: load_sam if needed → batch_run_sam(label=..., skip_annotated=true) — this runs SAM on every image, accepts, and queues automatically
+**"Annotate / process all images at once"**: load_sam if needed → batch_run_sam(label=..., skip_annotated=true) — runs SAM on every image automatically, no per-image confirmation needed. ALWAYS use this instead of next_image loops when user says "do all", "whole folder", "all images", or "process everything".
 **Large-dataset two-phase workflow** (recommended when dataset has 20+ images):
   Phase 1 — Build training set from a representative sample:
     1. Annotate 5–15 diverse images (SAM or manual) → accept_annotations → queue_for_export each
@@ -833,7 +912,7 @@ You are proactive: if a prerequisite is missing (model not loaded, no image open
 **"Add a scale bar"**: add_scalebar() — auto-sizes to pixel size; set pixel size first if needed
 **"Rename label X to Y"**: rename_label(old_label=X, new_label=Y) — fixes typos or reclassifies annotations on current image
 **"Save this contrast as a preset"**: save_contrast_preset(name=...) — saves current settings to the preset dropdown
-**"Export measurements / data"**: export_measurements() — writes ROI areas, distances, label counts to CSV next to source file
+**"Export measurements / data"**: export_measurements() — writes ALL loaded images' measurements to acorn_measurements/measurements.csv in the same folder as the images; shown in Analysis tab
 **"Which images have annotations?"**: read image_list from state — no tool needed
 **"Which images are queued?"**: read export_queue_filenames or image_list.in_export_queue from state — no tool needed
 **"How many vesicles across all images?"**: read dataset_label_counts from state — no tool needed
@@ -956,12 +1035,14 @@ class LLMAgent(QThread):
         messages: list[dict],
         state: dict,
         image_b64: Optional[str] = None,
+        context=None,
     ) -> None:
         super().__init__()
         self._config    = config
         self._messages  = list(messages)
         self._state     = state
         self._image_b64 = image_b64
+        self._context   = context  # AcornContext — used to refresh state after navigation
 
     # ------------------------------------------------------------------
 
@@ -1239,5 +1320,35 @@ class LLMAgent(QThread):
             self.confirm_needed.emit(name, summary, params)
             return "Confirmation dialog shown to user."
         else:
+            is_nav  = name in ("next_image", "prev_image", "go_to_image")
+            is_meas = name == "export_measurements"
+            if is_nav and self._context is not None:
+                self._context.arm_nav_wait()   # clear event BEFORE signal fires
             self.tool_called.emit(name, params)
+            if is_meas:
+                return (
+                    "Measurements exported and displayed. "
+                    "Tell the user: the results are now visible in the Analysis tab on the right — "
+                    "the Particles sub-tab shows the full data table and the Figures sub-tab shows "
+                    "the histogram. The CSV is saved to acorn_measurements/measurements.csv "
+                    "in the same folder as the images."
+                )
+            if is_nav:
+                if self._context is not None:
+                    self._context.wait_for_image_load(timeout=10.0)
+                    try:
+                        fresh = self._context.get_nav_state()
+                        self._state.update(fresh)
+                    except Exception:
+                        pass
+                new_name  = self._state.get("image_name", "unknown")
+                new_px    = self._state.get("pixel_size_nm", 0)
+                px_str    = f"{new_px:.4f} nm/px" if new_px and new_px != 1.0 else "not yet calibrated (1.0 nm default)"
+                ann_count = self._state.get("annotation_count", 0)
+                labels    = self._state.get("annotation_labels", {})
+                ann_str   = (
+                    f"{ann_count} existing annotations" +
+                    (f" ({', '.join(f'{v} {k}' for k, v in labels.items())})" if labels else "")
+                ) if ann_count else "no existing annotations"
+                return f"Moved to {new_name}. Pixel size: {px_str}. {ann_str}."
             return "Action dispatched — results will appear on the canvas as pending annotations. The user must click Accept All to keep them."

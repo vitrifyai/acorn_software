@@ -283,40 +283,62 @@ class CryoCanvas:
         self.ax.set_ylim(0, 1)
 
         def _add(artist):
-            # For patches/lines not yet in any axes container
             self.ax.add_artist(artist)
             self._splash_artists.append(artist)
             return artist
 
         def _add_text(artist):
-            # ax.text() already registers in ax.texts — just track for cleanup
             self._splash_artists.append(artist)
             return artist
 
         cx = 0.5
 
-        # ── icon: clean outlines only, uniform stroke ─────────────────────────
-
-        # Body — tall oval, bg fill so it occludes behind shapes
+        # Body — filled green oval
         _add(Ellipse((cx, 0.530), 0.142, 0.215,
-                     facecolor=bg, edgecolor=ink, linewidth=lw, zorder=3))
+                     facecolor="#00703C", edgecolor=ink, linewidth=lw, zorder=3))
 
-        # Cap — wider, flatter ellipse sitting on body
+        # Cap — wider, flatter ellipse; bg fill so grid shows on dark
         cap_cy = 0.643
-        _add(Ellipse((cx, cap_cy), 0.196, 0.050,
+        cap_rx, cap_ry = 0.096, 0.026   # semi-axes
+        _add(Ellipse((cx, cap_cy), cap_rx * 2, cap_ry * 2,
                      facecolor=bg, edgecolor=ink, linewidth=lw, zorder=4))
 
-        # Stem — thin upright rect outline
-        stem_x, stem_y = cx - 0.008, cap_cy + 0.022
-        _add(FancyBboxPatch((stem_x, stem_y), 0.016, 0.030,
+        import math as _math
+
+        # TEM grid — horizontal bars clipped to ellipse
+        n_h = 8
+        for i in range(n_h):
+            dy = -cap_ry + (2 * cap_ry) * i / (n_h - 1)
+            t  = (dy / cap_ry) ** 2
+            if t >= 1.0:
+                continue
+            hw = cap_rx * _math.sqrt(1.0 - t)
+            _add(mlines.Line2D(
+                [cx - hw, cx + hw], [cap_cy + dy, cap_cy + dy],
+                transform=self.ax.transData,
+                color=ink, linewidth=0.85, alpha=0.9, zorder=5,
+            ))
+
+        # TEM grid — vertical bars clipped to ellipse
+        n_v = 14
+        for i in range(n_v):
+            dx = -cap_rx + (2 * cap_rx) * i / (n_v - 1)
+            t  = (dx / cap_rx) ** 2
+            if t >= 1.0:
+                continue
+            hh = cap_ry * _math.sqrt(1.0 - t)
+            _add(mlines.Line2D(
+                [cx + dx, cx + dx], [cap_cy - hh, cap_cy + hh],
+                transform=self.ax.transData,
+                color=ink, linewidth=0.85, alpha=0.9, zorder=5,
+            ))
+
+        # Stem — thin upright rect
+        stem_x, stem_y = cx - 0.008, cap_cy + 0.024
+        _add(FancyBboxPatch((stem_x, stem_y), 0.016, 0.026,
                             boxstyle="square,pad=0",
                             facecolor=bg, edgecolor=ink,
                             linewidth=lw - 0.3, zorder=5))
-
-        # Leaf — small rotated ellipse off the stem tip
-        _add(Ellipse((cx + 0.040, stem_y + 0.022), 0.052, 0.018,
-                     angle=28, facecolor=bg, edgecolor=ink,
-                     linewidth=lw - 0.3, zorder=5))
 
         # ── typography ────────────────────────────────────────────────────────
         _add_text(self.ax.text(

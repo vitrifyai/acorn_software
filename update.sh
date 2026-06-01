@@ -105,6 +105,25 @@ else
     success "  CLU assistant already installed."
 fi
 
+# ── sync extras into .venv-py312 (used by acorn2.sh) ─────────────────────────
+VENV312="$SCRIPT_DIR/.venv-py312/bin/python"
+if [ -f "$VENV312" ]; then
+    info "Syncing core + entry points to .venv-py312..."
+    uv pip install --python "$VENV312" -e "$SCRIPT_DIR[gui,mrc]" --quiet
+
+    if ! "$VENV312" -c "import micro_sam" 2>/dev/null; then
+        uv pip install --python "$VENV312" "git+https://github.com/computational-cell-analytics/micro-sam.git" \
+            && success "  micro-SAM synced to .venv-py312." \
+            || warn "  micro-SAM sync to .venv-py312 failed."
+    fi
+
+    if ! "$VENV312" -c "import anthropic" 2>/dev/null; then
+        uv pip install --python "$VENV312" "anthropic>=0.52" "openai>=1.0" \
+            && success "  CLU assistant synced to .venv-py312." \
+            || warn "  CLU assistant sync to .venv-py312 failed."
+    fi
+fi
+
 echo ""
-echo -e "${GREEN}${BOLD}Update complete. Launch with: ./acorn.sh${RESET}"
+echo -e "${GREEN}${BOLD}Update complete. Launch with: ./acorn2.sh${RESET}"
 echo ""

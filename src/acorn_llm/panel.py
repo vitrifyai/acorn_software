@@ -222,7 +222,7 @@ class AssistantPanel(QWidget):
         if use_tool_model and cfg.tool_model:
             cfg.model = cfg.tool_model
 
-        self._agent = LLMAgent(cfg, self._messages, state, image_b64)
+        self._agent = LLMAgent(cfg, self._messages, state, image_b64, context=self._context)
         self._agent.token_emitted.connect(self._on_token)
         self._agent.tool_called.connect(self._on_tool)
         self._agent.confirm_needed.connect(self._on_confirm)
@@ -289,8 +289,9 @@ class AssistantPanel(QWidget):
     # ------------------------------------------------------------------
 
     def _render(self) -> None:
-        sb      = self._chat.verticalScrollBar()
-        at_end  = sb.value() >= sb.maximum() - 30
+        sb       = self._chat.verticalScrollBar()
+        at_end   = sb.value() >= sb.maximum() - 30
+        old_pos  = sb.value()
 
         parts = [
             '<html><body style="background:#1a1a1a;color:#e0e0e0;'
@@ -315,8 +316,11 @@ class AssistantPanel(QWidget):
         parts.append("</body></html>")
         self._chat.setHtml("".join(parts))
 
-        if at_end:
+        # Restore scroll: follow bottom during streaming/new messages, preserve position otherwise
+        if at_end or self._streaming:
             QTimer.singleShot(0, lambda: sb.setValue(sb.maximum()))
+        else:
+            QTimer.singleShot(0, lambda: sb.setValue(old_pos))
 
 
 # ------------------------------------------------------------------

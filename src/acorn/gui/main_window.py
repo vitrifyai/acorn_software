@@ -1149,6 +1149,7 @@ class MainWindow(QMainWindow):
                     "Plugin %s failed to create panel: %s", plugin.PLUGIN_ID, _plugin_exc
                 )
 
+        self._control_tabs = control
         splitter.addWidget(control)
         splitter.setStretchFactor(0, 1)
         splitter.setStretchFactor(1, 0)
@@ -3754,9 +3755,14 @@ class MainWindow(QMainWindow):
                     if ex0 <= cx <= ex1 and ey0 <= cy <= ey1:
                         continue
                 from acorn.core.annotations import ROIAnnotation
+                xs = [v[0] for v in vertices]
+                ys = [v[1] for v in vertices]
+                n  = len(xs)
+                area_px  = abs(sum(xs[i]*ys[(i+1)%n] - xs[(i+1)%n]*ys[i] for i in range(n))) / 2.0
+                area_nm2 = area_px * (self._engine.pixel_size ** 2)
                 roi = ROIAnnotation(
                     vertices  = vertices,
-                    area_nm2  = 0.0,
+                    area_nm2  = area_nm2,
                     stats     = {},
                     color     = self._sam_color_for_label(label),
                     linewidth = 1.5,
@@ -4156,6 +4162,17 @@ class MainWindow(QMainWindow):
                     self._pending_yolo_anns.append(True)
         finally:
             canvas._loading = False
+        # Compute real areas for ROIs added with area_nm2=0.0
+        px = self._engine.pixel_size
+        if px > 0:
+            from acorn.core.annotations import ROIAnnotation as _ROI
+            for ann in store:
+                if isinstance(ann, _ROI) and ann.area_nm2 == 0.0 and ann.vertices:
+                    xs = [v[0] for v in ann.vertices]
+                    ys = [v[1] for v in ann.vertices]
+                    _n = len(xs)
+                    area_px = abs(sum(xs[i]*ys[(i+1)%_n] - xs[(i+1)%_n]*ys[i] for i in range(_n))) / 2.0
+                    ann.area_nm2 = area_px * (px ** 2)
         if canvas.renderer is not None:
             canvas.renderer.render_noblit(canvas.store, canvas)
         else:
@@ -4827,34 +4844,70 @@ class MainWindow(QMainWindow):
                     self._statusbar.showMessage(f"save_contrast_preset error: {exc}")
 
         elif action == "export_measurements":
-            img = self._canvas_widget.canvas.dm4
-            store = self._canvas_widget.canvas.store
-            if img is None or img.filepath is None:
-                self._statusbar.showMessage("No image loaded — cannot export measurements.")
+            if not self._image_paths:
+                self._statusbar.showMessage("No images loaded — cannot export measurements.")
             else:
-                import csv, io as _io
+                import csv
                 from pathlib import Path as _Path
+                # Collect annotations from ALL loaded images
+                all_ann_states = dict(self._ann_states)
+                if self._img_idx >= 0:
+                    all_ann_states[self._img_idx] = list(self._canvas_widget.canvas.store)
                 rows: list[dict] = []
-                for ann in store:
-                    row: dict = {
-                        "image":   img.filepath.name,
-                        "type":    getattr(ann, "type", ""),
-                        "label":   getattr(ann, "label", "") or getattr(ann, "text", ""),
-                        "area_nm2": getattr(ann, "area_nm2", ""),
-                        "distance_nm": getattr(ann, "distance_nm", ""),
-                        "distance_px": getattr(ann, "distance_px", ""),
-                        "calibrated":  getattr(ann, "calibrated", ""),
-                    }
-                    rows.append(row)
+                for idx, anns in sorted(all_ann_states.items()):
+                    if idx >= len(self._image_paths):
+                        continue
+                    img_path = self._image_paths[idx]
+                    px_nm = self._px_overrides.get(idx) or 1.0
+                    if idx == self._img_idx:
+                        loaded = self._canvas_widget.canvas.dm4
+                        if loaded and loaded.pixel_size > 0:
+                            px_nm = loaded.pixel_size
+                    elif idx in self._image_cache:
+                        cached = self._image_cache[idx]
+                        if cached.pixel_size > 0:
+                            px_nm = cached.pixel_size
+                    try:
+                        from acorn_analysis.particle_panel import _polygon_metrics
+                        _have_metrics = True
+                    except ImportError:
+                        _have_metrics = False
+                    for ann in (anns or []):
+                        ann_type  = getattr(ann, "type", "")
+                        ann_label = getattr(ann, "label", "") or getattr(ann, "text", "")
+                        row: dict = {
+                            "image":         img_path.name,
+                            "pixel_size_nm": px_nm,
+                            "type":          ann_type,
+                            "label":         ann_label,
+                        }
+                        # Full shape metrics for ROI annotations
+                        verts = getattr(ann, "vertices", None)
+                        if _have_metrics and verts and len(verts) >= 3 and px_nm > 0:
+                            row.update(_polygon_metrics(verts, px_nm))
+                        else:
+                            row["area_nm2"]    = getattr(ann, "area_nm2", "")
+                            row["distance_nm"] = getattr(ann, "distance_nm", "")
+                            row["distance_px"] = getattr(ann, "distance_px", "")
+                            row["calibrated"]  = getattr(ann, "calibrated", "")
+                        rows.append(row)
                 if rows:
-                    out_path = _Path(img.filepath).parent / f"{img.filepath.stem}_measurements.csv"
+                    # Save to acorn_measurements/ inside the same folder the images live in
+                    img_dir   = _Path(self._image_paths[0]).parent
+                    meas_root = img_dir / "acorn_measurements"
+                    meas_root.mkdir(parents=True, exist_ok=True)
+                    out_path  = meas_root / "measurements.csv"
+                    # Overwrite with full combined dataset each time
                     with open(out_path, "w", newline="") as f:
                         writer = csv.DictWriter(f, fieldnames=list(rows[0].keys()))
                         writer.writeheader()
                         writer.writerows(rows)
-                    self._statusbar.showMessage(f"Measurements exported: {out_path.name}  ({len(rows)} rows)")
+                    self._statusbar.showMessage(
+                        f"Measurements → acorn_measurements/measurements.csv  ({len(rows)} rows, {len(all_ann_states)} images)"
+                    )
+                    self._context.action_requested.emit("show_measurements", {"csv_path": str(out_path)})
                 else:
-                    self._statusbar.showMessage("No annotations to export.")
+                    self._statusbar.showMessage("No annotations found across loaded images.")
 
     # ── application quit ──────────────────────────────────────────────────────
 
@@ -4947,7 +5000,7 @@ class MainWindow(QMainWindow):
     def _show_about(self) -> None:
         QMessageBox.about(
             self, "About ACORN",
-            "<b>ACORN v0.1.0</b><br><br>"
+            "<b>ACORN v0.2.0</b><br><br>"
             "Interactive DM4 cryo-EM image viewer, annotator, and exporter.<br><br>"
             "Features:<br>"
             "• Best-in-class contrast for low-dose cryo-EM (bandpass default)<br>"

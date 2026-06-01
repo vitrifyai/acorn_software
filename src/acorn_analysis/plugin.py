@@ -29,6 +29,64 @@ class AnalysisPlugin(AcornPlugin):
         context.action_requested.connect(self._on_action_requested)
 
     def _on_action_requested(self, action: str, params: dict) -> None:
+        if action == "configure_analysis_plot" and self._particle_panel is not None:
+            pp = self._particle_panel
+            metric    = params.get("metric")
+            plot_type = params.get("plot_type")
+            n_bins    = params.get("n_bins")
+            if metric:
+                idx = pp._metric_combo.findData(metric)
+                if idx >= 0:
+                    pp._metric_combo.setCurrentIndex(idx)
+            if plot_type:
+                idx = pp._plot_type_combo.findData(plot_type)
+                if idx >= 0:
+                    pp._plot_type_combo.setCurrentIndex(idx)
+            if n_bins is not None:
+                pp._bins_spin.setValue(int(n_bins))
+            pp._refresh_figure()
+            # Switch to Figures tab
+            w = self._context._w()
+            if w is not None and hasattr(w, "_control_tabs"):
+                tabs = w._control_tabs
+                for i in range(tabs.count()):
+                    if tabs.tabText(i) == self.TAB_LABEL:
+                        tabs.setCurrentIndex(i)
+                        break
+            return
+        if action == "show_measurements" and self._particle_panel is not None:
+            csv_path = params.get("csv_path")
+            rows = params.get("rows")
+            try:
+                import pandas as pd
+                if csv_path:
+                    df = pd.read_csv(csv_path)
+                elif rows:
+                    df = pd.DataFrame(rows)
+                else:
+                    return
+                # Pre-select ecd_nm or area_nm2 so the histogram works with the export data
+                mc = self._particle_panel._metric_combo
+                for prefer in ("ecd_nm", "area_nm2"):
+                    idx = mc.findData(prefer)
+                    if idx >= 0 and prefer in df.columns:
+                        mc.setCurrentIndex(idx)
+                        break
+                self._particle_panel.show_results(df)
+                # Show Particles table tab (index 0), not Figures (index 1)
+                self._particle_panel._results_tabs.setCurrentIndex(0)
+                # Switch the control panel to the Analysis tab automatically
+                w = self._context._w()
+                if w is not None and hasattr(w, "_control_tabs"):
+                    tabs = w._control_tabs
+                    for i in range(tabs.count()):
+                        if tabs.tabText(i) == self.TAB_LABEL:
+                            tabs.setCurrentIndex(i)
+                            break
+            except Exception as exc:
+                import logging
+                logging.getLogger(__name__).warning("show_measurements failed: %s", exc)
+            return
         if action == "run_particle_analysis" and self._particle_panel is not None:
             labels = params.get("labels") or []
             mode = params.get("mode", "single")
@@ -43,6 +101,14 @@ class AnalysisPlugin(AcornPlugin):
                 for cb in self._particle_panel._label_checks.values():
                     cb.setChecked(True)
             self._particle_panel._on_run()
+            # Switch to Analysis tab so user sees results
+            w = self._context._w()
+            if w is not None and hasattr(w, "_control_tabs"):
+                tabs = w._control_tabs
+                for i in range(tabs.count()):
+                    if tabs.tabText(i) == self.TAB_LABEL:
+                        tabs.setCurrentIndex(i)
+                        break
             return
         if action != "run_surface_area" or self._panel is None:
             return

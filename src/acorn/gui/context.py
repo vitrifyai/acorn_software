@@ -1,5 +1,6 @@
 """Plugin context — exposes core application state to ACORN plugins."""
 from __future__ import annotations
+import threading
 import weakref
 from pathlib import Path
 from typing import TYPE_CHECKING, Optional, Callable
@@ -36,6 +37,19 @@ class AcornContext(QObject):
     def __init__(self, main_window: "MainWindow") -> None:
         super().__init__()
         self._window_ref = weakref.ref(main_window)
+        self._nav_loaded_event = threading.Event()
+        self.image_loaded.connect(self._on_image_loaded_set_event)
+
+    def _on_image_loaded_set_event(self, _img=None) -> None:
+        self._nav_loaded_event.set()
+
+    def arm_nav_wait(self) -> None:
+        """Clear the event before emitting a navigation tool — call from agent thread."""
+        self._nav_loaded_event.clear()
+
+    def wait_for_image_load(self, timeout: float = 10.0) -> bool:
+        """Block until image_loaded fires (or timeout). Call after arm_nav_wait()."""
+        return self._nav_loaded_event.wait(timeout=timeout)
 
     def _w(self) -> Optional["MainWindow"]:
         return self._window_ref()
@@ -100,6 +114,17 @@ class AcornContext(QObject):
             img = w._canvas_widget.canvas.dm4
             if img is not None and img.pixel_size > 0:
                 return float(img.pixel_size)
+        # For unloaded images, try the sidecar file
+        if 0 <= idx < len(w._image_paths):
+            sidecar = w._image_paths[idx].parent / f".{w._image_paths[idx].stem}.acorn.json"
+            try:
+                import json as _json
+                data = _json.loads(sidecar.read_text())
+                px = data.get("pixel_size_nm")
+                if px and float(px) > 0:
+                    return float(px)
+            except Exception:
+                pass
         return 1.0
 
     @property
@@ -149,6 +174,62 @@ class AcornContext(QObject):
         target_menu.addAction(action)
         return action
 
+    def get_nav_state(self) -> dict:
+        """Thread-safe subset of state — only Python primitives, safe to call from QThread.
+
+        Used by LLMAgent after navigation tools to refresh pixel size / filename
+        without touching Qt widget methods.
+        """
+        w = self._w()
+        if w is None:
+            return {}
+        idx = w._img_idx
+        paths = w._image_paths
+        state: dict = {
+            "current_image_index": idx,
+            "image_count": len(paths),
+        }
+        if 0 <= idx < len(paths):
+            state["image_name"] = paths[idx].name
+            engine_px = w._engine.pixel_size
+            override  = w._px_overrides.get(idx)
+            state["pixel_size_nm"] = float(override if override and override > 0 else
+                                           (engine_px if engine_px > 0 else 1.0))
+            # Include annotation summary so CLU knows what's already on the new image
+            anns = w._ann_states.get(idx) or []
+            state["annotation_count"] = len(anns)
+            labels: dict[str, int] = {}
+            for a in anns:
+                lbl = getattr(a, "label", None) or getattr(a, "text", None) or "unknown"
+                labels[lbl] = labels.get(lbl, 0) + 1
+            if labels:
+                state["annotation_labels"] = labels
+            # Clear stale pending counts from the previous image
+            state["pending_sam"]  = 0
+            state["pending_yolo"] = 0
+            state["pending_unet"] = 0
+
+        # Rebuild image_list so CLU's running list always has correct pixel sizes
+        # and annotation counts — reads only Python dicts, thread-safe.
+        image_list: list[dict] = []
+        for i, path in enumerate(paths):
+            img_anns = w._ann_states.get(i, []) or []
+            if i == idx:
+                img_anns = anns if 0 <= idx < len(paths) else img_anns
+            img_labels: dict[str, int] = {}
+            for a in img_anns:
+                lbl = getattr(a, "label", None) or getattr(a, "text", None) or "unknown"
+                img_labels[lbl] = img_labels.get(lbl, 0) + 1
+            image_list.append({
+                "index":            i,
+                "filename":         path.name,
+                "annotation_count": len(img_anns),
+                "label_counts":     img_labels,
+                "pixel_size_nm":    self.pixel_size_for_index(i),
+            })
+        state["image_list"] = image_list
+        return state
+
     def get_llm_state(self) -> dict:
         """Return a snapshot of current application state for the LLM system prompt."""
         w = self._w()
@@ -160,7 +241,11 @@ class AcornContext(QObject):
         if img is not None:
             state["image_name"] = img.filepath.name if img.filepath else "untitled"
             state["image_shape"] = list(img.raw.shape) if img.raw is not None else []
-            state["pixel_size_nm"] = float(self.current_pixel_size_nm)
+            engine_px  = w._engine.pixel_size
+            img_px     = img.pixel_size if img.pixel_size > 0 else None
+            override   = w._px_overrides.get(w._img_idx)
+            best_px    = override or img_px or (engine_px if engine_px > 0 else 1.0)
+            state["pixel_size_nm"] = float(best_px)
             state["is_movie"]  = img.is_movie
             state["n_frames"]  = img.n_frames
         state["image_count"]         = len(self.image_paths)
