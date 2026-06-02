@@ -77,10 +77,11 @@ acorn = "acorn.cli.main:main"
 acorn-gui = "acorn.gui.main_window:launch"
 
 [project.entry-points."acorn.plugins"]
-acorn_analysis = "acorn_analysis.plugin:AnalysisPlugin"
-acorn_tracking = "acorn_tracking.plugin:TrackingPlugin"
-acorn_3d       = "acorn_3d.plugin:VolumePlugin"
-acorn_llm      = "acorn_llm.plugin:LLMPlugin"
+acorn_analysis  = "acorn_analysis.plugin:AnalysisPlugin"
+acorn_tracking  = "acorn_tracking.plugin:TrackingPlugin"
+acorn_3d        = "acorn_3d.plugin:VolumePlugin"
+acorn_llm       = "acorn_llm.plugin:LLMPlugin"
+acorn_plotting  = "acorn_plotting.clu_integration:PlottingPlugin"
 
 [tool.hatch.build.targets.wheel]
 packages = [
@@ -89,6 +90,7 @@ packages = [
     "src/acorn_tracking",
     "src/acorn_3d",
     "src/acorn_llm",
+    "src/acorn_plotting",
 ]
 
 

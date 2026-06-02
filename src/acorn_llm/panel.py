@@ -37,9 +37,9 @@ class AssistantPanel(QWidget):
         self._streaming   = False
         self._agent: Optional[LLMAgent] = None
 
-        # throttle re-render to ≤20 fps while streaming
+        # throttle re-render while streaming — 150 ms is smooth enough without glitching
         self._render_timer = QTimer(self)
-        self._render_timer.setInterval(50)
+        self._render_timer.setInterval(150)
         self._render_timer.timeout.connect(self._render)
 
         self._build_ui()
@@ -289,9 +289,9 @@ class AssistantPanel(QWidget):
     # ------------------------------------------------------------------
 
     def _render(self) -> None:
-        sb       = self._chat.verticalScrollBar()
-        at_end   = sb.value() >= sb.maximum() - 30
-        old_pos  = sb.value()
+        sb      = self._chat.verticalScrollBar()
+        at_end  = sb.value() >= sb.maximum() - 30
+        old_pos = sb.value()
 
         parts = [
             '<html><body style="background:#1a1a1a;color:#e0e0e0;'
@@ -302,8 +302,8 @@ class AssistantPanel(QWidget):
             parts.append(_render_item(kind, text))
 
         if self._streaming:
-            cursor_char = "█" if (len(self._stream_text) % 4) < 2 else " "
-            parts.append(_render_item("asst_stream", self._stream_text, cursor=cursor_char))
+            parts.append(_render_item("asst_stream", self._stream_text))
+            self._last_rendered_stream = self._stream_text
 
         if not self._items and not self._streaming:
             parts.append(
@@ -316,7 +316,6 @@ class AssistantPanel(QWidget):
         parts.append("</body></html>")
         self._chat.setHtml("".join(parts))
 
-        # Restore scroll: follow bottom during streaming/new messages, preserve position otherwise
         if at_end or self._streaming:
             QTimer.singleShot(0, lambda: sb.setValue(sb.maximum()))
         else:

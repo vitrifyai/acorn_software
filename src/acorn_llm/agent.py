@@ -141,6 +141,19 @@ _TOOLS: list[dict] = [
         "needs_confirm": False,
     },
     {
+        "name": "scan_all_images",
+        "description": (
+            "Navigate through every loaded image one by one, loading each so its pixel size "
+            "and annotation count are accurate. Returns a summary table of all images with "
+            "filename, pixel size, and annotation count. "
+            "Use this before reporting dataset-wide pixel sizes, annotation counts, or "
+            "measurements — any time the image_list shows 1.0 nm/px for unvisited images."
+        ),
+        "properties": {},
+        "required": [],
+        "needs_confirm": False,
+    },
+    {
         "name": "go_to_image",
         "description": "Jump to a specific image by its position number (1-based).",
         "properties": {
@@ -613,6 +626,14 @@ _TOOLS: list[dict] = [
     },
 ]
 
+# Append plot_measurements from acorn_plotting if available
+try:
+    from acorn_plotting.clu_integration import PLOT_TOOL, STATS_TOOL
+    _TOOLS.append(PLOT_TOOL)
+    _TOOLS.append(STATS_TOOL)
+except ImportError:
+    pass
+
 _NEEDS_CONFIRM = {t["name"] for t in _TOOLS if t["needs_confirm"]}
 
 
@@ -842,12 +863,20 @@ You are proactive: if a prerequisite is missing (model not loaded, no image open
 
 ### Multi-image / batch work
 - When the user says "do all", "whole folder", "all images", "process everything", or any instruction implying the full dataset: use `batch_run_sam` (not `next_image` loops) then chain with `run_particle_analysis(mode=batch)` and `export_measurements`. Execute everything without stopping for confirmation.
-- **Multi-image pixel size**: Images not yet navigated to may show 1.0 nm/px (default). Navigate to each before reporting per-image pixel sizes. For batch operations, pixel size is read automatically on each load.
+- **Multi-image pixel size / annotations**: If any image in image_list shows 1.0 nm/px or you need accurate annotation counts across all images, call `scan_all_images` first — it navigates every image, loads it, and returns a verified summary table. Do not report dataset-wide pixel sizes or annotation counts without scanning first if any image shows 1.0 nm/px.
 
 ### Measurement tool selection
 - **Nanoparticles, quantum dots, small discrete objects** → `run_particle_analysis` (ECD/diameter, Feret length, area, circularity). This is almost always the right choice.
 - **3D surface area of large hollow objects (vesicles, liposomes, cells)** → `run_surface_area`. Only use this when the user explicitly asks for surface area.
 - When unsure, use `run_particle_analysis`.
+
+### Statistics guidance
+- When the user asks "are these different?", "is there a significant difference?", "compare groups", "p-value", "run stats", or similar — call `run_statistics(metric=...)`.
+- Before calling, check if intent is clear. If number of groups or pairing is ambiguous, ask in plain English first: "Are you comparing two separate groups of particles, or the same particles measured twice?"
+- Never use statistics jargon without a plain-English translation. Say "p=0.003 — meaning there's only a 0.3% chance this difference is random" not just "p=0.003".
+- After `run_statistics` completes, summarise in one sentence: "Your two groups are significantly different (p=0.003, Mann-Whitney) — treated particles average 15% larger."
+- After `run_particle_analysis`, if multiple label groups are present, proactively offer: "Want me to compare the groups statistically or plot the distribution?"
+- Test selection is automatic (the tool handles it) but explain why: "I used Mann-Whitney because your data isn't normally distributed."
 
 ### Scientific reporting
 - After measurements complete, always report: n, mean ± std, median, min–max for the primary metric (ECD or Feret). Pull values from shape_measurements or roi_areas in state.
@@ -882,6 +911,7 @@ You are proactive: if a prerequisite is missing (model not loaded, no image open
 **"How many X are there?"**: read annotation_labels from state — no tool needed
 **"What are the sizes?"**: read roi_areas from state — no tool needed
 **"Go to image N"**: go_to_image(N)
+**"What are the pixel sizes / annotations across all images?"**: scan_all_images() — loads every image and returns verified per-image summary
 **"Load SAM"**: load_sam → inform user loading takes ~30s
 **"Nanoparticle / particle size (diameter, Feret, ECD)"**: ensure ROI annotations exist → run_particle_analysis(labels=[...], mode=single/batch) — gives ECD, Feret length, area, circularity in Analysis tab
 **"Show raw count histogram"**: configure_analysis_plot(plot_type="count")
@@ -889,6 +919,8 @@ You are proactive: if a prerequisite is missing (model not loaded, no image open
 **"Plot Feret length / diameter / area / circularity"**: configure_analysis_plot(metric="feret_nm") etc.
 **"Change bins / more bins / fewer bins"**: configure_analysis_plot(n_bins=N)
 **"What are the stats / mean / std / distribution"**: read shape_measurements or roi_areas from state — report mean, median, std, min, max, n. No tool needed.
+**"Plot the distribution / violin / scatter / waterfall"**: plot_measurements(plot_type=..., metric=...) — publication figure in floating Plot window.
+**"Run statistics / compare groups / is there a difference?"**: run_statistics(metric=...) — auto-selects t-test/ANOVA/Mann-Whitney, shows results in Stats tab with plain-English explanation.
 **"Surface area of large objects (vesicles, cells, organelles)"**: ensure ROI annotations exist → run_surface_area(labels=[...], mode=single/batch, method=auto)
 **"Track particles"**: ensure multiple images with annotations → track_particles(max_displacement_nm=500)
 **"Apply [preset name]"**: apply_contrast_preset(preset_name=...) — use exact name from available presets list
@@ -1297,6 +1329,45 @@ class LLMAgent(QThread):
     # ------------------------------------------------------------------
 
     def _dispatch_tool(self, name: str, params: dict) -> str:
+        # scan_all_images: navigate every image, wait for load, collect summary
+        if name == "scan_all_images":
+            n_images = self._state.get("image_count", 0)
+            if n_images == 0:
+                return "No images loaded."
+            start_idx = self._state.get("current_image_index", 0)
+            rows: list[str] = []
+            for i in range(1, n_images + 1):
+                if self._context is not None:
+                    self._context.arm_nav_wait()
+                self.tool_called.emit("go_to_image", {"index": i})
+                if self._context is not None:
+                    self._context.wait_for_image_load(timeout=10.0)
+                    try:
+                        fresh = self._context.get_nav_state()
+                        self._state.update(fresh)
+                    except Exception:
+                        pass
+                fname  = self._state.get("image_name", f"image {i}")
+                px     = self._state.get("pixel_size_nm", 0)
+                px_str = f"{px:.4f} nm/px" if px and px != 1.0 else "1.0 nm/px (uncalibrated)"
+                n_ann  = self._state.get("annotation_count", 0)
+                labels = self._state.get("annotation_labels", {})
+                lbl_str = ", ".join(f"{v} {k}" for k, v in labels.items()) if labels else "none"
+                rows.append(f"  {i}. {fname} — {px_str} — {n_ann} annotations ({lbl_str})")
+            # Return to starting image
+            if self._context is not None:
+                self._context.arm_nav_wait()
+            self.tool_called.emit("go_to_image", {"index": start_idx + 1})
+            if self._context is not None:
+                self._context.wait_for_image_load(timeout=10.0)
+                try:
+                    fresh = self._context.get_nav_state()
+                    self._state.update(fresh)
+                except Exception:
+                    pass
+            summary = "\n".join(rows)
+            return f"Scanned {n_images} images:\n{summary}"
+
         # Check prerequisites before dispatching
         needs_image = name not in (
             "start_training", "finalize_dataset", "configure_training",

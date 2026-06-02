@@ -33,6 +33,7 @@ You are proactive: if a prerequisite is missing, handle it. Chain multiple tools
 - Always finalize_dataset before training if not already finalized (splits must exist)
 - "surface area / morphology": run_surface_area(labels=[...], mode="batch", method="auto")
 - "measure particles / shape metrics / size distribution": run_particle_analysis(labels=[...], mode="batch")
+- "plot / visualise / chart size distribution": plot_measurements(metric="ecd_nm", n_bins=30) — generates a publication figure in the Plot tab and saves it next to the data. Use after run_particle_analysis. For scatter: add scatter_x and scatter_y column names.
   Reports ECD, Feret diameter, circularity, aspect ratio, area, perimeter for each annotation.
   Use mode="single" for the current image only, mode="batch" for all loaded images.
 - "track particles": track_particles(max_displacement_nm=500, min_frames=2, max_gap=1)
@@ -76,6 +77,9 @@ Examples:
 {"name": "finalize_dataset", "summary": "Create 80/10/10 splits"}
 {"name": "run_surface_area", "labels": ["vesicle"], "mode": "batch", "method": "auto"}
 {"name": "run_particle_analysis", "labels": ["nanoparticle"], "mode": "batch"}
+{"name": "plot_measurements", "metric": "ecd_nm", "n_bins": 30}
+{"name": "plot_measurements", "metric": "feret_nm", "title": "Feret diameter distribution"}
+{"name": "plot_measurements", "scatter_x": "ecd_nm", "scatter_y": "circularity"}
 {"name": "track_particles", "max_displacement_nm": 500, "min_frames": 2, "max_gap": 1}
 {"name": "apply_contrast_preset", "preset_name": "Default (Bandpass)"}
 {"name": "export_masks"}
