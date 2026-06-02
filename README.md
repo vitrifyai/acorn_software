@@ -55,6 +55,25 @@ Center for Nanophase Materials Sciences, Oak Ridge National Laboratory.
 - **Particle tracking**: link annotations across image series using nearest-neighbour matching;
   configurable max displacement (nm), minimum track length, frame gap tolerance
 
+### Publication plotting and statistics (`acorn_plotting`)
+- **Floating Plot window** — pops up automatically when CLU generates a figure; fully dockable,
+  resizable, and closable; reopens on the next plot request
+- **Plot types**: histogram, violin, box-and-whisker, waterfall/ridge (one row per label), scatter
+- **Interactive figures**: hover over any data point to see a tooltip (image name, label, size
+  metrics); click a point to navigate ACORN directly to that image
+- **Multi-dataset overlay**: load additional CSV files and compare them on the same axes;
+  groups are colour-coded and labelled automatically
+- **Colour palette picker**: 6 built-in palettes (ACORN, Colorblind-safe, TEM greens, Warm,
+  Cool, Grayscale); click any swatch to customise an individual colour with a colour picker
+- **Reference markers**: drop vertical reference lines at any x-value by clicking the plot
+- **Save PDF / SVG / PNG** directly from the window
+- **Statistics tab** (same window): descriptive stats (mean, std, median, IQR), Shapiro-Wilk /
+  D'Agostino normality test per group, auto-selected comparison test (Welch t-test or
+  Mann-Whitney for 2 groups; one-way ANOVA or Kruskal-Wallis for 3+ groups), Tukey HSD
+  or Bonferroni-corrected post-hoc pairwise comparisons; all using scipy, no extra dependencies
+- **CLU integration**: `plot_measurements` and `run_statistics` tools; CLU explains p-values
+  in plain English and recommends the appropriate test for your data
+
 ### Training pipeline
 - Tile extraction from annotated images, 8x augmentation, negative-prompt sampling
 - Dataset splitting (train / val / test) with reproducible seeds
@@ -86,6 +105,7 @@ signal on `AcornContext`.
 | `acorn_tracking` | **Track** | Particle / feature tracking across image sequences; configurable displacement and gap tolerance |
 | `acorn_3d` | **3D** | Volume rendering and z-slice navigation for MRC tomograms |
 | `acorn_llm` | **CLU** | Natural-language AI assistant chat panel (see below) |
+| `acorn_plotting` | *(floating window)* | Publication-quality interactive plots, statistical analysis, hover/click data linking (see below) |
 
 ### Writing a plugin
 
@@ -181,9 +201,15 @@ model configuration, export queue, training settings) and can:
   *"show me how the membrane changes with dose"*
 - Run analysis: *"measure the particle diameters"*, *"give me Feret lengths for all particles"*,
   *"measure surface areas of all vesicles"*, *"track particles across images"*
+- Plot results: *"plot the size distribution"*, *"show a violin plot of Feret length"*,
+  *"scatter ECD vs circularity"*, *"waterfall plot by label"* — opens the interactive Plot window
+- Run statistics: *"are these two groups different?"*, *"compare the ECD between labels"*,
+  *"run stats"* — CLU selects the right test, explains the p-value in plain English
 - Control the histogram: *"show as raw counts"*, *"plot Feret length"*, *"use 50 bins"*
 - Export measurements: *"export measurements"* — writes `acorn_measurements/measurements.csv`
   in the image folder and opens the results in the Analysis tab
+- Scan the whole dataset: *"what are the pixel sizes for all images?"* — CLU navigates to each
+  image to load its calibration, then reports a verified summary
 - Answer questions without tools: *"how many vesicles are annotated?"*, *"what's the pixel size?"*,
   *"what's the mean ECD?"*
 

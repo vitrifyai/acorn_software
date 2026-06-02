@@ -86,8 +86,9 @@ Go to **File > Open** (or press **Ctrl+O**) and select your image file.
 | **Track** | Link annotations across image series to track particle or feature motion |
 | **3D** | Volume rendering and z-slice navigation for MRC tomograms |
 | **CLU** | Natural-language AI assistant — type what you want to do, the AI does it |
+| **Plot** *(floating window)* | Interactive publication figures and statistical analysis — pops up automatically when CLU generates a plot; see below |
 
-The last four tabs (Analysis, Track, 3D, CLU) are added automatically by ACORN's plugin system.
+The tabs above (Analysis, Track, 3D, CLU, Plot) are added automatically by ACORN's plugin system.
 If a plugin is not installed or its dependencies are missing, that tab simply will not appear.
 
 ---
@@ -158,8 +159,11 @@ CLU understands microscopy intent, not just commands. You can say things like:
 - *"train a YOLO model"* — CLU configures and starts training
 - *"annotate all images at once"* — CLU runs SAM on every loaded image in one go
 - *"measure particle diameters"* — CLU runs batch particle analysis and shows ECD/Feret in the Analysis tab
+- *"plot the size distribution"* — opens the floating Plot window with a histogram; try *"violin plot"*, *"waterfall"*, *"scatter ECD vs circularity"*
+- *"are these two groups different?"* / *"run stats"* — CLU picks the right test, shows the result in the Stats tab, and explains the p-value in plain English
 - *"show as raw counts"* / *"plot Feret length"* / *"use 50 bins"* — CLU adjusts the histogram live
 - *"export measurements"* — saves `acorn_measurements/measurements.csv` in your image folder and opens the data in the Analysis tab
+- *"what are the pixel sizes for all images?"* — CLU scans every image to load its calibration before reporting
 - *"average the frames"* — CLU compresses with mean averaging
 - *"run motion correction on frames 3 to 50"* — CLU clips the frame range and motion-corrects
 - *"show me how the membrane changes with dose"* — CLU opens the dose series tool
@@ -178,6 +182,51 @@ need to tell it anything twice.
 - **Vision model** — CLU receives a thumbnail of the image along with your message; use this
   for questions about image content or open-ended analysis
 - **Auto** — uses the vision model when "Include image" is checked, tool model otherwise
+
+---
+
+## The Plot window
+
+The Plot window is a floating panel that appears automatically when CLU generates a figure (or
+when you ask it to). It is not a permanent tab — it pops up when needed, can be resized and
+moved freely, and closes with the X button.
+
+### Controls
+
+| Control | What it does |
+|---------|-------------|
+| **Type** | Switch between Histogram, Violin, Box, Waterfall, Scatter |
+| **Metric** | Choose what to plot on the x-axis (ECD, Feret length, area, circularity, etc.) |
+| **Y** | Second axis for scatter plots |
+| **Bins** | Number of histogram bins (shown for histogram and waterfall only) |
+| **Palette** | Pick a colour scheme: ACORN, Colorblind-safe, TEM greens, Warm, Cool, Grayscale |
+| **Colour swatches** | Click any swatch to customise that individual colour |
+| **+ Marker** | Toggle on, then click the plot to drop a red reference line at that x-value |
+| **Clear** | Remove all reference markers |
+| **+ Dataset** | Load a second CSV and overlay it on the same plot for comparison |
+| **Save PDF** | Export the current figure as PDF, SVG, or PNG |
+
+### Hover and click
+
+- **Hover** over a scatter point or histogram bar to see a tooltip with the particle's image name,
+  label, and measurements
+- **Click** a scatter point or histogram bar and ACORN navigates directly to that image
+
+### Stats tab
+
+Click the **Stats** tab (inside the Plot window) or ask CLU to *"run statistics"* to see:
+
+- Descriptive stats per group: n, mean, std, median, IQR, min, max
+- Normality test (Shapiro-Wilk for small datasets, D'Agostino-Pearson for large ones)
+- Auto-selected comparison test:
+  - 2 groups, both normal → Welch t-test
+  - 2 groups, non-normal → Mann-Whitney U
+  - 3+ groups, all normal → one-way ANOVA + Tukey HSD post-hoc
+  - 3+ groups, non-normal → Kruskal-Wallis + Bonferroni post-hoc
+- Plain-English summary: *"Your two groups are significantly different (p=0.003) — the treated
+  particles are about 15% larger on average."*
+
+CLU will suggest running statistics automatically after measuring particles with multiple label groups.
 
 ---
 
