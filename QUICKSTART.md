@@ -164,7 +164,7 @@ CLU understands microscopy intent, not just commands. You can say things like:
 - *"show as raw counts"* / *"plot Feret length"* / *"use 50 bins"* — CLU adjusts the histogram live
 - *"export measurements"* — saves `acorn_measurements/measurements.csv` in your image folder and opens the data in the Analysis tab
 - *"what are the pixel sizes for all images?"* — CLU scans every image to load its calibration before reporting
-- *"export to NeXus"* / *"export HDF5"* / *"export for the database"* — writes a `.nxs` file with images, annotations, and measurements in NeXus format
+- *"export to NeXus"* / *"export HDF5"* / *"save as .nxs"* — writes a `.nxs` file with images, annotations, and measurements in NeXus format
 - *"average the frames"* — CLU compresses with mean averaging
 - *"run motion correction on frames 3 to 50"* — CLU clips the frame range and motion-corrects
 - *"show me how the membrane changes with dose"* — CLU opens the dose series tool
@@ -189,8 +189,7 @@ need to tell it anything twice.
 ## NeXus HDF5 export
 
 ACORN can export your entire dataset — images, annotations, and particle measurements —
-to a single NeXus-compatible HDF5 file (`.nxs`) for CNMS database registration and
-cross-instrument data sharing.
+to a single NeXus-compatible HDF5 file (`.nxs`) for data sharing and archiving.
 
 ### What goes in the file
 
@@ -204,7 +203,7 @@ cross-instrument data sharing.
 
 ### How to export
 
-Ask CLU: *"export to NeXus"*, *"export HDF5"*, or *"export for the database"*
+Ask CLU: *"export to NeXus"*, *"export HDF5"*, or *"save as .nxs"*
 
 Or: after running `export_measurements`, CLU can chain directly into NeXus export.
 
@@ -218,12 +217,6 @@ The `.nxs` file can be opened with any NeXus-aware tool:
 - **nexpy** — Python GUI for NeXus data
 - **pynxtools** — NOMAD/FAIRmat NeXus toolkit
 - **h5py** in Python: `import h5py; f = h5py.File("data_acorn.nxs")`
-
-### Note for CNMS database registration
-
-If the CNMS database requires a specific NeXus application definition (e.g. `NXem`)
-or additional metadata fields, contact the ACORN developers — the schema can be
-extended to match without changing the export interface.
 
 ---
 
