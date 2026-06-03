@@ -4909,6 +4909,63 @@ class MainWindow(QMainWindow):
                 else:
                     self._statusbar.showMessage("No annotations found across loaded images.")
 
+        elif action == "export_nexus":
+            self._on_export_nexus(params)
+
+    # ── NeXus export ──────────────────────────────────────────────────────────
+
+    def _on_export_nexus(self, params: dict) -> None:
+        """Write a NeXus-compatible HDF5 file for the loaded dataset."""
+        if not self._image_paths:
+            self._statusbar.showMessage("No images loaded — cannot export NeXus.")
+            return
+        from pathlib import Path as _Path
+        from acorn.export.nexus_exporter import export_nexus
+
+        img_dir    = _Path(self._image_paths[0]).parent
+        meas_root  = img_dir / "acorn_measurements"
+        meas_root.mkdir(parents=True, exist_ok=True)
+        out_path   = meas_root / (img_dir.name + "_acorn.nxs")
+
+        # Snapshot current annotations
+        all_ann_states = dict(self._ann_states)
+        if self._img_idx >= 0:
+            all_ann_states[self._img_idx] = list(self._canvas_widget.canvas.store)
+
+        # Gather measurements DataFrame if available
+        df = None
+        csv_path = meas_root / "measurements.csv"
+        if csv_path.exists():
+            try:
+                import pandas as _pd
+                df = _pd.read_csv(str(csv_path))
+            except Exception:
+                pass
+
+        include_images = bool(params.get("include_images", True))
+        sample_name    = str(params.get("sample_name", ""))
+        title          = str(params.get("title", img_dir.name))
+
+        try:
+            export_nexus(
+                output_path   = out_path,
+                image_paths   = list(self._image_paths),
+                ann_states    = all_ann_states,
+                px_overrides  = dict(self._px_overrides),
+                image_cache   = dict(self._image_cache),
+                measurements_df = df,
+                include_images  = include_images,
+                title           = title,
+                sample_name     = sample_name,
+            )
+            self._statusbar.showMessage(
+                f"NeXus export → acorn_measurements/{out_path.name}"
+            )
+        except Exception as exc:
+            self._statusbar.showMessage(f"NeXus export failed: {exc}")
+            import logging
+            logging.getLogger(__name__).exception("NeXus export error")
+
     # ── application quit ──────────────────────────────────────────────────────
 
     def closeEvent(self, event) -> None:

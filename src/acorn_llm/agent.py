@@ -391,6 +391,32 @@ _TOOLS: list[dict] = [
         "needs_confirm": False,
     },
     {
+        "name": "export_nexus",
+        "description": (
+            "Export all loaded images, annotations, and particle measurements to a "
+            "NeXus-compatible HDF5 file (.nxs) for CNMS database ingestion and sharing "
+            "across instruments/tools. Saved as acorn_measurements/<folder>_acorn.nxs "
+            "next to the data. Use when the user asks to export to HDF5, NeXus, .nxs, "
+            "or 'the database format'."
+        ),
+        "properties": {
+            "include_images": {
+                "type": "boolean",
+                "description": "Embed image pixel arrays in the file (default true). Set false for large datasets.",
+            },
+            "sample_name": {
+                "type": "string",
+                "description": "Sample name written to the NXsample group.",
+            },
+            "title": {
+                "type": "string",
+                "description": "Experiment title for the NXentry group.",
+            },
+        },
+        "required": [],
+        "needs_confirm": False,
+    },
+    {
         "name": "export_masks",
         "description": (
             "Export all ROI annotations on the current image as PNG mask + JSON label file. "
@@ -925,6 +951,7 @@ You are proactive: if a prerequisite is missing (model not loaded, no image open
 **"Track particles"**: ensure multiple images with annotations → track_particles(max_displacement_nm=500)
 **"Apply [preset name]"**: apply_contrast_preset(preset_name=...) — use exact name from available presets list
 **"Export masks / ground truth"**: export_masks()
+**"Export to HDF5 / NeXus / database format / .nxs"**: export_nexus() — writes images + annotations + measurements to a NeXus HDF5 file compatible with CNMS database ingestion
 **"Share / export for annotation"**: export_display_image()
 **"Push to HuggingFace"**: push_to_hub(repo_id=...) — dataset must be finalized first
 **"Import RELION picks / star file"**: import_star_file()
