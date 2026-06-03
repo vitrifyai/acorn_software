@@ -87,6 +87,12 @@ Center for Nanophase Materials Sciences, Oak Ridge National Laboratory.
 - Image quality assessment (blur, contrast, saturation, low-frequency artifacts)
 - Export annotated display image (PNG) for external annotation tools or publication
 - Batch export over entire image folders
+- **NeXus HDF5 export** (`.nxs`): write images, annotations, and particle measurements
+  to a NeXus-compatible HDF5 file for CNMS database ingestion and cross-instrument
+  data sharing; structure follows `NXroot / NXentry / NXinstrument / NXsample / NXdata`
+  with calibrated axes in nm, units attributes, and gzip-compressed image arrays;
+  readable by `h5web`, `nexpy`, `pynxtools`, and any NeXus-aware tool;
+  CLU command: *"export to NeXus"* / *"export HDF5"* / *"export for the database"*
 
 ---
 
@@ -201,6 +207,8 @@ model configuration, export queue, training settings) and can:
   *"show me how the membrane changes with dose"*
 - Run analysis: *"measure the particle diameters"*, *"give me Feret lengths for all particles"*,
   *"measure surface areas of all vesicles"*, *"track particles across images"*
+- Export for database / CNMS: *"export to NeXus"* / *"export HDF5"* — writes a `.nxs` file
+  with images, annotations, and measurements in NeXus format for database ingestion
 - Plot results: *"plot the size distribution"*, *"show a violin plot of Feret length"*,
   *"scatter ECD vs circularity"*, *"waterfall plot by label"* — opens the interactive Plot window
 - Run statistics: *"are these two groups different?"*, *"compare the ECD between labels"*,
