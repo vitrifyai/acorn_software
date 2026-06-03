@@ -13,7 +13,10 @@ from PyQt6.QtWidgets import (
 )
 
 _YOLO_PRESETS = [
-    # YOLO 11
+    # YOLO26 (latest — NMS-free)
+    "yolo26n.pt", "yolo26s.pt", "yolo26m.pt", "yolo26l.pt", "yolo26x.pt",
+    "yolo26n-seg.pt", "yolo26s-seg.pt", "yolo26m-seg.pt", "yolo26l-seg.pt", "yolo26x-seg.pt",
+    # YOLO11
     "yolo11n.pt", "yolo11s.pt", "yolo11m.pt", "yolo11l.pt", "yolo11x.pt",
     "yolo11n-seg.pt", "yolo11s-seg.pt", "yolo11m-seg.pt", "yolo11l-seg.pt", "yolo11x-seg.pt",
     # YOLOv10

@@ -500,7 +500,7 @@ _TOOLS: list[dict] = [
             },
             "yolo_base_model": {
                 "type": "string",
-                "description": "YOLO base weights: yolo11n-seg.pt (nano/fastest) to yolo11x-seg.pt (xlarge/most accurate).",
+                "description": "YOLO base weights: yolo26n-seg.pt (nano/fastest, recommended) to yolo26x-seg.pt (xlarge/most accurate). YOLO11 variants also supported.",
             },
             "unet_arch": {
                 "type": "string",
@@ -1005,7 +1005,7 @@ To call a tool, output ONLY a JSON object on its own line:
 {{"name": "queue_for_export"}}
 {{"name": "start_training", "summary": "Train YOLO on vesicle dataset, 100 epochs"}}
 {{"name": "finalize_dataset", "summary": "Create 80/10/10 train/val/test splits"}}
-{{"name": "configure_training", "model_type": "yolo", "epochs": 100, "yolo_base_model": "yolo11m-seg.pt"}}
+{{"name": "configure_training", "model_type": "yolo", "epochs": 100, "yolo_base_model": "yolo26m-seg.pt"}}
 {{"name": "configure_training", "model_type": "unet", "unet_arch": "Unet", "unet_encoder": "resnet34", "epochs": 50}}
 {{"name": "run_surface_area", "labels": ["vesicle"], "mode": "batch", "method": "auto"}}
 {{"name": "run_surface_area", "labels": ["membrane"], "mode": "single", "method": "fourier", "compound_mode": "subtract_inner"}}

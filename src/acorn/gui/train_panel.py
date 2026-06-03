@@ -36,12 +36,20 @@ _YOLO_MODELS_DIR = (
     else Path.home() / ".acorn" / "models" / "yolo"
 )
 
+_GH = "https://github.com/ultralytics/assets/releases/download/v8.4.0"
 _YOLO_DOWNLOAD_URLS = {
-    "yolo11n-seg.pt": "https://github.com/ultralytics/assets/releases/download/v8.4.0/yolo11n-seg.pt",
-    "yolo11s-seg.pt": "https://github.com/ultralytics/assets/releases/download/v8.4.0/yolo11s-seg.pt",
-    "yolo11m-seg.pt": "https://github.com/ultralytics/assets/releases/download/v8.4.0/yolo11m-seg.pt",
-    "yolo11l-seg.pt": "https://github.com/ultralytics/assets/releases/download/v8.4.0/yolo11l-seg.pt",
-    "yolo11x-seg.pt": "https://github.com/ultralytics/assets/releases/download/v8.4.0/yolo11x-seg.pt",
+    # YOLO26
+    "yolo26n-seg.pt": f"{_GH}/yolo26n-seg.pt",
+    "yolo26s-seg.pt": f"{_GH}/yolo26s-seg.pt",
+    "yolo26m-seg.pt": f"{_GH}/yolo26m-seg.pt",
+    "yolo26l-seg.pt": f"{_GH}/yolo26l-seg.pt",
+    "yolo26x-seg.pt": f"{_GH}/yolo26x-seg.pt",
+    # YOLO11
+    "yolo11n-seg.pt": f"{_GH}/yolo11n-seg.pt",
+    "yolo11s-seg.pt": f"{_GH}/yolo11s-seg.pt",
+    "yolo11m-seg.pt": f"{_GH}/yolo11m-seg.pt",
+    "yolo11l-seg.pt": f"{_GH}/yolo11l-seg.pt",
+    "yolo11x-seg.pt": f"{_GH}/yolo11x-seg.pt",
 }
 
 
@@ -222,6 +230,11 @@ class TrainPanel(QWidget):
         model_row = QHBoxLayout()
         self._yolo_base = QComboBox()
         for tag in [
+            "yolo26n-seg.pt",
+            "yolo26s-seg.pt",
+            "yolo26m-seg.pt",
+            "yolo26l-seg.pt",
+            "yolo26x-seg.pt",
             "yolo11n-seg.pt",
             "yolo11s-seg.pt",
             "yolo11m-seg.pt",

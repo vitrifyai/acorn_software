@@ -85,18 +85,30 @@ USAM_MODELS: dict[str, tuple[str, Path, int, str]] = {
 _GH = "https://github.com/ultralytics/assets/releases/download/v8.4.0"
 
 YOLO_MODELS: dict[str, tuple[str, Path, int, str]] = {
-    # Detection
+    # YOLO11 — Detection
     "yolo11n.pt":     (f"{_GH}/yolo11n.pt",     YOLO_CACHE / "yolo11n.pt",      6,   "YOLO11 nano    — detection only            (fastest, least accurate)"),
     "yolo11s.pt":     (f"{_GH}/yolo11s.pt",     YOLO_CACHE / "yolo11s.pt",      22,  "YOLO11 small   — detection only"),
     "yolo11m.pt":     (f"{_GH}/yolo11m.pt",     YOLO_CACHE / "yolo11m.pt",      64,  "YOLO11 medium  — detection only"),
     "yolo11l.pt":     (f"{_GH}/yolo11l.pt",     YOLO_CACHE / "yolo11l.pt",      100, "YOLO11 large   — detection only"),
     "yolo11x.pt":     (f"{_GH}/yolo11x.pt",     YOLO_CACHE / "yolo11x.pt",      130, "YOLO11 xlarge  — detection only            (slowest, most accurate)"),
-    # Segmentation
-    "yolo11n-seg.pt": (f"{_GH}/yolo11n-seg.pt", YOLO_CACHE / "yolo11n-seg.pt",  6,   "YOLO11 nano    — detection + segmentation  [RECOMMENDED starter]"),
+    # YOLO11 — Segmentation
+    "yolo11n-seg.pt": (f"{_GH}/yolo11n-seg.pt", YOLO_CACHE / "yolo11n-seg.pt",  6,   "YOLO11 nano    — detection + segmentation"),
     "yolo11s-seg.pt": (f"{_GH}/yolo11s-seg.pt", YOLO_CACHE / "yolo11s-seg.pt",  22,  "YOLO11 small   — detection + segmentation"),
     "yolo11m-seg.pt": (f"{_GH}/yolo11m-seg.pt", YOLO_CACHE / "yolo11m-seg.pt",  64,  "YOLO11 medium  — detection + segmentation"),
     "yolo11l-seg.pt": (f"{_GH}/yolo11l-seg.pt", YOLO_CACHE / "yolo11l-seg.pt",  100, "YOLO11 large   — detection + segmentation"),
-    "yolo11x-seg.pt": (f"{_GH}/yolo11x-seg.pt", YOLO_CACHE / "yolo11x-seg.pt",  130, "YOLO11 xlarge  — detection + segmentation  (slowest, most accurate)"),
+    "yolo11x-seg.pt": (f"{_GH}/yolo11x-seg.pt", YOLO_CACHE / "yolo11x-seg.pt",  130, "YOLO11 xlarge  — detection + segmentation"),
+    # YOLO26 — Detection (NMS-free, 43% faster CPU inference)
+    "yolo26n.pt":     (f"{_GH}/yolo26n.pt",     YOLO_CACHE / "yolo26n.pt",      6,   "YOLO26 nano    — detection only            (fastest, least accurate)"),
+    "yolo26s.pt":     (f"{_GH}/yolo26s.pt",     YOLO_CACHE / "yolo26s.pt",      22,  "YOLO26 small   — detection only"),
+    "yolo26m.pt":     (f"{_GH}/yolo26m.pt",     YOLO_CACHE / "yolo26m.pt",      64,  "YOLO26 medium  — detection only"),
+    "yolo26l.pt":     (f"{_GH}/yolo26l.pt",     YOLO_CACHE / "yolo26l.pt",      100, "YOLO26 large   — detection only"),
+    "yolo26x.pt":     (f"{_GH}/yolo26x.pt",     YOLO_CACHE / "yolo26x.pt",      130, "YOLO26 xlarge  — detection only            (slowest, most accurate)"),
+    # YOLO26 — Segmentation
+    "yolo26n-seg.pt": (f"{_GH}/yolo26n-seg.pt", YOLO_CACHE / "yolo26n-seg.pt",  6,   "YOLO26 nano    — detection + segmentation  [RECOMMENDED starter]"),
+    "yolo26s-seg.pt": (f"{_GH}/yolo26s-seg.pt", YOLO_CACHE / "yolo26s-seg.pt",  22,  "YOLO26 small   — detection + segmentation"),
+    "yolo26m-seg.pt": (f"{_GH}/yolo26m-seg.pt", YOLO_CACHE / "yolo26m-seg.pt",  64,  "YOLO26 medium  — detection + segmentation"),
+    "yolo26l-seg.pt": (f"{_GH}/yolo26l-seg.pt", YOLO_CACHE / "yolo26l-seg.pt",  100, "YOLO26 large   — detection + segmentation"),
+    "yolo26x-seg.pt": (f"{_GH}/yolo26x-seg.pt", YOLO_CACHE / "yolo26x-seg.pt",  130, "YOLO26 xlarge  — detection + segmentation  (slowest, most accurate)"),
 }
 
 # ── presets ───────────────────────────────────────────────────────────────────
@@ -105,18 +117,18 @@ PRESETS: dict[str, dict] = {
     "recommended": {
         "label": "Recommended  —  best for cryo-EM, minimal download",
         "usam":  ["vit_b_em_organelles"],
-        "yolo":  ["yolo11n-seg.pt"],
+        "yolo":  ["yolo26n-seg.pt"],
     },
     "em": {
-        "label": "Full EM set  —  all EM-tuned SAM variants + all YOLO segmentation sizes",
+        "label": "Full EM set  —  all EM-tuned SAM variants + all YOLO26 segmentation sizes",
         "usam":  ["vit_b_em_organelles", "vit_l_em_organelles"],
-        "yolo":  ["yolo11n-seg.pt", "yolo11s-seg.pt", "yolo11m-seg.pt",
-                  "yolo11l-seg.pt", "yolo11x-seg.pt"],
+        "yolo":  ["yolo26n-seg.pt", "yolo26s-seg.pt", "yolo26m-seg.pt",
+                  "yolo26l-seg.pt", "yolo26x-seg.pt"],
     },
     "lm": {
-        "label": "Light microscopy  —  LM-tuned SAM vit_b + vit_l + YOLO nano seg",
+        "label": "Light microscopy  —  LM-tuned SAM vit_b + vit_l + YOLO26 nano seg",
         "usam":  ["vit_b_lm", "vit_l_lm"],
-        "yolo":  ["yolo11n-seg.pt"],
+        "yolo":  ["yolo26n-seg.pt"],
     },
     "all": {
         "label": "Everything  —  every SAM variant + every YOLO size",
