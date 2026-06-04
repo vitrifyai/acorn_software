@@ -362,6 +362,13 @@ class AnalysisPlugin(AcornPlugin):
         self._particle_panel.show_results(df)
         n = len(df) if df is not None and not df.empty else 0
         self._context.set_status(f"Particle measurements complete -- {n} annotations measured")
+        # Auto-open the floating Plot window with the results
+        if df is not None and not df.empty:
+            metric = self._particle_panel._metric_combo.currentData() or "feret_nm"
+            self._context.action_requested.emit("plot_measurements", {
+                "plot_type": "box+jitter",
+                "metric":    metric,
+            })
 
     def _on_particle_error(self, msg: str) -> None:
         self._particle_panel.set_running(False)

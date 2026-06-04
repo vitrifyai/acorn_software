@@ -261,55 +261,15 @@ class ParticlePanel(QWidget):
         tbl_layout.addWidget(self._table)
         tabs.addTab(tbl_widget, "Table")
 
-        # Figures tab
-        fig_widget = QWidget()
-        fig_layout = QVBoxLayout(fig_widget)
-        fig_layout.setContentsMargins(4, 4, 4, 4)
-        fig_layout.setSpacing(4)
-
-        ctrl = QHBoxLayout()
-        ctrl.addWidget(QLabel("Metric:"))
-        self._metric_combo = QComboBox()
-        for k, lbl, tip in _METRICS:
-            self._metric_combo.addItem(lbl, userData=k)
-            self._metric_combo.setItemData(
-                self._metric_combo.count() - 1, tip, Qt.ItemDataRole.ToolTipRole
-            )
-        self._metric_combo.currentIndexChanged.connect(self._refresh_figure)
-        ctrl.addWidget(self._metric_combo)
-
-        ctrl.addWidget(QLabel("Y-axis:"))
+        # Stub attributes so existing code that calls set_histogram_metric etc. doesn't crash
+        self._metric_combo    = QComboBox()
         self._plot_type_combo = QComboBox()
+        self._bins_spin       = QDoubleSpinBox()
+        for k, lbl, _ in _METRICS:
+            self._metric_combo.addItem(lbl, userData=k)
         self._plot_type_combo.addItem("Count",   "count")
         self._plot_type_combo.addItem("Density", "density")
-        self._plot_type_combo.setFixedWidth(80)
-        self._plot_type_combo.currentIndexChanged.connect(self._refresh_figure)
-        ctrl.addWidget(self._plot_type_combo)
-
-        ctrl.addWidget(QLabel("Bins:"))
-        self._bins_spin = QDoubleSpinBox()
-        self._bins_spin.setDecimals(0)
-        self._bins_spin.setRange(5, 200)
         self._bins_spin.setValue(30)
-        self._bins_spin.setFixedWidth(56)
-        self._bins_spin.valueChanged.connect(self._refresh_figure)
-        ctrl.addWidget(self._bins_spin)
-
-        ctrl.addStretch()
-        for fmt in ("PNG", "SVG", "PDF"):
-            b = QPushButton(fmt)
-            b.setFixedWidth(46)
-            b.clicked.connect(lambda _, f=fmt.lower(): self._export_fig(f))
-            ctrl.addWidget(b)
-        fig_layout.addLayout(ctrl)
-
-        placeholder = QLabel("Run measurements to generate figures.")
-        placeholder.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        placeholder.setStyleSheet("color:palette(mid);font-size:11px;")
-        fig_layout.addWidget(placeholder, 1)
-        self._fig_canvas_widget = placeholder
-        self._figures_layout = fig_layout
-        tabs.addTab(fig_widget, "Figures")
 
         # Stats tab
         self._stats_text = QTextEdit()
@@ -387,8 +347,7 @@ class ParticlePanel(QWidget):
         self._results_tabs.setVisible(True)
         self._populate_table(df)
         self._populate_stats(df)
-        self._refresh_figure()
-        self._results_tabs.setCurrentIndex(1)
+        self._results_tabs.setCurrentIndex(0)   # show Table
 
     # ------------------------------------------------------------------
     # Internals
@@ -461,102 +420,7 @@ class ParticlePanel(QWidget):
         self._stats_text.setPlainText("\n".join(lines))
 
     def _refresh_figure(self) -> None:
-        if self._df is None or self._df.empty:
-            return
-        key = self._metric_combo.currentData()
-        if key not in self._df.columns:
-            return
-        try:
-            fig = self._make_figure(key)
-        except Exception:
-            return
-        if fig is None:
-            return
-        self._fig = fig
-        self._install_canvas(fig)
-
-    def _make_figure(self, key: str):
-        df = self._df
-        label_col = "label" if "label" in df.columns else None
-        groups = sorted(df[label_col].dropna().unique().tolist()) if label_col else ["all"]
-        palette = ["#4878D0","#EE854A","#6ACC65","#D65F5F","#956CB4","#8C613C","#DC7EC0","#797979"]
-        colors = {g: palette[i % len(palette)] for i, g in enumerate(groups)}
-        xlabel = _METRIC_LABEL.get(key, key)
-        use_density = getattr(self, "_plot_type_combo", None) and self._plot_type_combo.currentData() == "density"
-        n_bins = int(getattr(self, "_bins_spin", None) and self._bins_spin.value() or 30)
-
-        import matplotlib
-        matplotlib.use("QtAgg")
-        import matplotlib.pyplot as plt
-        from matplotlib.lines import Line2D
-
-        fig, ax = plt.subplots(figsize=(5.5, 3.8))
-        all_vals = df[key].dropna().values
-        if len(all_vals) == 0:
-            plt.close(fig)
-            return None
-
-        lo, hi = all_vals.min(), all_vals.max()
-        bins = np.linspace(lo, hi, n_bins + 1) if hi > lo else n_bins
-
-        for grp in groups:
-            sub = df[df[label_col] == grp][key].dropna().values if label_col else all_vals
-            if len(sub) == 0:
-                continue
-            c = colors[grp]
-            ax.hist(sub, bins=bins, alpha=0.38, color=c, density=use_density)
-            if use_density and len(sub) > 3 and sub.std() > 1e-12:
-                try:
-                    from scipy.stats import gaussian_kde
-                    kde = gaussian_kde(sub)
-                    xs = np.linspace(lo, hi, 300)
-                    ax.plot(xs, kde(xs), color=c, lw=1.8)
-                except Exception:
-                    pass
-            ax.axvline(sub.mean(),     color=c, lw=1.2, ls="-")
-            ax.axvline(np.median(sub), color=c, lw=1.2, ls="--")
-
-        legend_handles = [
-            *[plt.Rectangle((0,0),1,1,color=colors[g],alpha=0.5,
-                             label=f"{g} (n={len(df[df[label_col]==g]) if label_col else len(df)})") for g in groups],
-            Line2D([0],[0],color="k",lw=1.2,ls="-", label="mean"),
-            Line2D([0],[0],color="k",lw=1.2,ls="--",label="median"),
-        ]
-        ax.legend(handles=legend_handles, fontsize=7, frameon=False)
-        ax.set_xlabel(xlabel, fontsize=9)
-        ax.set_ylabel("Density" if use_density else "Count", fontsize=9)
-        ax.spines["top"].set_visible(False)
-        ax.spines["right"].set_visible(False)
-        ax.tick_params(direction="out", length=3, width=0.8, labelsize=8)
-        fig.tight_layout(pad=0.8)
-        return fig
-
-    def _install_canvas(self, fig) -> None:
-        from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg
-        old = self._fig_canvas_widget
-        canvas = FigureCanvasQTAgg(fig)
-        canvas.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
-        idx = self._figures_layout.indexOf(old)
-        self._figures_layout.removeWidget(old)
-        old.hide()
-        old.deleteLater()
-        self._figures_layout.insertWidget(idx, canvas, 1)
-        self._fig_canvas_widget = canvas
-        canvas.draw()
-
-    def _export_fig(self, fmt: str) -> None:
-        if self._fig is None:
-            return
-        path, _ = QFileDialog.getSaveFileName(
-            self, f"Export figure", str(Path.home() / f"particle_figure.{fmt}"),
-            f"{fmt.upper()} files (*.{fmt});;All files (*)",
-        )
-        if path:
-            try:
-                self._fig.savefig(path, dpi=300, bbox_inches="tight")
-            except Exception as exc:
-                from PyQt6.QtWidgets import QMessageBox
-                QMessageBox.critical(self, "Export failed", str(exc))
+        pass  # Figures tab removed — all plotting via the floating Plot window
 
     def _export_csv(self) -> None:
         if self._df is None or self._df.empty:
