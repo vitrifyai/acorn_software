@@ -121,7 +121,8 @@ _METRIC_LABEL = {k: lbl for k, lbl, _ in _METRICS}
 class ParticlePanel(QWidget):
     """2D shape measurement panel for TEM/STEM nanoparticles."""
 
-    analysis_requested = pyqtSignal(dict)
+    analysis_requested  = pyqtSignal(dict)
+    open_plot_requested = pyqtSignal()   # user clicked "Open Plot Window"
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -145,9 +146,16 @@ class ParticlePanel(QWidget):
         outer.addWidget(self._build_label_group())
         outer.addWidget(self._build_param_group())
 
+        btn_row = QHBoxLayout()
         self._run_btn = QPushButton("Run Measurements")
         self._run_btn.clicked.connect(self._on_run)
-        outer.addWidget(self._run_btn)
+        btn_row.addWidget(self._run_btn)
+
+        plot_btn = QPushButton("Open Plot Window ↗")
+        plot_btn.setToolTip("Open the interactive floating Plot window with the current measurements")
+        plot_btn.clicked.connect(self.open_plot_requested)
+        btn_row.addWidget(plot_btn)
+        outer.addLayout(btn_row)
 
         self._progress = QProgressBar()
         self._progress.setRange(0, 100)

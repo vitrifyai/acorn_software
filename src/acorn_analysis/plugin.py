@@ -166,6 +166,7 @@ class AnalysisPlugin(AcornPlugin):
 
         self._particle_panel = ParticlePanel()
         self._particle_panel.analysis_requested.connect(self._on_particle_analysis_requested)
+        self._particle_panel.open_plot_requested.connect(self._on_open_plot_requested)
 
         self._sem_panel = SEMPanel()
         self._sem_panel.sem_requested.connect(self._on_sem_requested)
@@ -301,6 +302,15 @@ class AnalysisPlugin(AcornPlugin):
     # ------------------------------------------------------------------
     # Particle measurements
     # ------------------------------------------------------------------
+
+    def _on_open_plot_requested(self) -> None:
+        """User clicked 'Open Plot Window' — emit plot_measurements via action_requested."""
+        pp = self._particle_panel
+        metric = pp._metric_combo.currentData() if pp else "ecd_nm"
+        self._context.action_requested.emit("plot_measurements", {
+            "plot_type": "box+jitter",
+            "metric":    metric or "ecd_nm",
+        })
 
     def _on_particle_analysis_requested(self, config: dict) -> None:
         from acorn_analysis.particle_panel import ParticleThread
