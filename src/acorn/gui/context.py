@@ -102,29 +102,54 @@ class AcornContext(QObject):
         w = self._w()
         return w._img_idx if w else -1
 
+    def sidecar_path_for_index(self, idx: int) -> Optional[Path]:
+        """Return the .acorn.json sidecar path for image at idx, or None."""
+        w = self._w()
+        if w is None or not (0 <= idx < len(w._image_paths)):
+            return None
+        p = w._image_paths[idx]
+        return p.parent / f".{p.stem}.acorn.json"
+
     def pixel_size_for_index(self, idx: int) -> float:
-        """Return pixel size for image at idx — manual override takes priority."""
+        """Return calibrated pixel size for image at idx.
+
+        Priority: manual override → loaded image → sidecar file → 1.0 nm (default).
+        This is the single source of truth for pixel size resolution.
+        """
         w = self._w()
         if w is None:
             return 1.0
+        # 1. Manual override (set by user via px button)
         override = w._px_overrides.get(idx)
         if override is not None and override > 0:
             return float(override)
+        # 2. Currently loaded image (canvas has it live)
         if idx == w._img_idx:
             img = w._canvas_widget.canvas.dm4
             if img is not None and img.pixel_size > 0:
                 return float(img.pixel_size)
-        # For unloaded images, try the sidecar file
+        # 3. Engine pixel size (set by _finish_switch, same source as canvas)
+        if idx == w._img_idx:
+            engine_px = w._engine.pixel_size
+            if engine_px > 0:
+                return float(engine_px)
+        # 4. Cached image object
+        if idx in w._image_cache:
+            cached = w._image_cache[idx]
+            if cached is not None and cached.pixel_size > 0:
+                return float(cached.pixel_size)
+        # 5. Sidecar file (for unloaded images that were previously opened)
         if 0 <= idx < len(w._image_paths):
-            sidecar = w._image_paths[idx].parent / f".{w._image_paths[idx].stem}.acorn.json"
-            try:
-                import json as _json
-                data = _json.loads(sidecar.read_text())
-                px = data.get("pixel_size_nm")
-                if px and float(px) > 0:
-                    return float(px)
-            except Exception:
-                pass
+            sidecar = self.sidecar_path_for_index(idx)
+            if sidecar is not None and sidecar.exists():
+                try:
+                    import json as _json
+                    data = _json.loads(sidecar.read_text())
+                    px = data.get("pixel_size_nm")
+                    if px and float(px) > 0:
+                        return float(px)
+                except Exception:
+                    pass
         return 1.0
 
     @property
@@ -139,6 +164,17 @@ class AcornContext(QObject):
     def canvas_widget(self) -> Optional["CanvasWidget"]:
         w = self._w()
         return w._canvas_widget if w else None
+
+    def switch_to_tab(self, tab_label: str) -> None:
+        """Bring a control-panel tab to the front by its label text."""
+        w = self._w()
+        if w is None or not hasattr(w, "_control_tabs"):
+            return
+        tabs = w._control_tabs
+        for i in range(tabs.count()):
+            if tabs.tabText(i) == tab_label:
+                tabs.setCurrentIndex(i)
+                return
 
     def set_status(self, message: str, timeout_ms: int = 0) -> None:
         w = self._w()
@@ -191,10 +227,7 @@ class AcornContext(QObject):
         }
         if 0 <= idx < len(paths):
             state["image_name"] = paths[idx].name
-            engine_px = w._engine.pixel_size
-            override  = w._px_overrides.get(idx)
-            state["pixel_size_nm"] = float(override if override and override > 0 else
-                                           (engine_px if engine_px > 0 else 1.0))
+            state["pixel_size_nm"] = self.pixel_size_for_index(idx)
             # Include annotation summary so CLU knows what's already on the new image
             anns = w._ann_states.get(idx) or []
             state["annotation_count"] = len(anns)
@@ -241,11 +274,7 @@ class AcornContext(QObject):
         if img is not None:
             state["image_name"] = img.filepath.name if img.filepath else "untitled"
             state["image_shape"] = list(img.raw.shape) if img.raw is not None else []
-            engine_px  = w._engine.pixel_size
-            img_px     = img.pixel_size if img.pixel_size > 0 else None
-            override   = w._px_overrides.get(w._img_idx)
-            best_px    = override or img_px or (engine_px if engine_px > 0 else 1.0)
-            state["pixel_size_nm"] = float(best_px)
+            state["pixel_size_nm"] = self.pixel_size_for_index(w._img_idx)
             state["is_movie"]  = img.is_movie
             state["n_frames"]  = img.n_frames
         state["image_count"]         = len(self.image_paths)
@@ -361,8 +390,10 @@ class AcornContext(QObject):
             px = float(self.current_pixel_size_nm)
             shape_measurements: list[dict] = []
             try:
-                from acorn_analysis.particle_panel import (
-                    _polygon_metrics, _circle_metrics, _rect_metrics,
+                from acorn.core.measurements import (
+                    polygon_metrics  as _polygon_metrics,
+                    circle_metrics   as _circle_metrics,
+                    rect_metrics     as _rect_metrics,
                 )
                 for a in anns:
                     t   = getattr(a, "type", "")

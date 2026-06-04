@@ -30,6 +30,10 @@ STAR_EXTS  = {".star"}
 ALL_EXTS       = DM4_EXTS | TIFF_EXTS | MRC_EXTS | IMAGE_EXTS
 IMAGE_ONLY_EXTS = ALL_EXTS  # alias — STAR excluded from image scanning
 
+# Formats that are electron-microscopy data — bandpass contrast is the right default
+EM_EXTS = DM4_EXTS | MRC_EXTS   # {".dm4", ".mrc", ".mrcs"}
+DEFAULT_EM_CONTRAST = "bandpass"  # used by _switch_to and contrast-panel init
+
 
 # ── metadata dataclass ────────────────────────────────────────────────────────
 

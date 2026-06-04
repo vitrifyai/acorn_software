@@ -36,92 +36,13 @@ from PyQt6.QtWidgets import (
 # Geometry helpers
 # ---------------------------------------------------------------------------
 
-def _polygon_metrics(vertices: list, px_nm: float) -> dict:
-    """Return 2D shape metrics from ROI polygon vertices (image pixel coords)."""
-    if len(vertices) < 3 or px_nm <= 0:
-        return {}
-    pts = np.array(vertices, dtype=float)
-    x, y = pts[:, 0], pts[:, 1]
-    n = len(pts)
-
-    # Shoelace area
-    xs = np.roll(x, -1)
-    ys = np.roll(y, -1)
-    area_px2 = 0.5 * abs(float((x * ys - xs * y).sum()))
-    area_nm2 = area_px2 * px_nm ** 2
-
-    # Perimeter
-    diffs = np.diff(np.vstack([pts, pts[:1]]), axis=0)
-    perim_px = float(np.sqrt((diffs ** 2).sum(axis=1)).sum())
-    perim_nm = perim_px * px_nm
-
-    # Equivalent circular diameter
-    ecd_nm = 2.0 * math.sqrt(area_nm2 / math.pi) if area_nm2 > 0 else 0.0
-
-    # Circularity
-    circularity = (4.0 * math.pi * area_nm2 / perim_nm ** 2) if perim_nm > 0 else 0.0
-
-    # Bounding box
-    bb_w_nm = (float(x.max()) - float(x.min())) * px_nm
-    bb_h_nm = (float(y.max()) - float(y.min())) * px_nm
-    long_nm  = max(bb_w_nm, bb_h_nm)
-    short_nm = min(bb_w_nm, bb_h_nm)
-    aspect_ratio = long_nm / short_nm if short_nm > 0 else 1.0
-
-    # Feret diameter (max caliper between vertex pairs)
-    if len(pts) >= 2:
-        d2 = ((pts[:, None, :] - pts[None, :, :]) ** 2).sum(axis=2)
-        feret_nm = float(np.sqrt(d2.max())) * px_nm
-    else:
-        feret_nm = ecd_nm
-
-    return {
-        "area_nm2":      round(area_nm2,   4),
-        "ecd_nm":        round(ecd_nm,     4),
-        "perimeter_nm":  round(perim_nm,   4),
-        "circularity":   round(min(circularity, 1.0), 4),
-        "aspect_ratio":  round(aspect_ratio, 4),
-        "feret_nm":      round(feret_nm,   4),
-        "bbox_w_nm":     round(bb_w_nm,    4),
-        "bbox_h_nm":     round(bb_h_nm,    4),
-    }
-
-
-def _circle_metrics(r_px: float, px_nm: float) -> dict:
-    r_nm     = r_px * px_nm
-    area_nm2 = math.pi * r_nm ** 2
-    perim_nm = 2.0 * math.pi * r_nm
-    return {
-        "area_nm2":     round(area_nm2,        4),
-        "ecd_nm":       round(2.0 * r_nm,      4),
-        "perimeter_nm": round(perim_nm,         4),
-        "circularity":  1.0,
-        "aspect_ratio": 1.0,
-        "feret_nm":     round(2.0 * r_nm,      4),
-        "bbox_w_nm":    round(2.0 * r_nm,      4),
-        "bbox_h_nm":    round(2.0 * r_nm,      4),
-    }
-
-
-def _rect_metrics(x0: float, y0: float, x1: float, y1: float, px_nm: float) -> dict:
-    w_nm     = abs(x1 - x0) * px_nm
-    h_nm     = abs(y1 - y0) * px_nm
-    area_nm2 = w_nm * h_nm
-    perim_nm = 2.0 * (w_nm + h_nm)
-    ecd_nm   = 2.0 * math.sqrt(area_nm2 / math.pi) if area_nm2 > 0 else 0.0
-    circ     = (4.0 * math.pi * area_nm2 / perim_nm ** 2) if perim_nm > 0 else 0.0
-    long_nm  = max(w_nm, h_nm)
-    short_nm = min(w_nm, h_nm)
-    return {
-        "area_nm2":     round(area_nm2, 4),
-        "ecd_nm":       round(ecd_nm,   4),
-        "perimeter_nm": round(perim_nm, 4),
-        "circularity":  round(min(circ, 1.0), 4),
-        "aspect_ratio": round(long_nm / short_nm if short_nm > 0 else 1.0, 4),
-        "feret_nm":     round(math.sqrt(w_nm ** 2 + h_nm ** 2), 4),
-        "bbox_w_nm":    round(w_nm,     4),
-        "bbox_h_nm":    round(h_nm,     4),
-    }
+# Shape metric functions live in acorn.core.measurements — import here for
+# backward compatibility with any code that imports them from particle_panel.
+from acorn.core.measurements import (
+    polygon_metrics  as _polygon_metrics,
+    circle_metrics   as _circle_metrics,
+    rect_metrics     as _rect_metrics,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -423,6 +344,31 @@ class ParticlePanel(QWidget):
         if not running:
             self._progress.setValue(0)
             self._status.setText("")
+
+    def show_measurements(self, df) -> None:
+        """Load *df* into the panel, pre-select best metric, show Particles tab."""
+        for prefer in ("ecd_nm", "area_nm2"):
+            idx = self._metric_combo.findData(prefer)
+            if idx >= 0 and prefer in df.columns:
+                self._metric_combo.setCurrentIndex(idx)
+                break
+        self.show_results(df)
+        self._results_tabs.setCurrentIndex(0)  # Particles table, not Figures
+
+    def set_histogram_metric(self, key: str) -> None:
+        """Select histogram x-axis metric by column key."""
+        idx = self._metric_combo.findData(key)
+        if idx >= 0:
+            self._metric_combo.setCurrentIndex(idx)
+
+    def set_histogram_bins(self, n: int) -> None:
+        self._bins_spin.setValue(int(n))
+
+    def set_plot_type(self, plot_type: str) -> None:
+        """Switch histogram display type ('count' or 'density')."""
+        idx = self._plot_type_combo.findData(plot_type)
+        if idx >= 0:
+            self._plot_type_combo.setCurrentIndex(idx)
 
     def show_progress(self, pct: int, msg: str) -> None:
         self._progress.setValue(pct)

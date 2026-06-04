@@ -22,7 +22,7 @@ from PyQt6.QtWidgets import (
     QTabWidget, QVBoxLayout, QWidget,
 )
 
-from acorn.core.dm4_loader import DM4Image, scan_folder
+from acorn.core.dm4_loader import DM4Image, scan_folder, EM_EXTS, DEFAULT_EM_CONTRAST
 from acorn.core.contrast import ContrastParams
 from acorn.core.annotations import (
     AnnotationStore, ArrowAnnotation, LineAnnotation, CircleAnnotation,
@@ -30,6 +30,7 @@ from acorn.core.annotations import (
     DistanceMeasurement, AngleMeasurement, ROIAnnotation,
 )
 from acorn.core.measurements import MeasurementEngine
+from acorn.export import measurements_dir as _meas_dir, MEASUREMENTS_CSV as _MEAS_CSV
 from acorn.render.scalebar import nice_scalebar_nm
 
 from acorn.gui.canvas_widget import CanvasWidget
@@ -1427,10 +1428,7 @@ class MainWindow(QMainWindow):
 
     def _autosave_path(self, idx: int) -> Optional[Path]:
         """Return the sidecar auto-save path for image at idx, or None if unavailable."""
-        if 0 <= idx < len(self._image_paths):
-            p = self._image_paths[idx]
-            return p.parent / f".{p.stem}.acorn.json"
-        return None
+        return self._context.sidecar_path_for_index(idx)
 
     def _on_store_changed_autosave(self, _items) -> None:
         """Called on every store change — arms the debounce timer."""
@@ -1733,10 +1731,9 @@ class MainWindow(QMainWindow):
         # background thread can pre-compute the normalised image.
         # For cryo-EM formats with no saved state, default to bandpass so the
         # background thread computes the norm with the correct params from the start.
-        _EM_EXTS = {".dm4", ".mrc", ".mrcs"}
         contrast_params = (
             self._contrast_states.get(idx)
-            or (ContrastParams(method="bandpass") if path.suffix.lower() in _EM_EXTS else self._contrast_panel.params())
+            or (ContrastParams(method=DEFAULT_EM_CONTRAST) if path.suffix.lower() in EM_EXTS else self._contrast_panel.params())
         )
         self._statusbar.showMessage(f"Loading {path.name}…")
         self._image_load_thread = ImageLoadThread(idx, path, contrast_params, parent=self)
@@ -1799,9 +1796,8 @@ class MainWindow(QMainWindow):
         saved_contrast = self._contrast_states.get(idx)
         if saved_contrast is not None:
             self._contrast_panel.set_params(saved_contrast)
-        elif img.filepath and img.filepath.suffix.lower() in (".dm4", ".mrc", ".mrcs"):
-            # Cryo-EM formats — bandpass is the correct default
-            _em_default = ContrastParams(method="bandpass")
+        elif img.filepath and img.filepath.suffix.lower() in EM_EXTS:
+            _em_default = ContrastParams(method=DEFAULT_EM_CONTRAST)
             self._contrast_panel.set_params(_em_default)
             self._contrast_states[idx] = _em_default
         elif img.is_color:
@@ -3755,14 +3751,10 @@ class MainWindow(QMainWindow):
                     if ex0 <= cx <= ex1 and ey0 <= cy <= ey1:
                         continue
                 from acorn.core.annotations import ROIAnnotation
-                xs = [v[0] for v in vertices]
-                ys = [v[1] for v in vertices]
-                n  = len(xs)
-                area_px  = abs(sum(xs[i]*ys[(i+1)%n] - xs[(i+1)%n]*ys[i] for i in range(n))) / 2.0
-                area_nm2 = area_px * (self._engine.pixel_size ** 2)
+                from acorn.core.measurements import polygon_area_nm2 as _poly_area
                 roi = ROIAnnotation(
                     vertices  = vertices,
-                    area_nm2  = area_nm2,
+                    area_nm2  = _poly_area(vertices, self._engine.pixel_size),
                     stats     = {},
                     color     = self._sam_color_for_label(label),
                     linewidth = 1.5,
@@ -4166,13 +4158,10 @@ class MainWindow(QMainWindow):
         px = self._engine.pixel_size
         if px > 0:
             from acorn.core.annotations import ROIAnnotation as _ROI
+            from acorn.core.measurements import polygon_area_nm2 as _poly_area
             for ann in store:
                 if isinstance(ann, _ROI) and ann.area_nm2 == 0.0 and ann.vertices:
-                    xs = [v[0] for v in ann.vertices]
-                    ys = [v[1] for v in ann.vertices]
-                    _n = len(xs)
-                    area_px = abs(sum(xs[i]*ys[(i+1)%_n] - xs[(i+1)%_n]*ys[i] for i in range(_n))) / 2.0
-                    ann.area_nm2 = area_px * (px ** 2)
+                    ann.area_nm2 = _poly_area(ann.vertices, px)
         if canvas.renderer is not None:
             canvas.renderer.render_noblit(canvas.store, canvas)
         else:
@@ -4894,9 +4883,9 @@ class MainWindow(QMainWindow):
                 if rows:
                     # Save to acorn_measurements/ inside the same folder the images live in
                     img_dir   = _Path(self._image_paths[0]).parent
-                    meas_root = img_dir / "acorn_measurements"
+                    meas_root = _meas_dir(img_dir)
                     meas_root.mkdir(parents=True, exist_ok=True)
-                    out_path  = meas_root / "measurements.csv"
+                    out_path  = meas_root / _MEAS_CSV
                     # Overwrite with full combined dataset each time
                     with open(out_path, "w", newline="") as f:
                         writer = csv.DictWriter(f, fieldnames=list(rows[0].keys()))
@@ -4923,7 +4912,7 @@ class MainWindow(QMainWindow):
         from acorn.export.nexus_exporter import export_nexus
 
         img_dir    = _Path(self._image_paths[0]).parent
-        meas_root  = img_dir / "acorn_measurements"
+        meas_root  = _meas_dir(img_dir)
         meas_root.mkdir(parents=True, exist_ok=True)
         out_path   = meas_root / (img_dir.name + "_acorn.nxs")
 
@@ -4934,7 +4923,7 @@ class MainWindow(QMainWindow):
 
         # Gather measurements DataFrame if available
         df = None
-        csv_path = meas_root / "measurements.csv"
+        csv_path = meas_root / _MEAS_CSV
         if csv_path.exists():
             try:
                 import pandas as _pd

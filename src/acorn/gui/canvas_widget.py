@@ -956,12 +956,6 @@ class CanvasWidget(QWidget):
                     verts[idx] = (x, y)
                     ann.vertices = verts
                     if ps > 0 and len(verts) >= 3:
-                        import numpy as np
-                        xy = np.array(verts)
-                        n = len(xy)
-                        area_px2 = 0.5 * abs(sum(
-                            xy[i][0] * xy[(i+1) % n][1] - xy[(i+1) % n][0] * xy[i][1]
-                            for i in range(n)
-                        ))
-                        ann.area_nm2 = area_px2 * ps * ps
+                        from acorn.core.measurements import polygon_area_nm2 as _poly_area
+                        ann.area_nm2 = _poly_area(verts, ps)
 

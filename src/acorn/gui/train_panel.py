@@ -36,21 +36,22 @@ _YOLO_MODELS_DIR = (
     else Path.home() / ".acorn" / "models" / "yolo"
 )
 
-_GH = "https://github.com/ultralytics/assets/releases/download/v8.4.0"
-_YOLO_DOWNLOAD_URLS = {
-    # YOLO26
-    "yolo26n-seg.pt": f"{_GH}/yolo26n-seg.pt",
-    "yolo26s-seg.pt": f"{_GH}/yolo26s-seg.pt",
-    "yolo26m-seg.pt": f"{_GH}/yolo26m-seg.pt",
-    "yolo26l-seg.pt": f"{_GH}/yolo26l-seg.pt",
-    "yolo26x-seg.pt": f"{_GH}/yolo26x-seg.pt",
-    # YOLO11
-    "yolo11n-seg.pt": f"{_GH}/yolo11n-seg.pt",
-    "yolo11s-seg.pt": f"{_GH}/yolo11s-seg.pt",
-    "yolo11m-seg.pt": f"{_GH}/yolo11m-seg.pt",
-    "yolo11l-seg.pt": f"{_GH}/yolo11l-seg.pt",
-    "yolo11x-seg.pt": f"{_GH}/yolo11x-seg.pt",
-}
+# Pull URLs from download_models.py — single source of truth for YOLO assets.
+try:
+    import sys as _sys, importlib.util as _ilu
+    _dm_path = str(Path(__file__).resolve().parents[3] / "download_models.py")
+    _spec = _ilu.spec_from_file_location("download_models", _dm_path)
+    _dm   = _ilu.module_from_spec(_spec)
+    _spec.loader.exec_module(_dm)
+    _YOLO_DOWNLOAD_URLS = {k: v[0] for k, v in _dm.YOLO_MODELS.items()
+                           if k.endswith("-seg.pt")}
+    del _dm, _spec, _dm_path, _ilu, _sys
+except Exception:
+    # Fallback: hardcode only as last resort if download_models.py is unavailable
+    _GH = "https://github.com/ultralytics/assets/releases/download/v8.4.0"
+    _YOLO_DOWNLOAD_URLS = {
+        f"yolo26{s}-seg.pt": f"{_GH}/yolo26{s}-seg.pt" for s in "nsmzlx"
+    } | {f"yolo11{s}-seg.pt": f"{_GH}/yolo11{s}-seg.pt" for s in "nsmlx"}
 
 
 def _resolve_yolo_model(tag: str) -> str:

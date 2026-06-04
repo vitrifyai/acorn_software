@@ -25,6 +25,104 @@ class LineProfileResult:
     pixel_size: float           # nm/px used for calculation
 
 
+def polygon_metrics(vertices: list, px_nm: float) -> dict:
+    """2D shape metrics (area, ECD, Feret, circularity…) from ROI vertices."""
+    if len(vertices) < 3 or px_nm <= 0:
+        return {}
+    pts = np.array(vertices, dtype=float)
+    x, y = pts[:, 0], pts[:, 1]
+    n = len(pts)
+    xs_r = np.roll(x, -1)
+    ys_r = np.roll(y, -1)
+    area_px2 = 0.5 * abs(float((x * ys_r - xs_r * y).sum()))
+    area_nm2 = area_px2 * px_nm ** 2
+    diffs    = np.diff(np.vstack([pts, pts[:1]]), axis=0)
+    perim_nm = float(np.sqrt((diffs ** 2).sum(axis=1)).sum()) * px_nm
+    ecd_nm   = 2.0 * math.sqrt(area_nm2 / math.pi) if area_nm2 > 0 else 0.0
+    circ     = (4.0 * math.pi * area_nm2 / perim_nm ** 2) if perim_nm > 0 else 0.0
+    bb_w_nm  = (float(x.max()) - float(x.min())) * px_nm
+    bb_h_nm  = (float(y.max()) - float(y.min())) * px_nm
+    long_nm  = max(bb_w_nm, bb_h_nm)
+    short_nm = min(bb_w_nm, bb_h_nm)
+    if len(pts) >= 2:
+        d2 = ((pts[:, None, :] - pts[None, :, :]) ** 2).sum(axis=2)
+        feret_nm = float(np.sqrt(d2.max())) * px_nm
+    else:
+        feret_nm = ecd_nm
+    return {
+        "area_nm2":     round(area_nm2,                              4),
+        "ecd_nm":       round(ecd_nm,                                4),
+        "perimeter_nm": round(perim_nm,                              4),
+        "circularity":  round(min(circ, 1.0),                        4),
+        "aspect_ratio": round(long_nm / short_nm if short_nm > 0 else 1.0, 4),
+        "feret_nm":     round(feret_nm,                              4),
+        "bbox_w_nm":    round(bb_w_nm,                               4),
+        "bbox_h_nm":    round(bb_h_nm,                               4),
+    }
+
+
+def circle_metrics(r_px: float, px_nm: float) -> dict:
+    """Shape metrics for a circle annotation."""
+    r_nm = r_px * px_nm
+    area_nm2 = math.pi * r_nm ** 2
+    perim_nm = 2.0 * math.pi * r_nm
+    return {
+        "area_nm2":     round(area_nm2,   4),
+        "ecd_nm":       round(2.0 * r_nm, 4),
+        "perimeter_nm": round(perim_nm,   4),
+        "circularity":  1.0,
+        "aspect_ratio": 1.0,
+        "feret_nm":     round(2.0 * r_nm, 4),
+        "bbox_w_nm":    round(2.0 * r_nm, 4),
+        "bbox_h_nm":    round(2.0 * r_nm, 4),
+    }
+
+
+def rect_metrics(x0: float, y0: float, x1: float, y1: float, px_nm: float) -> dict:
+    """Shape metrics for a rectangle annotation."""
+    w_nm = abs(x1 - x0) * px_nm
+    h_nm = abs(y1 - y0) * px_nm
+    area_nm2 = w_nm * h_nm
+    perim_nm = 2.0 * (w_nm + h_nm)
+    ecd_nm   = 2.0 * math.sqrt(area_nm2 / math.pi) if area_nm2 > 0 else 0.0
+    circ     = (4.0 * math.pi * area_nm2 / perim_nm ** 2) if perim_nm > 0 else 0.0
+    long_nm  = max(w_nm, h_nm)
+    short_nm = min(w_nm, h_nm)
+    return {
+        "area_nm2":     round(area_nm2, 4),
+        "ecd_nm":       round(ecd_nm,   4),
+        "perimeter_nm": round(perim_nm, 4),
+        "circularity":  round(min(circ, 1.0), 4),
+        "aspect_ratio": round(long_nm / short_nm if short_nm > 0 else 1.0, 4),
+        "feret_nm":     round(math.sqrt(w_nm ** 2 + h_nm ** 2), 4),
+        "bbox_w_nm":    round(w_nm, 4),
+        "bbox_h_nm":    round(h_nm, 4),
+    }
+
+
+def polygon_area_nm2(vertices: list, pixel_size_nm: float) -> float:
+    """Return the 2D projected area of a polygon in nm² using the Shoelace formula.
+
+    Parameters
+    ----------
+    vertices : list of (x, y) pixel-coordinate pairs
+    pixel_size_nm : float
+        Calibrated pixel size in nm/px.
+
+    Returns
+    -------
+    float  Area in nm².  Returns 0.0 for degenerate input.
+    """
+    if len(vertices) < 3 or pixel_size_nm <= 0:
+        return 0.0
+    xs = [v[0] for v in vertices]
+    ys = [v[1] for v in vertices]
+    n  = len(xs)
+    area_px = abs(sum(xs[i] * ys[(i + 1) % n] - xs[(i + 1) % n] * ys[i]
+                      for i in range(n))) / 2.0
+    return area_px * (pixel_size_nm ** 2)
+
+
 class MeasurementEngine:
     """
     Stateless measurement calculator. All methods take image-pixel coordinates
@@ -131,12 +229,7 @@ class MeasurementEngine:
                 "max":  float(vals.max()),
                 "n_pixels": int(len(vals)),
             }
-            # Shoelace formula for polygon area in pixels, then convert to nm²
-            n = len(xs)
-            area_px = abs(
-                sum(xs[i] * ys[(i + 1) % n] - xs[(i + 1) % n] * ys[i] for i in range(n))
-            ) / 2.0
-            area_nm2 = area_px * (self.pixel_size ** 2)
+            area_nm2 = polygon_area_nm2(list(vertices), self.pixel_size)
 
         return ROIAnnotation(
             vertices=list(vertices),

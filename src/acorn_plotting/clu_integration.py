@@ -7,6 +7,7 @@ from typing import Optional, TYPE_CHECKING
 from PyQt6.QtWidgets import QWidget
 
 from acorn.plugin_base import AcornPlugin
+from acorn.export import ACORN_MEASUREMENTS_DIR, MEASUREMENTS_CSV
 
 if TYPE_CHECKING:
     from acorn.gui.context import AcornContext
@@ -27,11 +28,11 @@ PLOT_TOOL: dict = {
     "properties": {
         "plot_type": {
             "type": "string",
-            "enum": ["histogram", "violin", "box", "waterfall", "scatter"],
+            "enum": ["scatter", "histogram", "box+jitter", "violin", "box", "waterfall"],
             "description": (
-                "Chart type. histogram=count histogram (default), violin=violin plot, "
-                "box=box-and-whisker, waterfall=ridge/waterfall (one row per label), "
-                "scatter=x vs y scatter."
+                "Chart type. scatter=x vs y (default), histogram=count histogram, "
+                "box+jitter=box plot with data points + significance brackets, "
+                "violin=violin, box=box-and-whisker, waterfall=ridge plot."
             ),
         },
         "metric": {
@@ -110,7 +111,7 @@ def _get_measurements_df(context: "AcornContext", analysis_plugin=None):
     # 2. CSV fallback
     paths = context.image_paths
     if paths:
-        csv_path = paths[0].parent / "acorn_measurements" / "measurements.csv"
+        csv_path = paths[0].parent / ACORN_MEASUREMENTS_DIR / MEASUREMENTS_CSV
         if csv_path.exists():
             try:
                 import pandas as pd
@@ -126,7 +127,7 @@ def _figure_output_path(context: "AcornContext", metric: str) -> Optional[Path]:
     paths = context.image_paths
     if not paths:
         return None
-    out_dir = paths[0].parent / "acorn_measurements"
+    out_dir = paths[0].parent / ACORN_MEASUREMENTS_DIR
     out_dir.mkdir(parents=True, exist_ok=True)
     return out_dir / f"plot_{metric}.png"
 
@@ -227,61 +228,65 @@ class PlottingPlugin(AcornPlugin):
     def _on_action_requested(self, action: str, params: dict) -> None:
         if action == "run_statistics":
             self._handle_run_statistics(params)
-            return
-        if action != "plot_measurements":
-            return
+        elif action == "plot_measurements":
+            self._handle_plot_measurements(params)
 
     def _handle_run_statistics(self, params: dict) -> None:
-        metric  = params.get("metric", "ecd_nm")
+        metric          = params.get("metric", "ecd_nm")
         analysis_plugin = self._resolve_analysis_plugin()
         df = _get_measurements_df(self._context, analysis_plugin)
         if df is None or df.empty:
             self._context.set_status("Stats: no measurements — run particle analysis first.")
             return
         from acorn_plotting.stats import run_statistics, format_stats_report
-        result  = run_statistics(df, metric)
-        report  = format_stats_report(result)
+        result = run_statistics(df, metric)
+        report = format_stats_report(result)
         if self._ensure_dock() and self._panel is not None:
             self._panel.show_stats(report)
             self._dock.show()
             self._dock.raise_()
             self._dock.activateWindow()
-        self._context.set_status(f"Stats: {result.get('comparison', {}).get('test', 'done')} — "
-                                 f"{result.get('comparison', {}).get('significance', '')}")
-        # Return result summary to CLU via set_status (CLU reads status for tool results)
+        self._context.set_status(
+            f"Stats: {result.get('comparison', {}).get('test', 'done')} — "
+            f"{result.get('comparison', {}).get('significance', '')}"
+        )
 
-        plot_type = params.get("plot_type", "histogram")
-        metric    = params.get("metric", "ecd_nm")
-        scatter_y = params.get("scatter_y", "aspect_ratio")
-        n_bins    = int(params.get("n_bins", 30))
-        title     = params.get("title") or None
+    def _handle_plot_measurements(self, params: dict) -> None:
+        # Always open the dock first so the user sees it regardless of data state
+        if not self._ensure_dock() or self._panel is None:
+            return
+        self._dock.show()
+        self._dock.raise_()
+        self._dock.activateWindow()
 
+        plot_type       = params.get("plot_type", "scatter")
+        metric          = params.get("metric", "ecd_nm")
+        scatter_y       = params.get("scatter_y", "aspect_ratio")
+        n_bins          = int(params.get("n_bins", 30))
         analysis_plugin = self._resolve_analysis_plugin()
-        df = _get_measurements_df(self._context, analysis_plugin)
+
+        # If particle analysis is still running, retry briefly
+        df = None
+        for _attempt in range(5):
+            df = _get_measurements_df(self._context, analysis_plugin)
+            if df is not None and not df.empty:
+                break
+            import time
+            time.sleep(0.5)
 
         if df is None or df.empty:
             self._context.set_status(
-                "Plot: no measurements available — run particle analysis first."
+                "Plot window open — no measurements yet. Run particle analysis first, then ask to plot again."
             )
             return
 
-        from acorn_plotting.figures import build_figure
-
+        from acorn_plotting.figures import build_figure_new
         out_path = _figure_output_path(self._context, f"{plot_type}_{metric}")
-        fig = build_figure(
+        fig = build_figure_new(
             df=df, plot_type=plot_type, metric=metric,
             scatter_y=scatter_y, n_bins=n_bins,
-            title=title, output_path=out_path,
+            output_path=out_path,
         )
-
-        # Show the floating window and hand it the live df for interactive controls
-        if self._ensure_dock() and self._panel is not None:
-            self._panel.show_figure(fig, df=df)
-            self._dock.show()
-            self._dock.raise_()
-            self._dock.activateWindow()
-
+        self._panel.show_figure(fig, df=df)
         saved_msg = f"  Saved → {out_path}" if out_path else ""
-        self._context.set_status(
-            f"Plot: {plot_type} of {metric} ready.{saved_msg}"
-        )
+        self._context.set_status(f"Plot: {plot_type} of {metric} ready.{saved_msg}")
