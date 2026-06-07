@@ -5,9 +5,9 @@ from __future__ import annotations
 from PyQt6.QtCore import pyqtSignal, Qt
 from PyQt6.QtGui import QColor
 from PyQt6.QtWidgets import (
-    QButtonGroup, QColorDialog, QComboBox, QDoubleSpinBox, QFormLayout,
-    QGroupBox, QGridLayout, QHBoxLayout, QLabel, QLineEdit, QPushButton,
-    QRadioButton, QScrollArea, QSpinBox, QVBoxLayout, QWidget,
+    QColorDialog, QComboBox, QDoubleSpinBox, QFormLayout,
+    QGroupBox, QHBoxLayout, QLabel, QLineEdit, QPushButton,
+    QScrollArea, QSpinBox, QVBoxLayout, QWidget,
 )
 
 TOOLS = [
@@ -47,19 +47,14 @@ class AnnotationPanel(QWidget):
         layout.setContentsMargins(6, 6, 6, 6)
         layout.setSpacing(6)
 
-        # ── tool selector (2-column grid) ─────────────────────────────────────
-        tool_box = QGroupBox("Tool")
-        tool_grid = QGridLayout(tool_box)
-        tool_grid.setSpacing(5)
-        self._tool_group = QButtonGroup(self)
-        self._tool_btns: dict[str, QRadioButton] = {}
-        for i, (key, label) in enumerate(TOOLS):
-            rb = QRadioButton(label)
-            self._tool_group.addButton(rb)
-            self._tool_btns[key] = rb
-            tool_grid.addWidget(rb, i // 2, i % 2)
-        self._tool_btns["none"].setChecked(True)
-        layout.addWidget(tool_box)
+        # ── tool selector (dropdown) ───────────────────────────────────────────
+        tool_form = QFormLayout()
+        tool_form.setSpacing(4)
+        self._tool_combo = QComboBox()
+        for key, label in TOOLS:
+            self._tool_combo.addItem(label, key)
+        tool_form.addRow("Tool:", self._tool_combo)
+        layout.addLayout(tool_form)
 
         # ── style ─────────────────────────────────────────────────────────────
         style_box = QGroupBox("Style")
@@ -175,10 +170,9 @@ class AnnotationPanel(QWidget):
         layout.addStretch()
 
         # ── connect ───────────────────────────────────────────────────────────
-        for key, btn in self._tool_btns.items():
-            btn.toggled.connect(
-                lambda checked, k=key: self.tool_changed.emit(k) if checked else None
-            )
+        self._tool_combo.currentIndexChanged.connect(
+            lambda _: self.tool_changed.emit(self._tool_combo.currentData())
+        )
         undo_btn.clicked.connect(self.undo_requested)
         clear_btn.clicked.connect(self.clear_requested)
         clear_prof_btn.clicked.connect(self.clear_profiles_requested)
@@ -231,10 +225,7 @@ class AnnotationPanel(QWidget):
 
     @property
     def active_tool(self) -> str:
-        for key, btn in self._tool_btns.items():
-            if btn.isChecked():
-                return key
-        return "none"
+        return self._tool_combo.currentData() or "none"
 
     @property
     def color(self) -> str:
