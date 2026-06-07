@@ -1140,6 +1140,8 @@ class MainWindow(QMainWindow):
         _aw_layout.setSpacing(0)
         _aw_layout.addWidget(self._ann_panel)
         _aw_layout.addWidget(self._seg_panel)
+        # Pre-tag so plugin inject code appends directly instead of wrapping in a new scroll area
+        _annotate_wrapper._plugin_inject_layout = _aw_layout
 
         control.addTab(self._contrast_panel,   "Contrast")
         control.addTab(_annotate_wrapper,      "Annotate")
