@@ -7,7 +7,7 @@ from PyQt6.QtGui import QColor
 from PyQt6.QtWidgets import (
     QColorDialog, QComboBox, QDoubleSpinBox, QFormLayout,
     QGroupBox, QHBoxLayout, QLabel, QLineEdit, QPushButton,
-    QScrollArea, QSpinBox, QVBoxLayout, QWidget,
+    QSpinBox, QVBoxLayout, QWidget,
 )
 
 TOOLS = [
@@ -42,8 +42,7 @@ class AnnotationPanel(QWidget):
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        _content = QWidget()
-        layout = QVBoxLayout(_content)
+        layout = QVBoxLayout(self)
         layout.setContentsMargins(6, 6, 6, 6)
         layout.setSpacing(6)
 
@@ -176,13 +175,6 @@ class AnnotationPanel(QWidget):
         undo_btn.clicked.connect(self.undo_requested)
         clear_btn.clicked.connect(self.clear_requested)
         clear_prof_btn.clicked.connect(self.clear_profiles_requested)
-
-        _scroll = QScrollArea()
-        _scroll.setWidgetResizable(True)
-        _scroll.setWidget(_content)
-        _outer = QVBoxLayout(self)
-        _outer.setContentsMargins(0, 0, 0, 0)
-        _outer.addWidget(_scroll)
 
     # ── helpers ───────────────────────────────────────────────────────────────
 

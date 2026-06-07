@@ -1133,24 +1133,37 @@ class MainWindow(QMainWindow):
         self._seg_panel.accept_all_requested.connect(self._on_seg_accept)
         self._seg_panel.reject_all_requested.connect(self._on_seg_reject)
 
-        # Annotate tab = manual tools + AI segmentation
-        _annotate_wrapper = QWidget()
-        _aw_layout = QVBoxLayout(_annotate_wrapper)
+        def _make_tab_wrapper(panel):
+            """Wrap a panel in a scrollable container pre-tagged for plugin injection."""
+            from PyQt6.QtWidgets import QScrollArea as _SA2
+            inner = QWidget()
+            lay = QVBoxLayout(inner)
+            lay.setContentsMargins(0, 0, 0, 0)
+            lay.setSpacing(0)
+            lay.addWidget(panel)
+            lay.addStretch()
+            inner._plugin_inject_layout = lay
+            scroll = _SA2()
+            scroll.setWidgetResizable(True)
+            scroll.setWidget(inner)
+            scroll._plugin_inject_layout = lay   # tag on scroll too so lookup finds it
+            return scroll
+
+        # Annotate tab: annotation tools + AI segmentation, all in one scrollable container
+        _annotate_inner = QWidget()
+        _aw_layout = QVBoxLayout(_annotate_inner)
         _aw_layout.setContentsMargins(0, 0, 0, 0)
         _aw_layout.setSpacing(0)
         _aw_layout.addWidget(self._ann_panel)
         _aw_layout.addWidget(self._seg_panel)
-        # Pre-tag so plugin inject code appends directly instead of wrapping in a new scroll area
-        _annotate_wrapper._plugin_inject_layout = _aw_layout
+        _aw_layout.addStretch()
+        _annotate_inner._plugin_inject_layout = _aw_layout
 
-        def _make_tab_wrapper(panel):
-            w = QWidget()
-            lay = QVBoxLayout(w)
-            lay.setContentsMargins(0, 0, 0, 0)
-            lay.setSpacing(0)
-            lay.addWidget(panel)
-            w._plugin_inject_layout = lay
-            return w
+        from PyQt6.QtWidgets import QScrollArea as _SAnn
+        _annotate_wrapper = _SAnn()
+        _annotate_wrapper.setWidgetResizable(True)
+        _annotate_wrapper.setWidget(_annotate_inner)
+        _annotate_wrapper._plugin_inject_layout = _aw_layout
 
         _measure_wrapper = _make_tab_wrapper(self._meas_panel)
         _export_wrapper  = _make_tab_wrapper(self._export_panel)
