@@ -41,6 +41,7 @@ from acorn.gui.export_panel import ExportPanel
 from acorn.gui.sam_panel import SAMPanel
 from acorn.gui.yolo_panel import YOLOPanel
 from acorn.gui.unet_panel import UNetPanel
+from acorn.gui.segmentation_panel import SegmentationPanel
 from acorn.gui.train_panel import TrainPanel
 
 
@@ -1117,33 +1118,89 @@ class MainWindow(QMainWindow):
         control.setMinimumWidth(320)
 
         self._contrast_panel = ContrastPanel()
-        self._ann_panel = AnnotationPanel()
-        self._meas_panel = MeasurementPanel()
-        self._export_panel = ExportPanel()
-        self._sam_panel = SAMPanel()
-        self._yolo_panel = YOLOPanel()
-        self._unet_panel = UNetPanel()
+        self._ann_panel      = AnnotationPanel()
+        self._meas_panel     = MeasurementPanel()
+        self._export_panel   = ExportPanel()
+        self._sam_panel      = SAMPanel()
+        self._yolo_panel     = YOLOPanel()
+        self._unet_panel     = UNetPanel()
         self._train_panel    = TrainPanel()
 
-        control.addTab(self._contrast_panel,  "Contrast")
-        control.addTab(self._ann_panel,       "Annotate")
-        control.addTab(self._meas_panel,      "Measure")
-        control.addTab(self._export_panel,    "Export")
-        control.addTab(self._sam_panel,       "SAM")
-        control.addTab(self._yolo_panel,      "YOLO")
-        control.addTab(self._unet_panel,      "UNet")
-        control.addTab(self._train_panel,     "Train")
+        # Unified segmentation panel (SAM / YOLO / UNet selector)
+        self._seg_panel = SegmentationPanel(
+            self._sam_panel, self._yolo_panel, self._unet_panel
+        )
+        self._seg_panel.accept_all_requested.connect(self._on_seg_accept)
+        self._seg_panel.reject_all_requested.connect(self._on_seg_reject)
 
-        # ── plugin tabs ────────────────────────────────────────────────────────────
+        # Annotate tab = manual tools + AI segmentation
+        _annotate_wrapper = QWidget()
+        _aw_layout = QVBoxLayout(_annotate_wrapper)
+        _aw_layout.setContentsMargins(0, 0, 0, 0)
+        _aw_layout.setSpacing(0)
+        _aw_layout.addWidget(self._ann_panel)
+        _aw_layout.addWidget(self._seg_panel)
+
+        control.addTab(self._contrast_panel,   "Contrast")
+        control.addTab(_annotate_wrapper,      "Annotate")
+        control.addTab(self._meas_panel,       "Measure")
+        control.addTab(self._export_panel,     "Export")
+        control.addTab(self._train_panel,      "Train")
+
+        # ── plugin tabs / workflow injection ──────────────────────────────────────
         from acorn.gui.context import AcornContext
         from acorn.plugin_loader import discover_plugins
+        from acorn.plugin_base import WORKFLOW_STAGES
+        from PyQt6.QtWidgets import QGroupBox, QVBoxLayout as _VBox, QScrollArea as _SA
         self._context = AcornContext(self)
         self._plugins = discover_plugins(self._context)
+
+        # Build a tab-index map so we can inject into workflow tabs by name
+        _tab_index = {control.tabText(i): i for i in range(control.count())}
+
         for plugin in self._plugins:
             try:
                 panel = plugin.create_panel()
-                if panel is not None:
-                    control.addTab(panel, plugin.TAB_LABEL)
+                if panel is None:
+                    continue
+                stage = plugin.WORKFLOW_STAGE
+                if stage in WORKFLOW_STAGES and stage in _tab_index:
+                    # Inject into the existing workflow tab as a labeled section
+                    target_widget = control.widget(_tab_index[stage])
+                    # Wrap target in a scroll+vbox if it isn't already one we control
+                    if not hasattr(target_widget, "_plugin_inject_layout"):
+                        wrapper = _SA()
+                        wrapper.setWidgetResizable(True)
+                        inner = QWidget()
+                        inner._plugin_inject_layout = _VBox(inner)
+                        inner._plugin_inject_layout.setContentsMargins(0, 0, 0, 0)
+                        inner._plugin_inject_layout.addWidget(target_widget)
+                        inner._plugin_inject_layout.addStretch()
+                        wrapper.setWidget(inner)
+                        # Replace tab with wrapper
+                        idx = _tab_index[stage]
+                        control.removeTab(idx)
+                        control.insertTab(idx, wrapper, stage)
+                        control.setCurrentIndex(idx)
+                        target_widget = inner
+                        _tab_index[stage] = idx
+                    inject_layout = target_widget._plugin_inject_layout
+                    # Remove trailing stretch, add section, re-add stretch
+                    count = inject_layout.count()
+                    if count and inject_layout.itemAt(count - 1).spacerItem():
+                        inject_layout.takeAt(count - 1)
+                    if plugin.WORKFLOW_SECTION_LABEL:
+                        box = QGroupBox(plugin.WORKFLOW_SECTION_LABEL)
+                        bl = _VBox(box)
+                        bl.setContentsMargins(4, 4, 4, 4)
+                        bl.addWidget(panel)
+                        inject_layout.addWidget(box)
+                    else:
+                        inject_layout.addWidget(panel)
+                    inject_layout.addStretch()
+                else:
+                    # Unknown or no stage — own tab
+                    control.addTab(panel, plugin.TAB_LABEL or plugin.PLUGIN_ID)
             except Exception as _plugin_exc:
                 import logging as _logging
                 _logging.getLogger(__name__).warning(
@@ -1263,7 +1320,6 @@ class MainWindow(QMainWindow):
         self._yolo_panel.load_model_requested.connect(self._on_yolo_load_model)
         self._yolo_panel.detect_requested.connect(self._on_yolo_detect)
         self._yolo_panel.detect_seg_requested.connect(self._on_yolo_detect_seg)
-        self._yolo_panel.pipe_to_sam_requested.connect(self._on_yolo_pipe_to_sam)
         self._yolo_panel.accept_all_requested.connect(self._on_yolo_accept)
         self._yolo_panel.reject_all_requested.connect(self._on_yolo_reject)
 
@@ -3277,6 +3333,7 @@ class MainWindow(QMainWindow):
             label = backend
 
         self._sam_panel.set_model_status("Loading model…", loaded=False)
+        self._seg_panel.set_loaded("sam", False)
 
         # For usam, emit download progress through the thread's status signal.
         # _emit is filled after the thread is constructed (thread-safe via Qt signal queue).
@@ -3297,11 +3354,13 @@ class MainWindow(QMainWindow):
             self._sam_predictor = p
             active = getattr(p, "backend", None) or label
             self._sam_panel.set_model_status(f"Model loaded ({active}).", loaded=True)
+            self._seg_panel.set_loaded("sam", True)
             self._statusbar.showMessage(f"SAM model loaded ({active}).")
             self._sam_warmup_encode()
 
         def _err(msg):
             self._sam_panel.set_model_status(f"Load failed: {msg}", loaded=False)
+            self._seg_panel.set_loaded("sam", False)
             QMessageBox.critical(self, "SAM model failed to load",
                 f"The model could not be loaded:\n\n{msg}\n\n"
                 "Check that the model file exists and you have read access to it.")
@@ -3578,6 +3637,24 @@ class MainWindow(QMainWindow):
         self._statusbar.showMessage(
             "SAM negative box: drag over background area to add negative prompts at its centre"
         )
+
+    def _on_seg_accept(self, tool: str) -> None:
+        """Shared Accept All button in SegmentationPanel — dispatch to active tool."""
+        if tool == "sam":
+            self._on_sam_accept()
+        elif tool == "yolo":
+            self._on_yolo_accept()
+        elif tool == "unet":
+            self._on_unet_accept()
+
+    def _on_seg_reject(self, tool: str) -> None:
+        """Shared Reject All button in SegmentationPanel — dispatch to active tool."""
+        if tool == "sam":
+            self._on_sam_reject()
+        elif tool == "yolo":
+            self._on_yolo_reject()
+        elif tool == "unet":
+            self._on_unet_reject()
 
     def _on_sam_accept(self) -> None:
         self._pending_sam_masks.clear()
@@ -4058,6 +4135,7 @@ class MainWindow(QMainWindow):
         from acorn.core.yolo_predictor import YOLOPredictor
         predictor = YOLOPredictor()
         self._yolo_panel.set_model_status("Loading…", loaded=False)
+        self._seg_panel.set_loaded("yolo", False)
 
         def _run():
             predictor.load_model(model_path)
@@ -4069,10 +4147,12 @@ class MainWindow(QMainWindow):
             self._yolo_panel.set_model_status(
                 f"Loaded{seg_note}: {model_path}", loaded=True
             )
+            self._seg_panel.set_loaded("yolo", True)
             self._statusbar.showMessage(f"YOLO model loaded: {model_path}")
 
         def _err(msg):
             self._yolo_panel.set_model_status(f"Load failed: {msg}", loaded=False)
+            self._seg_panel.set_loaded("yolo", False)
 
         self._yolo_thread = SAMThread(_run, self)
         self._yolo_thread.finished.connect(_done)
@@ -4167,50 +4247,6 @@ class MainWindow(QMainWindow):
         else:
             canvas.fig.canvas.draw_idle()
 
-    def _on_yolo_pipe_to_sam(self) -> None:
-        if self._yolo_busy() or self._sam_busy():
-            self._yolo_panel.set_status("Please wait — inference in progress.")
-            return
-        if not self._last_yolo_detections:
-            self._yolo_panel.set_status("Run detection first, then pipe to SAM.")
-            return
-        if self._sam_predictor is None or not self._sam_predictor.is_loaded:
-            self._yolo_panel.set_status("Load SAM model in the SAM tab first.")
-            return
-        img = self._canvas_widget.canvas.dm4
-        if img is None or img.raw is None:
-            return
-
-        from acorn.core.contrast import apply_contrast
-        import numpy as np
-        norm  = apply_contrast(img.raw, self._contrast_panel.params())
-        img8  = (np.clip(norm, 0.0, 1.0) * 255).astype(np.uint8)
-        boxes = [d["box"] for d in self._last_yolo_detections]
-        self._yolo_panel.set_status(f"SAM refining {len(boxes)} box(es)…")
-
-        def _run():
-            masks = []
-            for box in boxes:
-                masks.append(self._sam_predictor.predict_box(img8, box))
-            return masks
-
-        def _done(masks):
-            self._add_sam_masks_to_store(masks)
-            self._yolo_panel.set_status(
-                f"SAM refined {len(masks)} mask(s). Accept/Reject in SAM tab."
-            )
-            self._statusbar.showMessage(
-                f"YOLO boxes -> SAM masks: {len(masks)} generated."
-            )
-
-        def _err(msg):
-            self._yolo_panel.set_status(f"Error: {msg}")
-
-        self._yolo_thread = SAMThread(_run, self)
-        self._yolo_thread.finished.connect(_done)
-        self._yolo_thread.error.connect(_err)
-        self._yolo_thread.start()
-
     def _on_yolo_accept(self) -> None:
         self._pending_yolo_anns.clear()
         self._yolo_panel.set_status("Detections accepted as ROI annotations.")
@@ -4241,6 +4277,7 @@ class MainWindow(QMainWindow):
             tile_size=tile_size,
         )
         self._unet_panel.set_model_status("Loading…", loaded=False)
+        self._seg_panel.set_loaded("unet", False)
 
         def _run():
             predictor.load_model(ckpt_path)
@@ -4252,10 +4289,12 @@ class MainWindow(QMainWindow):
                 f"Loaded ({arch}/{encoder}, {in_channels}ch, {n_classes} cls)",
                 loaded=True,
             )
+            self._seg_panel.set_loaded("unet", True)
             self._statusbar.showMessage(f"UNet model loaded: {ckpt_path}")
 
         def _err(msg):
             self._unet_panel.set_model_status(f"Load failed: {msg}", loaded=False)
+            self._seg_panel.set_loaded("unet", False)
 
         self._unet_thread = SAMThread(_run, self)
         self._unet_thread.finished.connect(_done)
@@ -4448,6 +4487,7 @@ class MainWindow(QMainWindow):
         """Auto-load the freshly trained YOLO model into the YOLO tab."""
         from acorn.core.yolo_predictor import YOLOPredictor
         self._yolo_panel.set_model_status("Loading trained model…", loaded=False)
+        self._seg_panel.set_loaded("yolo", False)
 
         def _run():
             predictor = YOLOPredictor(model_path=model_path)
@@ -4459,10 +4499,12 @@ class MainWindow(QMainWindow):
             self._yolo_panel.set_model_status(
                 f"Trained model loaded: {Path(model_path).name}", loaded=True
             )
+            self._seg_panel.set_loaded("yolo", True)
             self._statusbar.showMessage("Trained YOLO model loaded into YOLO tab.")
 
         def _err(msg):
             self._yolo_panel.set_model_status(f"Auto-load failed: {msg}", loaded=False)
+            self._seg_panel.set_loaded("yolo", False)
 
         t = SAMThread(_run, self)
         t.finished.connect(_done)
@@ -4488,6 +4530,7 @@ class MainWindow(QMainWindow):
             in_channels=1, n_classes=n_classes,
         )
         self._unet_panel.set_model_status("Loading trained model…", loaded=False)
+        self._seg_panel.set_loaded("unet", False)
 
         def _run():
             predictor.load_model(model_path)
@@ -4498,10 +4541,12 @@ class MainWindow(QMainWindow):
             self._unet_panel.set_model_status(
                 f"Trained model loaded: {Path(model_path).name}", loaded=True
             )
+            self._seg_panel.set_loaded("unet", True)
             self._statusbar.showMessage("Trained UNet model loaded into UNet tab.")
 
         def _err(msg):
             self._unet_panel.set_model_status(f"Auto-load failed: {msg}", loaded=False)
+            self._seg_panel.set_loaded("unet", False)
 
         t = SAMThread(_run, self)
         t.finished.connect(_done)
@@ -4637,17 +4682,6 @@ class MainWindow(QMainWindow):
             new_p = dataclasses.replace(p, **kwargs)
             self._contrast_panel.set_params(new_p)
             self._on_contrast_changed(new_p)
-
-        elif action == "pipe_yolo_to_sam":
-            label = params.get("label", "")
-            if label:
-                combo = self._yolo_panel._label_combo
-                idx = combo.findText(label)
-                if idx < 0:
-                    combo.addItem(label)
-                    idx = combo.count() - 1
-                combo.setCurrentIndex(idx)
-            self._on_yolo_pipe_to_sam()
 
         elif action == "check_quality":
             self._on_check_quality()

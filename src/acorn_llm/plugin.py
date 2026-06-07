@@ -24,10 +24,21 @@ class LLMPlugin(AcornPlugin):
         return None  # uses a dock widget, not a tab
 
     def setup_menus(self, menubar: "QMenuBar") -> None:
+        from acorn_llm.config import load_config
         from acorn_llm.panel import AssistantPanel
 
         w = self._context._w()
         if w is None:
+            return
+
+        cfg = load_config()
+        if not cfg.api_key and not cfg.base_url:
+            self._context.register_menu_action(
+                "View",
+                "AI Assistant (configure API key in Settings)",
+                self._open_settings,
+                shortcut="Ctrl+Shift+A",
+            )
             return
 
         self._panel = AssistantPanel(self._context, w)
@@ -48,3 +59,9 @@ class LLMPlugin(AcornPlugin):
             lambda: self._dock.setVisible(not self._dock.isVisible()),
             shortcut="Ctrl+Shift+A",
         )
+
+    def _open_settings(self) -> None:
+        from acorn_llm.settings_dialog import LLMSettingsDialog
+        w = self._context._w()
+        dlg = LLMSettingsDialog(w)
+        dlg.exec()

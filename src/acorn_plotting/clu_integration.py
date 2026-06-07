@@ -144,9 +144,11 @@ class PlottingPlugin(AcornPlugin):
 
     def __init__(self, context: "AcornContext") -> None:
         super().__init__(context)
-        self._dock            = None   # QDockWidget, created lazily
-        self._panel           = None   # PlotPanel inside the dock
-        self._analysis_plugin = None
+        self._dock                   = None   # QDockWidget, created lazily
+        self._panel                  = None   # PlotPanel inside the dock
+        self._analysis_plugin        = None
+        self._pending_plot_params    = {}
+        self._pending_plot_attempts  = 0
         context.action_requested.connect(self._on_action_requested)
         # Navigation from panel click is connected after dock is created
 
@@ -259,20 +261,27 @@ class PlottingPlugin(AcornPlugin):
         self._dock.raise_()
         self._dock.activateWindow()
 
+        # Store params for the non-blocking retry and kick off first attempt
+        self._pending_plot_params    = params
+        self._pending_plot_attempts  = 0
+        self._try_render_plot()
+
+    def _try_render_plot(self) -> None:
+        """Attempt to render the plot; retry up to 5x via QTimer (non-blocking)."""
+        params          = self._pending_plot_params
         plot_type       = params.get("plot_type", "scatter")
         metric          = params.get("metric", "ecd_nm")
         scatter_y       = params.get("scatter_y", "aspect_ratio")
         n_bins          = int(params.get("n_bins", 30))
         analysis_plugin = self._resolve_analysis_plugin()
 
-        # If particle analysis is still running, retry briefly
-        df = None
-        for _attempt in range(5):
-            df = _get_measurements_df(self._context, analysis_plugin)
-            if df is not None and not df.empty:
-                break
-            import time
-            time.sleep(0.5)
+        df = _get_measurements_df(self._context, analysis_plugin)
+
+        if (df is None or df.empty) and self._pending_plot_attempts < 5:
+            self._pending_plot_attempts += 1
+            from PyQt6.QtCore import QTimer
+            QTimer.singleShot(500, self._try_render_plot)
+            return
 
         if df is None or df.empty:
             self._context.set_status(
@@ -280,13 +289,25 @@ class PlottingPlugin(AcornPlugin):
             )
             return
 
-        from acorn_plotting.figures import build_figure_new
+        # Sync panel controls to CLU's requested plot type and metric, then
+        # redraw onto the panel's own persistent figure — no new figure created.
+        panel = self._panel
+        panel._suppress_redraw = True
+        for i in range(panel._type_combo.count()):
+            if panel._type_combo.itemData(i) == plot_type:
+                panel._type_combo.setCurrentIndex(i)
+                break
+        for i in range(panel._metric_combo.count()):
+            if panel._metric_combo.itemData(i) == metric:
+                panel._metric_combo.setCurrentIndex(i)
+                break
+        panel._suppress_redraw = False
+
+        panel.show_figure(None, df=df)
+
         out_path = _figure_output_path(self._context, f"{plot_type}_{metric}")
-        fig = build_figure_new(
-            df=df, plot_type=plot_type, metric=metric,
-            scatter_y=scatter_y, n_bins=n_bins,
-            output_path=out_path,
-        )
-        self._panel.show_figure(fig, df=df)
+        if out_path and panel._mpl_fig is not None:
+            panel._mpl_fig.savefig(str(out_path), dpi=300, bbox_inches="tight")
+
         saved_msg = f"  Saved → {out_path}" if out_path else ""
         self._context.set_status(f"Plot: {plot_type} of {metric} ready.{saved_msg}")

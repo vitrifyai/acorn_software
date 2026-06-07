@@ -86,7 +86,6 @@ class YOLOPanel(QWidget):
     load_model_requested(model_path)   — load a YOLO model checkpoint
     detect_requested()                 — run box detection on current image
     detect_seg_requested()             — run detection + segmentation
-    pipe_to_sam_requested()            — use last boxes as SAM prompts
     accept_all_requested()             — confirm all pending annotations
     reject_all_requested()             — discard all pending annotations
     """
@@ -94,7 +93,6 @@ class YOLOPanel(QWidget):
     load_model_requested  = pyqtSignal(str)
     detect_requested      = pyqtSignal()
     detect_seg_requested  = pyqtSignal()
-    pipe_to_sam_requested = pyqtSignal()
     accept_all_requested  = pyqtSignal()
     reject_all_requested  = pyqtSignal()
 
@@ -204,16 +202,6 @@ class YOLOPanel(QWidget):
         seg_btn.clicked.connect(self.detect_seg_requested)
         run_layout.addWidget(seg_btn)
 
-        sam_btn = QPushButton("Pipe Boxes to SAM")
-        sam_btn.setStyleSheet("background:#1a5fa8;color:white;")
-        sam_btn.setToolTip(
-            "Use detected bounding boxes as prompts for the loaded SAM model.\n"
-            "Run detection first, then click this to generate precise masks.\n"
-            "Requires SAM model to be loaded in the SAM tab."
-        )
-        sam_btn.clicked.connect(self.pipe_to_sam_requested)
-        run_layout.addWidget(sam_btn)
-
         layout.addWidget(run_box)
 
         # ── status and accept / reject ─────────────────────────────────────────
@@ -222,18 +210,18 @@ class YOLOPanel(QWidget):
         layout.addWidget(self._status)
 
         ar_row = QHBoxLayout()
-        accept_btn = QPushButton("Accept All")
-        accept_btn.setStyleSheet("background:#00703C;color:white;font-weight:bold;")
-        accept_btn.setToolTip("Keep all pending YOLO annotations as permanent ROIs")
-        accept_btn.clicked.connect(self.accept_all_requested)
+        self._accept_btn = QPushButton("Accept All")
+        self._accept_btn.setStyleSheet("background:#00703C;color:white;font-weight:bold;")
+        self._accept_btn.setToolTip("Keep all pending YOLO annotations as permanent ROIs")
+        self._accept_btn.clicked.connect(self.accept_all_requested)
 
-        reject_btn = QPushButton("Reject All")
-        reject_btn.setStyleSheet("background:#c0392b;color:white;")
-        reject_btn.setToolTip("Remove all pending YOLO annotations")
-        reject_btn.clicked.connect(self.reject_all_requested)
+        self._reject_btn = QPushButton("Reject All")
+        self._reject_btn.setStyleSheet("background:#c0392b;color:white;")
+        self._reject_btn.setToolTip("Remove all pending YOLO annotations")
+        self._reject_btn.clicked.connect(self.reject_all_requested)
 
-        ar_row.addWidget(accept_btn)
-        ar_row.addWidget(reject_btn)
+        ar_row.addWidget(self._accept_btn)
+        ar_row.addWidget(self._reject_btn)
         layout.addLayout(ar_row)
         layout.addStretch()
         _scroll = QScrollArea()
@@ -244,6 +232,12 @@ class YOLOPanel(QWidget):
         _outer.addWidget(_scroll)
 
     # ── public API ────────────────────────────────────────────────────────────
+
+    def hide_footer(self) -> None:
+        """Hide accept/reject/status — used when a parent panel owns shared controls."""
+        self._status.setVisible(False)
+        self._accept_btn.setVisible(False)
+        self._reject_btn.setVisible(False)
 
     def set_model_status(self, msg: str, loaded: bool = False) -> None:
         color = "#4dbb78" if loaded else "palette(mid)"

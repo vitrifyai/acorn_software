@@ -1,4 +1,3 @@
-"""Figure-generation helpers for ACORN measurement data."""
 from __future__ import annotations
 
 from pathlib import Path
@@ -34,21 +33,15 @@ def _stats(vals):
 
 
 def _sig_bracket(ax, x1, x2, y, p, h=None):
-    """Draw a significance bracket between positions x1 and x2 at height y."""
     if h is None:
         ylim = ax.get_ylim()
-        h = (ylim[1] - ylim[0]) * 0.03
+        h = (ylim[1] - ylim[0]) * 0.025
     ax.plot([x1, x1, x2, x2], [y, y + h, y + h, y],
-            lw=1.2, color="#333333", clip_on=False)
-    stars = "***" if p < 0.001 else "**" if p < 0.01 else "*" if p < 0.05 else "n.s."
-    p_str = f"{stars}  p = {p:.3f}" if stars != "n.s." else f"n.s.  (p = {p:.2f})"
-    ax.text((x1 + x2) * 0.5, y + h * 1.2, p_str,
-            ha="center", va="bottom", fontsize=8.5, color="#333333")
+            lw=0.75, color="#000000", clip_on=False)
+    stars = "***" if p < 0.001 else "**" if p < 0.01 else "*" if p < 0.05 else "ns"
+    ax.text((x1 + x2) * 0.5, y + h * 1.3, stars,
+            ha="center", va="bottom", fontsize=9, color="#000000", fontweight="bold")
 
-
-# ---------------------------------------------------------------------------
-# Core draw functions — all accept fig+ax so the panel can reuse one canvas
-# ---------------------------------------------------------------------------
 
 def draw_scatter(ax, df, metric="ecd_nm", scatter_y="aspect_ratio",
                  label_col="label", palette=None, log_x=False, log_y=False,
@@ -57,16 +50,14 @@ def draw_scatter(ax, df, metric="ecd_nm", scatter_y="aspect_ratio",
     pal = palette or PALETTE
     grps = _groups(df, metric, label_col)
     for i, (lbl, _) in enumerate(grps):
-        if label_col and label_col in df.columns:
-            sub = df[df[label_col] == lbl]
-        else:
-            sub = df
-        kw = dict(color=pal[i % len(pal)], alpha=0.7, s=25, edgecolors="white", linewidths=0.3)
+        sub = df[df[label_col] == lbl] if (label_col and label_col in df.columns) else df
+        kw = dict(color=pal[i % len(pal)], alpha=0.85, s=22,
+                  edgecolors="#1a1a1a", linewidths=0.4)
         if len(grps) > 1:
             kw["label"] = lbl
         ax.scatter(sub[metric], sub[scatter_y], **kw)
     if len(grps) > 1:
-        ax.legend(framealpha=0.85, fontsize=8)
+        ax.legend()
     if log_x:
         ax.set_xscale("log")
     if log_y:
@@ -87,32 +78,33 @@ def draw_histogram(ax, df, metric="ecd_nm", n_bins=30, label_col="label",
     bins = np.linspace(lo, hi, n_bins + 1) if hi > lo else n_bins
     grps = _groups(df, metric, label_col)
     for i, (lbl, vals) in enumerate(grps):
-        kw = dict(bins=bins, alpha=0.7, color=pal[i % len(pal)], edgecolor="white")
+        kw = dict(bins=bins, alpha=0.80, color=pal[i % len(pal)],
+                  edgecolor="#1a1a1a", linewidth=0.5)
         if len(grps) > 1:
             kw["label"] = lbl
         ax.hist(vals, **kw)
     if len(grps) > 1:
-        ax.legend(framealpha=0.85, fontsize=8)
+        ax.legend()
     if log_x:
         ax.set_xscale("log")
     if log_y:
         ax.set_yscale("log")
     n, mean, std, med = _stats(all_vals)
-    ax.set_title(f"n={n}  mean={mean:.1f}  std={std:.1f}  median={med:.1f}", fontsize=9)
+    ax.set_title(f"n = {n}    mean = {mean:.1f}    sd = {std:.1f}    median = {med:.1f}",
+                 fontsize=8.5)
     ax.set_xlabel(xlabel or _XLABEL_MAP.get(metric, metric))
     ax.set_ylabel(ylabel or "Count")
 
 
 def draw_box_jitter(ax, df, metric="ecd_nm", label_col="label", palette=None,
                     log_y=False, show_sig=True, xlabel=None, ylabel=None):
-    """Box plot with individual data points overlaid + optional significance brackets."""
     from acorn_plotting.style import PALETTE
     from acorn_plotting.stats import run_statistics
     pal = palette or PALETTE
 
     grps = [(l, v) for l, v in _groups(df, metric, label_col) if len(v) > 0]
-    data  = [v for _, v in grps]
-    lbls  = [l for l, _ in grps]
+    data   = [v for _, v in grps]
+    lbls   = [l for l, _ in grps]
     n_grps = len(grps)
 
     if not data:
@@ -120,26 +112,28 @@ def draw_box_jitter(ax, df, metric="ecd_nm", label_col="label", palette=None,
 
     positions = list(range(n_grps))
 
-    # Box plot (no outliers — we'll show all points as jitter)
-    bp = ax.boxplot(data, positions=positions, widths=0.45,
-                    patch_artist=True, showfliers=False,
-                    medianprops=dict(color="#111111", linewidth=2.0),
-                    whiskerprops=dict(linewidth=1.2),
-                    capprops=dict(linewidth=1.2),
-                    boxprops=dict(linewidth=1.2))
+    bp = ax.boxplot(
+        data,
+        positions=positions,
+        widths=0.5,
+        patch_artist=True,
+        showfliers=False,
+        medianprops=dict(color="#000000", linewidth=2.0),
+        whiskerprops=dict(color="#000000", linewidth=0.75),
+        capprops=dict(color="#000000", linewidth=0.75),
+        boxprops=dict(linewidth=0.75),
+    )
     for i, patch in enumerate(bp["boxes"]):
-        c = pal[i % len(pal)]
-        patch.set_facecolor(c)
-        patch.set_alpha(0.35)
+        patch.set_facecolor(pal[i % len(pal)])
+        patch.set_alpha(0.20)
 
-    # Jitter overlay
     rng = np.random.default_rng(42)
     for i, (_, vals) in enumerate(grps):
         c = pal[i % len(pal)]
-        jitter = rng.uniform(-0.12, 0.12, size=len(vals))
+        jitter = rng.uniform(-0.15, 0.15, size=len(vals))
         ax.scatter(np.full(len(vals), i) + jitter, vals,
-                   color=c, alpha=0.8, s=18, edgecolors="white",
-                   linewidths=0.3, zorder=3)
+                   color=c, alpha=0.90, s=14,
+                   edgecolors="white", linewidths=0.3, zorder=3)
 
     ax.set_xticks(positions)
     ax.set_xticklabels(lbls)
@@ -147,7 +141,6 @@ def draw_box_jitter(ax, df, metric="ecd_nm", label_col="label", palette=None,
     if log_y:
         ax.set_yscale("log")
 
-    # Significance brackets
     if show_sig and n_grps >= 2:
         try:
             result = run_statistics(df, metric, label_col)
@@ -155,12 +148,10 @@ def draw_box_jitter(ax, df, metric="ecd_nm", label_col="label", palette=None,
             ph  = result.get("posthoc", [])
 
             if n_grps == 2 and cmp.get("p") is not None:
-                p_val = cmp["p"]
                 ylim  = ax.get_ylim()
-                y_top = ylim[1] * (1.35 if log_y else 1.08)
-                _sig_bracket(ax, 0, 1, y_top, p_val)
+                y_top = ylim[1] * (1.30 if log_y else 1.07)
+                _sig_bracket(ax, 0, 1, y_top, cmp["p"])
             elif ph:
-                # Map group names to x positions
                 pos_map = {lbl: i for i, lbl in enumerate(lbls)}
                 ylim  = ax.get_ylim()
                 step  = (ylim[1] - ylim[0]) * 0.12
@@ -169,9 +160,8 @@ def draw_box_jitter(ax, df, metric="ecd_nm", label_col="label", palette=None,
                     if ga not in pos_map or gb not in pos_map:
                         continue
                     p_key = "p_bonferroni" if "p_bonferroni" in row else "p"
-                    p_val = row[p_key]
                     y_top = ylim[1] + step * (k + 1)
-                    _sig_bracket(ax, pos_map[ga], pos_map[gb], y_top, p_val)
+                    _sig_bracket(ax, pos_map[ga], pos_map[gb], y_top, row[p_key])
         except Exception:
             pass
 
@@ -189,14 +179,21 @@ def draw_violin(ax, df, metric="ecd_nm", label_col="label", palette=None,
     lbls = [l for l, _ in grps]
     if not data:
         return
+
     parts = ax.violinplot(data, positions=range(len(data)),
-                          showmedians=True, showextrema=True)
+                          showmedians=False, showextrema=False)
     for i, pc in enumerate(parts["bodies"]):
         pc.set_facecolor(pal[i % len(pal)])
-        pc.set_alpha(0.7)
-    for part in ("cmedians", "cmins", "cmaxes", "cbars"):
-        parts[part].set_color("#444444")
-        parts[part].set_linewidth(1.0)
+        pc.set_edgecolor("#1a1a1a")
+        pc.set_linewidth(0.75)
+        pc.set_alpha(0.75)
+
+    for i, vals in enumerate(data):
+        q1, med, q3 = np.percentile(vals, [25, 50, 75])
+        ax.vlines(i, q1, q3, color="#000000", linewidth=2.5, zorder=3)
+        ax.scatter([i], [med], color="white", s=20,
+                   edgecolors="#000000", linewidths=0.75, zorder=4)
+
     ax.set_xticks(range(len(lbls)))
     ax.set_xticklabels(lbls)
     if log_y:
@@ -215,11 +212,20 @@ def draw_box(ax, df, metric="ecd_nm", label_col="label", palette=None,
     lbls = [l for l, _ in grps]
     if not data:
         return
-    bp = ax.boxplot(data, patch_artist=True, labels=lbls,
-                    medianprops=dict(color="#111111", linewidth=1.5))
+    bp = ax.boxplot(
+        data,
+        patch_artist=True,
+        labels=lbls,
+        medianprops=dict(color="#000000", linewidth=2.0),
+        whiskerprops=dict(color="#000000", linewidth=0.75),
+        capprops=dict(color="#000000", linewidth=0.75),
+        boxprops=dict(linewidth=0.75),
+        flierprops=dict(marker="o", markersize=3,
+                        markerfacecolor="#888888", markeredgewidth=0.4),
+    )
     for i, patch in enumerate(bp["boxes"]):
         patch.set_facecolor(pal[i % len(pal)])
-        patch.set_alpha(0.7)
+        patch.set_alpha(0.40)
     if log_y:
         ax.set_yscale("log")
     ax.set_ylabel(ylabel or _XLABEL_MAP.get(metric, metric))
@@ -236,30 +242,19 @@ def draw_waterfall(ax_list, df, metric="ecd_nm", n_bins=30, label_col="label",
     bins = np.linspace(all_vals.min(), all_vals.max(), n_bins + 1) if len(all_vals) else n_bins
     for i, (ax, (lbl, vals)) in enumerate(zip(ax_list, grps)):
         c = pal[i % len(pal)]
-        ax.hist(vals, bins=bins, color=c, alpha=0.8, edgecolor="white")
+        ax.hist(vals, bins=bins, color=c, alpha=0.80,
+                edgecolor="#1a1a1a", linewidth=0.4)
         ax.set_ylabel(str(lbl), rotation=0, ha="right", va="center", fontsize=8)
         ax.yaxis.set_ticklabels([])
-        ax.spines["top"].set_visible(False)
-        ax.spines["right"].set_visible(False)
         if log_x:
             ax.set_xscale("log")
     ax_list[-1].set_xlabel(xlabel or _XLABEL_MAP.get(metric, metric))
 
 
-# ---------------------------------------------------------------------------
-# High-level dispatcher — draws onto an existing figure
-# ---------------------------------------------------------------------------
-
 def build_figure(df, fig, plot_type="scatter", metric="ecd_nm",
                  scatter_y="aspect_ratio", n_bins=30, label_col="label",
                  palette=None, log_x=False, log_y=False,
                  xlabel=None, ylabel=None, show_sig=True, output_path=None):
-    """
-    Clear *fig* and draw the requested plot type onto it.
-
-    All parameters flow through to the specific draw_* function.
-    Returns the same *fig*.
-    """
     from acorn_plotting.style import apply_acorn_style
     apply_acorn_style()
     fig.clf()
@@ -306,22 +301,19 @@ def build_figure(df, fig, plot_type="scatter", metric="ecd_nm",
             draw_box(ax, df, metric=metric, label_col=label_col,
                      palette=palette, log_y=log_y,
                      xlabel=xlabel, ylabel=ylabel)
-        ax.spines["top"].set_visible(False)
-        ax.spines["right"].set_visible(False)
 
     fig.tight_layout()
     if output_path:
-        fig.savefig(output_path)
+        fig.savefig(output_path, dpi=300)
     return fig
 
 
-# Legacy wrapper — creates a new figure (used by CLU before panel is open)
 def build_figure_new(df, plot_type="scatter", metric="ecd_nm",
                      scatter_y="aspect_ratio", n_bins=30, label_col="label",
                      palette=None, log_x=False, log_y=False,
                      xlabel=None, ylabel=None, show_sig=True, output_path=None):
     import matplotlib.pyplot as plt
-    fig = plt.figure(figsize=(6, 4.5))
+    fig = plt.figure(figsize=(5.5, 4.5))
     return build_figure(df, fig, plot_type=plot_type, metric=metric,
                         scatter_y=scatter_y, n_bins=n_bins, label_col=label_col,
                         palette=palette, log_x=log_x, log_y=log_y,

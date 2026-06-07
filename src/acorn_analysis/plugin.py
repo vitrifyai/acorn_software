@@ -13,8 +13,10 @@ if TYPE_CHECKING:
 
 
 class AnalysisPlugin(AcornPlugin):
-    TAB_LABEL = "Analysis"
-    PLUGIN_ID = "acorn_analysis"
+    TAB_LABEL              = "Analysis"
+    PLUGIN_ID              = "acorn_analysis"
+    WORKFLOW_STAGE         = "Measure"
+    WORKFLOW_SECTION_LABEL = "Particle Measurements"
 
     def __init__(self, context: "AcornContext") -> None:
         super().__init__(context)

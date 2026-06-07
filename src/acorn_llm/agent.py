@@ -246,18 +246,6 @@ _TOOLS: list[dict] = [
         "needs_confirm": False,
     },
     {
-        "name": "pipe_yolo_to_sam",
-        "description": (
-            "Run YOLO detection to get bounding boxes, then feed those boxes into SAM "
-            "to produce precise polygon masks. Requires both YOLO and SAM to be loaded."
-        ),
-        "properties": {
-            "label": {"type": "string", "description": "Annotation label for segmented objects"},
-        },
-        "required": ["label"],
-        "needs_confirm": False,
-    },
-    {
         "name": "check_quality",
         "description": (
             "Assess the quality of the current image — checks blur, contrast, "
@@ -869,7 +857,7 @@ You are proactive: if a prerequisite is missing (model not loaded, no image open
 - **SEM/TEM**: Higher contrast, sharper edges. Percentile or sigma contrast works well. Structures: nanoparticles, bacteria, cells, pores, surfaces.
 - **Pixel size matters**: Always note nm/px when reporting measurements. If not calibrated, note that measurements are in pixels only.
 - **SAM** (Segment Anything Model): Best for precise polygon masks of arbitrary shapes. Use `run_sam_auto` to find everything, or prompt with points/boxes. SAM 3 > SAM 2 > micro-SAM for general use.
-- **YOLO**: Fast detection/segmentation for objects it was trained on. `pipe_yolo_to_sam` gives YOLO's speed with SAM's precision.
+- **YOLO**: Fast detection/segmentation for objects it was trained on.
 - **UNet**: Semantic or instance segmentation for specific trained classes.
 - **Bandpass contrast**: Removes low-frequency background and high-frequency noise — ideal for cryo-EM. Increase `bp_low_sigma` (e.g. 200) to suppress larger background variations.
 - **Dose series analysis**: Splitting a movie into equal-dose bins and comparing averages reveals dose-dependent changes — membrane recession, bubble formation, organic contrast loss, or electrode delamination in materials science. The difference image (bin N − bin 1) highlights WHERE change occurred: blue = signal decreased (material receded/dissolved), red = signal increased (contamination, swelling, or charging). More bins = finer dose resolution but noisier images per bin.
@@ -922,7 +910,6 @@ You are proactive: if a prerequisite is missing (model not loaded, no image open
 ## Common multi-step workflows
 **"Find / segment X"**: load_sam if needed → run_sam_auto(label=X) → accept_annotations → report count
 **"Detect X"**: load_yolo if needed → run_yolo_detect(label=X) → accept_annotations → report count
-**"High-quality segmentation of X"**: load_yolo + load_sam → pipe_yolo_to_sam(label=X) → accept_annotations
 **"Measure / analyze X"**: ensure annotations exist (segment first if not) → run_particle_analysis(labels=[X], mode=batch) → export_measurements
 **"Prep for training"**: load_sam if needed → batch_run_sam(label=X, skip_annotated=true) — one call handles all images
 **Full training pipeline**:
@@ -985,7 +972,6 @@ To call a tool, output ONLY a JSON object on its own line:
 {{"name": "run_yolo_detect", "label": "particle"}}
 {{"name": "run_yolo_segment", "label": "membrane"}}
 {{"name": "run_unet", "label": "membrane"}}
-{{"name": "pipe_yolo_to_sam", "label": "vesicle"}}
 {{"name": "accept_annotations", "model": "all"}}
 {{"name": "reject_annotations", "model": "all"}}
 {{"name": "undo_annotation"}}
@@ -1367,8 +1353,9 @@ class LLMAgent(QThread):
                 if self._context is not None:
                     self._context.arm_nav_wait()
                 self.tool_called.emit("go_to_image", {"index": i})
+                loaded = True
                 if self._context is not None:
-                    self._context.wait_for_image_load(timeout=10.0)
+                    loaded = self._context.wait_for_image_load(timeout=10.0)
                     try:
                         fresh = self._context.get_nav_state()
                         self._state.update(fresh)
@@ -1377,6 +1364,8 @@ class LLMAgent(QThread):
                 fname  = self._state.get("image_name", f"image {i}")
                 px     = self._state.get("pixel_size_nm", 0)
                 px_str = f"{px:.4f} nm/px" if px and px != 1.0 else "1.0 nm/px (uncalibrated)"
+                if not loaded:
+                    px_str += " (WARNING: image took >10 s to load — pixel size may be stale)"
                 n_ann  = self._state.get("annotation_count", 0)
                 labels = self._state.get("annotation_labels", {})
                 lbl_str = ", ".join(f"{v} {k}" for k, v in labels.items()) if labels else "none"
@@ -1393,7 +1382,12 @@ class LLMAgent(QThread):
                 except Exception:
                     pass
             summary = "\n".join(rows)
-            return f"Scanned {n_images} images:\n{summary}"
+            warnings = [r for r in rows if "WARNING" in r]
+            warn_note = (
+                f"\n\nNOTE: {len(warnings)} image(s) timed out during load — "
+                "pixel sizes for those entries may be stale. Consider re-scanning."
+            ) if warnings else ""
+            return f"Scanned {n_images} images:\n{summary}{warn_note}"
 
         # Check prerequisites before dispatching
         needs_image = name not in (
@@ -1406,10 +1400,8 @@ class LLMAgent(QThread):
             return "Error: No image is loaded. Tell the user to open an image first."
         if name in ("run_sam_auto", "batch_run_sam") and not self._state.get("sam_loaded"):
             return "Error: SAM model is not loaded. Call load_sam first, then retry."
-        if name in ("run_yolo_detect", "run_yolo_segment", "pipe_yolo_to_sam") and not self._state.get("yolo_loaded"):
+        if name in ("run_yolo_detect", "run_yolo_segment") and not self._state.get("yolo_loaded"):
             return "Error: YOLO model is not loaded. Call load_yolo first, then retry."
-        if name == "pipe_yolo_to_sam" and not self._state.get("sam_loaded"):
-            return "Error: SAM model is not loaded. Both YOLO and SAM must be loaded for pipe_yolo_to_sam."
         if name == "run_unet" and not self._state.get("unet_loaded"):
             return "Error: UNet model is not loaded. Call load_unet first, then retry."
 
@@ -1432,8 +1424,9 @@ class LLMAgent(QThread):
                     "in the same folder as the images."
                 )
             if is_nav:
+                loaded = True
                 if self._context is not None:
-                    self._context.wait_for_image_load(timeout=10.0)
+                    loaded = self._context.wait_for_image_load(timeout=10.0)
                     try:
                         fresh = self._context.get_nav_state()
                         self._state.update(fresh)
@@ -1442,6 +1435,8 @@ class LLMAgent(QThread):
                 new_name  = self._state.get("image_name", "unknown")
                 new_px    = self._state.get("pixel_size_nm", 0)
                 px_str    = f"{new_px:.4f} nm/px" if new_px and new_px != 1.0 else "not yet calibrated (1.0 nm default)"
+                if not loaded:
+                    px_str += " (WARNING: image took >10 s to load — pixel size may be stale, retry navigation)"
                 ann_count = self._state.get("annotation_count", 0)
                 labels    = self._state.get("annotation_labels", {})
                 ann_str   = (

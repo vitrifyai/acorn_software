@@ -105,19 +105,41 @@ signal on `AcornContext`.
 
 ### Built-in plugins
 
-| Plugin package | Tab label | What it adds |
-|----------------|-----------|--------------|
-| `acorn_analysis` | **Analysis** | Surface area estimation and particle shape measurements (ECD, Feret, circularity) from ROI masks; single or batch; multi-GPU |
-| `acorn_tracking` | **Track** | Particle / feature tracking across image sequences; configurable displacement and gap tolerance |
-| `acorn_3d` | **3D** | Volume rendering and z-slice navigation for MRC tomograms |
-| `acorn_llm` | **CLU** | Natural-language AI assistant chat panel (see below) |
-| `acorn_plotting` | *(floating window)* | Publication-quality interactive plots, statistical analysis, hover/click data linking (see below) |
+| Plugin package | Where it appears | What it adds |
+|----------------|-----------------|--------------|
+| `acorn_analysis` | **Measure** tab | Surface area estimation and particle shape measurements (ECD, Feret, circularity) from ROI masks; single or batch; multi-GPU |
+| `acorn_tracking` | **Track** tab | Particle / feature tracking across image sequences; configurable displacement and gap tolerance |
+| `acorn_3d` | **3D** tab | Volume rendering and z-slice navigation for MRC tomograms |
+| `acorn_llm` | Floating dock (View menu) | Natural-language AI assistant; requires API key or Ollama base URL (see below) |
+| `acorn_plotting` | Floating dock | Publication-quality interactive plots, statistical analysis, hover/click data linking (see below) |
+
+The main right panel is organised into four workflow tabs — **Annotate**, **Measure**, **Train**, **Export** — plus any plugin-defined tabs. The **Annotate** tab contains the unified SAM / YOLO / UNet segmentation panel with loaded-model indicators and shared Accept/Reject controls.
 
 ### Writing a plugin
 
 Subclass `acorn.plugin_base.AcornPlugin`, implement `create_panel()`, and register via
 `pyproject.toml`. The `AcornContext` object passed at construction gives full access to
 application state and signals.
+
+#### Choosing where your plugin lives
+
+By default, `create_panel()` opens a **new tab** in the right panel using `TAB_LABEL` as the
+tab name. If your plugin logically belongs inside one of the four built-in workflow stages
+(**Annotate**, **Measure**, **Train**, **Export**), set `WORKFLOW_STAGE` to that stage name
+instead — ACORN will inject your widget directly into that tab's layout rather than creating
+a new tab.
+
+```python
+class MyMeasurementPlugin(AcornPlugin):
+    PLUGIN_ID              = "my_measurement"
+    TAB_LABEL              = "My Measurement"  # fallback only — not used when WORKFLOW_STAGE is set
+    WORKFLOW_STAGE         = "Measure"          # inject into the Measure tab
+    WORKFLOW_SECTION_LABEL = "My Measurements"  # optional QGroupBox label; omit for no header
+    sort_order             = 60
+```
+
+If `WORKFLOW_STAGE` is set but does not match a known stage, the plugin falls back to its own
+tab. To get your own tab unconditionally, leave `WORKFLOW_STAGE = None` (the default).
 
 ```python
 from acorn.plugin_base import AcornPlugin

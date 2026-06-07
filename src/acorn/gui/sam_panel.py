@@ -449,28 +449,28 @@ class SAMPanel(QWidget):
         layout.addWidget(self._sam_status)
 
         ar_row = QHBoxLayout()
-        accept_btn = QPushButton("Accept All")
-        accept_btn.setStyleSheet("background:#00703C;color:white;font-weight:bold;")
-        accept_btn.setToolTip("Keep all predicted masks as permanent ROI annotations")
-        accept_btn.clicked.connect(self.accept_all_requested)
+        self._accept_btn = QPushButton("Accept All")
+        self._accept_btn.setStyleSheet("background:#00703C;color:white;font-weight:bold;")
+        self._accept_btn.setToolTip("Keep all predicted masks as permanent ROI annotations")
+        self._accept_btn.clicked.connect(self.accept_all_requested)
 
-        reject_btn = QPushButton("Reject All")
-        reject_btn.setStyleSheet("background:#c0392b;color:white;")
-        reject_btn.setToolTip("Remove all pending SAM mask annotations")
-        reject_btn.clicked.connect(self.reject_all_requested)
+        self._reject_btn = QPushButton("Reject All")
+        self._reject_btn.setStyleSheet("background:#c0392b;color:white;")
+        self._reject_btn.setToolTip("Remove all pending SAM mask annotations")
+        self._reject_btn.clicked.connect(self.reject_all_requested)
 
-        ar_row.addWidget(accept_btn)
-        ar_row.addWidget(reject_btn)
+        ar_row.addWidget(self._accept_btn)
+        ar_row.addWidget(self._reject_btn)
         layout.addLayout(ar_row)
 
-        accept_queue_btn = QPushButton("Accept & Queue for Export")
-        accept_queue_btn.setStyleSheet("background:#00703C;color:white;font-weight:bold;")
-        accept_queue_btn.setToolTip(
+        self._accept_queue_btn = QPushButton("Accept & Queue for Export")
+        self._accept_queue_btn.setStyleSheet("background:#00703C;color:white;font-weight:bold;")
+        self._accept_queue_btn.setToolTip(
             "Accept all SAM masks and immediately add this image to the export queue.\n"
             "Saves a tab switch — continue to the next image straight away."
         )
-        accept_queue_btn.clicked.connect(self.accept_and_queue_requested)
-        layout.addWidget(accept_queue_btn)
+        self._accept_queue_btn.clicked.connect(self.accept_and_queue_requested)
+        layout.addWidget(self._accept_queue_btn)
 
         layout.addStretch()
         _scroll = QScrollArea()
@@ -481,6 +481,13 @@ class SAMPanel(QWidget):
         _outer.addWidget(_scroll)
 
     # ── public API ────────────────────────────────────────────────────────────
+
+    def hide_footer(self) -> None:
+        """Hide accept/reject/status — used when a parent panel owns shared controls."""
+        self._sam_status.setVisible(False)
+        self._accept_btn.setVisible(False)
+        self._reject_btn.setVisible(False)
+        self._accept_queue_btn.setVisible(False)
 
     def set_model_status(self, msg: str, loaded: bool = False) -> None:
         color = "#4dbb78" if loaded else "palette(mid)"

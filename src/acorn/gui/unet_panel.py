@@ -176,18 +176,18 @@ class UNetPanel(QWidget):
         layout.addWidget(self._status)
 
         ar_row = QHBoxLayout()
-        accept_btn = QPushButton("Accept All")
-        accept_btn.setStyleSheet("background:#00703C;color:white;font-weight:bold;")
-        accept_btn.setToolTip("Keep all pending UNet masks as permanent ROI annotations")
-        accept_btn.clicked.connect(self.accept_all_requested)
+        self._accept_btn = QPushButton("Accept All")
+        self._accept_btn.setStyleSheet("background:#00703C;color:white;font-weight:bold;")
+        self._accept_btn.setToolTip("Keep all pending UNet masks as permanent ROI annotations")
+        self._accept_btn.clicked.connect(self.accept_all_requested)
 
-        reject_btn = QPushButton("Reject All")
-        reject_btn.setStyleSheet("background:#c0392b;color:white;")
-        reject_btn.setToolTip("Remove all pending UNet mask annotations")
-        reject_btn.clicked.connect(self.reject_all_requested)
+        self._reject_btn = QPushButton("Reject All")
+        self._reject_btn.setStyleSheet("background:#c0392b;color:white;")
+        self._reject_btn.setToolTip("Remove all pending UNet mask annotations")
+        self._reject_btn.clicked.connect(self.reject_all_requested)
 
-        ar_row.addWidget(accept_btn)
-        ar_row.addWidget(reject_btn)
+        ar_row.addWidget(self._accept_btn)
+        ar_row.addWidget(self._reject_btn)
         layout.addLayout(ar_row)
         layout.addStretch()
         _scroll = QScrollArea()
@@ -198,6 +198,12 @@ class UNetPanel(QWidget):
         _outer.addWidget(_scroll)
 
     # ── public API ────────────────────────────────────────────────────────────
+
+    def hide_footer(self) -> None:
+        """Hide accept/reject/status — used when a parent panel owns shared controls."""
+        self._status.setVisible(False)
+        self._accept_btn.setVisible(False)
+        self._reject_btn.setVisible(False)
 
     def set_model_status(self, msg: str, loaded: bool = False) -> None:
         color = "#4dbb78" if loaded else "palette(mid)"
