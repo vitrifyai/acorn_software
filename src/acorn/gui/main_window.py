@@ -1143,11 +1143,24 @@ class MainWindow(QMainWindow):
         # Pre-tag so plugin inject code appends directly instead of wrapping in a new scroll area
         _annotate_wrapper._plugin_inject_layout = _aw_layout
 
-        control.addTab(self._contrast_panel,   "Contrast")
-        control.addTab(_annotate_wrapper,      "Annotate")
-        control.addTab(self._meas_panel,       "Measure")
-        control.addTab(self._export_panel,     "Export")
-        control.addTab(self._train_panel,      "Train")
+        def _make_tab_wrapper(panel):
+            w = QWidget()
+            lay = QVBoxLayout(w)
+            lay.setContentsMargins(0, 0, 0, 0)
+            lay.setSpacing(0)
+            lay.addWidget(panel)
+            w._plugin_inject_layout = lay
+            return w
+
+        _measure_wrapper = _make_tab_wrapper(self._meas_panel)
+        _export_wrapper  = _make_tab_wrapper(self._export_panel)
+        _train_wrapper   = _make_tab_wrapper(self._train_panel)
+
+        control.addTab(self._contrast_panel, "Contrast")
+        control.addTab(_annotate_wrapper,    "Annotate")
+        control.addTab(_measure_wrapper,     "Measure")
+        control.addTab(_export_wrapper,      "Export")
+        control.addTab(_train_wrapper,       "Train")
 
         # ── plugin tabs / workflow injection ──────────────────────────────────────
         from acorn.gui.context import AcornContext
