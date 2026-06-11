@@ -11,9 +11,12 @@ if TYPE_CHECKING:
 
 
 class TrackingPlugin(AcornPlugin):
-    TAB_LABEL = "Track"
-    PLUGIN_ID = "acorn_tracking"
-    sort_order = 20
+    TAB_LABEL         = "Track"
+    PLUGIN_ID         = "acorn_tracking"
+    sort_order        = 20
+    FLOATING          = True
+    FLOATING_TITLE    = "Particle Tracking"
+    FLOATING_SHORTCUT = "Ctrl+Shift+T"
 
     def __init__(self, context: "AcornContext") -> None:
         super().__init__(context)

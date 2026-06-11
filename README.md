@@ -108,12 +108,12 @@ signal on `AcornContext`.
 | Plugin package | Where it appears | What it adds |
 |----------------|-----------------|--------------|
 | `acorn_analysis` | **Measure** tab | Surface area estimation and particle shape measurements (ECD, Feret, circularity) from ROI masks; single or batch; multi-GPU |
-| `acorn_tracking` | **Track** tab | Particle / feature tracking across image sequences; configurable displacement and gap tolerance |
-| `acorn_3d` | **3D** tab | Volume rendering and z-slice navigation for MRC tomograms |
-| `acorn_llm` | Floating dock (View menu) | Natural-language AI assistant; requires API key or Ollama base URL (see below) |
+| `acorn_tracking` | Floating dock (View → Particle Tracking) | Particle / feature tracking across image sequences; configurable displacement and gap tolerance |
+| `acorn_3d` | Floating dock (View → 3D Viewer) | Volume rendering and z-slice navigation for MRC tomograms |
+| `acorn_llm` | Floating dock (View → AI Assistant) | Natural-language AI assistant; requires API key or Ollama base URL (see below) |
 | `acorn_plotting` | Floating dock | Publication-quality interactive plots, statistical analysis, hover/click data linking (see below) |
 
-The main right panel is organised into workflow tabs — **Annotate**, **Segment**, **Measure**, **Train**, **Export** — plus any plugin-defined tabs. The **Annotate** tab holds the manual annotation tools (and detectors like CryoBLOB that inject here). The **Segment** tab contains the unified SAM / YOLO / UNet panel with loaded-model indicators and shared Accept/Reject controls.
+The main right panel is organised into workflow tabs — **Annotate**, **Segment**, **Measure**, **Train**, **Export** — plus any plugin-defined tabs. The **Annotate** tab holds the manual annotation tools (and detectors like CryoBLOB that inject here). The **Segment** tab contains the unified SAM / YOLO / UNet panel with loaded-model indicators and shared Accept/Reject controls. Side tools that aren't part of the linear workflow — the 3D viewer, particle tracking, and the AI assistant — open as floating, dockable windows from the **View** menu rather than tabs.
 
 ### Writing a plugin
 
@@ -140,6 +140,30 @@ class MyMeasurementPlugin(AcornPlugin):
 
 If `WORKFLOW_STAGE` is set but does not match a known stage, the plugin falls back to its own
 tab. To get your own tab unconditionally, leave `WORKFLOW_STAGE = None` (the default).
+
+#### Floating dock instead of a tab
+
+For side tools that aren't part of the main workflow (a 3D viewer, a chat assistant, a tracking
+panel), set `FLOATING = True`. Your `create_panel()` widget is placed in a movable, floatable
+dock (hidden on startup) with a toggle added to the **View** menu — no tab is created. The
+built-in `acorn_3d`, `acorn_tracking`, and `acorn_llm` plugins all use this mode.
+
+```python
+class My3DViewerPlugin(AcornPlugin):
+    PLUGIN_ID         = "my_viewer"
+    FLOATING          = True
+    FLOATING_TITLE    = "My Viewer"     # dock title + View-menu label (defaults to TAB_LABEL)
+    FLOATING_SHORTCUT = "Ctrl+Shift+V"  # optional keyboard toggle
+    FLOATING_AREA     = "right"         # initial dock area: left | right | top | bottom
+    FLOATING_MIN_WIDTH = 300            # optional minimum dock width in px
+
+    def create_panel(self) -> QWidget:
+        return MyViewerWidget()
+```
+
+Returning `None` from `create_panel()` skips the dock entirely — useful for gating on
+configuration (e.g. `acorn_llm` returns `None` and offers a Settings shortcut when no API key
+is set).
 
 ```python
 from acorn.plugin_base import AcornPlugin

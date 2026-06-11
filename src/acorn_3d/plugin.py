@@ -14,9 +14,12 @@ if TYPE_CHECKING:
 
 
 class VolumePlugin(AcornPlugin):
-    TAB_LABEL  = "3D"
-    PLUGIN_ID  = "acorn_3d"
-    sort_order = 30
+    TAB_LABEL         = "3D"
+    PLUGIN_ID         = "acorn_3d"
+    sort_order        = 30
+    FLOATING          = True
+    FLOATING_TITLE    = "3D Viewer"
+    FLOATING_SHORTCUT = "Ctrl+Shift+3"
 
     def __init__(self, context: "AcornContext") -> None:
         super().__init__(context)

@@ -1176,11 +1176,16 @@ class MainWindow(QMainWindow):
 
         # Build a tab-index map so we can inject into workflow tabs by name
         _tab_index = {control.tabText(i): i for i in range(control.count())}
+        self._floating_plugins = []   # [(plugin, panel)] wired into docks after menus exist
 
         for plugin in self._plugins:
             try:
                 panel = plugin.create_panel()
                 if panel is None:
+                    continue
+                if getattr(plugin, "FLOATING", False):
+                    # Defer dock + View-menu toggle until after _build_menus()
+                    self._floating_plugins.append((plugin, panel))
                     continue
                 stage = plugin.WORKFLOW_STAGE
                 if stage in WORKFLOW_STAGES and stage in _tab_index:
@@ -1268,6 +1273,8 @@ class MainWindow(QMainWindow):
 
         # ── menus ─────────────────────────────────────────────────────────────
         self._build_menus()
+        # Wire floating-dock plugins now that the View menu exists
+        self._wire_floating_plugins()
         # Let plugins register menu items after core menus are built
         for plugin in self._plugins:
             try:
@@ -1364,6 +1371,43 @@ class MainWindow(QMainWindow):
         QApplication.instance().installEventFilter(self)
 
     # ── menu setup ────────────────────────────────────────────────────────────
+
+    def _wire_floating_plugins(self) -> None:
+        """Place FLOATING plugin panels in movable docks with a View-menu toggle."""
+        _areas = {
+            "left":   Qt.DockWidgetArea.LeftDockWidgetArea,
+            "right":  Qt.DockWidgetArea.RightDockWidgetArea,
+            "top":    Qt.DockWidgetArea.TopDockWidgetArea,
+            "bottom": Qt.DockWidgetArea.BottomDockWidgetArea,
+        }
+        self._plugin_docks = {}
+        for plugin, panel in getattr(self, "_floating_plugins", []):
+            try:
+                title = plugin.FLOATING_TITLE or plugin.TAB_LABEL or plugin.PLUGIN_ID
+                d = QDockWidget(title, self)
+                d.setWidget(panel)
+                d.setFeatures(
+                    QDockWidget.DockWidgetFeature.DockWidgetMovable
+                    | QDockWidget.DockWidgetFeature.DockWidgetFloatable
+                    | QDockWidget.DockWidgetFeature.DockWidgetClosable,
+                )
+                if plugin.FLOATING_MIN_WIDTH:
+                    d.setMinimumWidth(plugin.FLOATING_MIN_WIDTH)
+                area = _areas.get(plugin.FLOATING_AREA or "right",
+                                  Qt.DockWidgetArea.RightDockWidgetArea)
+                self.addDockWidget(area, d)
+                d.hide()
+                self._context.register_menu_action(
+                    "View", title,
+                    lambda checked=False, dock=d: dock.setVisible(not dock.isVisible()),
+                    shortcut=plugin.FLOATING_SHORTCUT or None,
+                )
+                self._plugin_docks[plugin.PLUGIN_ID] = d
+            except Exception as _exc:
+                import logging as _logging
+                _logging.getLogger(__name__).warning(
+                    "Floating plugin %s failed to dock: %s", plugin.PLUGIN_ID, _exc
+                )
 
     def _build_menus(self) -> None:
         mb = self.menuBar()
