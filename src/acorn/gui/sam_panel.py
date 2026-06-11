@@ -414,7 +414,7 @@ class SAMPanel(QWidget):
         self._min_area = QSpinBox()
         self._min_area.setRange(1, 100000)
         self._min_area.setValue(200)
-        self._min_area.setSuffix(" px")
+        self._min_area.setSuffix(" px²")
         self._min_area.setToolTip("Discard masks smaller than this area")
         auto_layout.addRow("Min area:", self._min_area)
 
@@ -513,11 +513,11 @@ class SAMPanel(QWidget):
 
     def set_positive_mode(self) -> None:
         """Activate positive-point mode programmatically (e.g. from keyboard shortcut)."""
-        self._activate_mode(self._mode_pos_btn)
+        self._on_pos_clicked()
 
     def set_negative_mode(self) -> None:
         """Activate negative-point mode programmatically (e.g. from keyboard shortcut)."""
-        self._activate_mode(self._mode_neg_btn)
+        self._on_neg_clicked()
 
     # ── slots ─────────────────────────────────────────────────────────────────
 

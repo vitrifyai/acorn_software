@@ -24,7 +24,7 @@ from pathlib import Path
 from PyQt6.QtCore import pyqtSignal, Qt
 from PyQt6.QtWidgets import (
     QSplitter,
-    QCheckBox, QComboBox, QDoubleSpinBox, QFileDialog, QFormLayout,
+    QCheckBox, QComboBox, QFileDialog, QFormLayout,
     QGroupBox, QHBoxLayout, QLabel, QLineEdit, QPlainTextEdit,
     QProgressBar, QPushButton, QRadioButton, QScrollArea, QSizePolicy,
     QSpinBox, QStackedWidget, QVBoxLayout, QWidget,
@@ -305,11 +305,16 @@ class TrainPanel(QWidget):
         )
         form.addRow("Encoder:", self._unet_encoder)
 
-        self._unet_lr = QDoubleSpinBox()
-        self._unet_lr.setRange(1e-6, 1e-1)
-        self._unet_lr.setDecimals(6)
-        self._unet_lr.setSingleStep(1e-4)
-        self._unet_lr.setValue(1e-4)
+        # Learning rate is logarithmic — an editable combo of common values is
+        # far more usable than a linear spinbox (which needed ~99 clicks to go
+        # 1e-4 → 1e-2). Users can still type an exact value.
+        self._unet_lr = QComboBox()
+        self._unet_lr.setEditable(True)
+        self._unet_lr.setInsertPolicy(QComboBox.InsertPolicy.NoInsert)
+        for lr in ["1e-5", "5e-5", "1e-4", "5e-4", "1e-3", "5e-3", "1e-2"]:
+            self._unet_lr.addItem(lr)
+        self._unet_lr.setCurrentText("1e-4")
+        self._unet_lr.setToolTip("Pick a common learning rate or type your own (e.g. 3e-4).")
         form.addRow("Learning rate:", self._unet_lr)
 
         self._unet_imgsz = QSpinBox()
@@ -370,6 +375,15 @@ class TrainPanel(QWidget):
             no_gpu = QLabel("No CUDA GPUs detected — CPU only.")
             no_gpu.setStyleSheet("font-size: 11px; color: palette(mid);")
             self._hw_layout.addWidget(no_gpu)
+
+    @staticmethod
+    def _parse_lr(text: str) -> float:
+        """Parse the learning-rate combo text, falling back to 1e-4 if invalid."""
+        try:
+            lr = float(text)
+            return lr if lr > 0 else 1e-4
+        except (ValueError, TypeError):
+            return 1e-4
 
     def _on_cpu_toggled(self, checked: bool) -> None:
         """CPU and GPU are mutually exclusive: checking CPU clears all GPU boxes."""
@@ -576,7 +590,7 @@ class TrainPanel(QWidget):
             config["model_type"] = "unet"
             config["arch"]       = self._unet_arch.currentText()
             config["encoder"]    = self._unet_encoder.currentText()
-            config["lr"]         = self._unet_lr.value()
+            config["lr"]         = self._parse_lr(self._unet_lr.currentText())
             config["imgsz"]      = self._unet_imgsz.value()
 
         self.set_training(True)

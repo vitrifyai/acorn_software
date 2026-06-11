@@ -139,7 +139,7 @@ class UNetPanel(QWidget):
         self._min_area = QSpinBox()
         self._min_area.setRange(1, 1000000)
         self._min_area.setValue(50)
-        self._min_area.setSuffix(" px")
+        self._min_area.setSuffix(" px²")
         self._min_area.setToolTip(
             "Discard connected components smaller than this area.\n"
             "Increase to filter out noise predictions."
@@ -157,8 +157,13 @@ class UNetPanel(QWidget):
         infer_layout.addRow("Tile size:", self._tile_size)
 
         self._label_combo = QComboBox()
+        self._label_combo.setEditable(True)
+        self._label_combo.setInsertPolicy(QComboBox.InsertPolicy.NoInsert)
         for lbl in ["Foreground", "Background", "Ignore"]:
             self._label_combo.addItem(lbl)
+        self._label_combo.setToolTip(
+            "Pick a preset or type your own label for the predicted masks."
+        )
         infer_layout.addRow("Label:", self._label_combo)
 
         run_btn = QPushButton("Run Segmentation")
