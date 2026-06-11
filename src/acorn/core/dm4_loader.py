@@ -171,9 +171,11 @@ class DM4Image:
         dm.parseHeader()
         dataset = dm.getDataset(0)
         data = dataset["data"]
-        if data.ndim == 3:
+        if data.ndim == 3 and data.shape[0] > 1:
             self._frames = data.astype(np.float32)
             self.raw = self._frames.mean(axis=0)
+        elif data.ndim == 3:
+            self.raw = data[0].astype(np.float32)   # single-frame stack → 2D, not a movie
         elif data.ndim > 3:
             while data.ndim > 2:
                 data = data[0]
@@ -232,10 +234,13 @@ class DM4Image:
             elif data.shape[-1] in (1, 2):
                 # Single/dual channel — convert to grayscale
                 self.raw = data[..., 0].astype(np.float32)
-            else:
+            elif data.shape[0] > 1:
                 # Multi-frame stack (n_frames, H, W)
                 self._frames = data.astype(np.float32)
                 self.raw = self._frames.mean(axis=0)
+            else:
+                # Single-frame stack → 2D image, not a movie
+                self.raw = data[0].astype(np.float32)
         elif data.ndim > 3:
             while data.ndim > 2:
                 data = data[0]
@@ -293,9 +298,11 @@ class DM4Image:
 
         with mrcfile.open(str(filepath), mode="r", permissive=True) as mrc:
             data = mrc.data.copy()
-            if data.ndim == 3:
+            if data.ndim == 3 and data.shape[0] > 1:
                 self._frames = data.astype(np.float32)
                 self.raw = self._frames.mean(axis=0)
+            elif data.ndim == 3:
+                self.raw = data[0].astype(np.float32)   # single-frame stack → 2D, not a movie
             elif data.ndim > 3:
                 while data.ndim > 2:
                     data = data[0]

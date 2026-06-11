@@ -68,7 +68,7 @@ def draw_scatter(ax, df, metric="ecd_nm", scatter_y="aspect_ratio",
 
 def draw_histogram(ax, df, metric="ecd_nm", n_bins=30, label_col="label",
                    palette=None, log_x=False, log_y=False,
-                   xlabel=None, ylabel=None):
+                   xlabel=None, ylabel=None, density=False):
     from acorn_plotting.style import PALETTE
     pal = palette or PALETTE
     all_vals = df[metric].dropna().values
@@ -79,7 +79,7 @@ def draw_histogram(ax, df, metric="ecd_nm", n_bins=30, label_col="label",
     grps = _groups(df, metric, label_col)
     for i, (lbl, vals) in enumerate(grps):
         kw = dict(bins=bins, alpha=0.80, color=pal[i % len(pal)],
-                  edgecolor="#1a1a1a", linewidth=0.5)
+                  edgecolor="#1a1a1a", linewidth=0.5, density=density)
         if len(grps) > 1:
             kw["label"] = lbl
         ax.hist(vals, **kw)
@@ -93,7 +93,7 @@ def draw_histogram(ax, df, metric="ecd_nm", n_bins=30, label_col="label",
     ax.set_title(f"n = {n}    mean = {mean:.1f}    sd = {std:.1f}    median = {med:.1f}",
                  fontsize=8.5)
     ax.set_xlabel(xlabel or _XLABEL_MAP.get(metric, metric))
-    ax.set_ylabel(ylabel or "Count")
+    ax.set_ylabel(ylabel or ("Density" if density else "Count"))
 
 
 def draw_box_jitter(ax, df, metric="ecd_nm", label_col="label", palette=None,

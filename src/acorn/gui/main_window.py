@@ -1577,6 +1577,11 @@ class MainWindow(QMainWindow):
 
     def _do_autosave(self) -> None:
         """Write current annotations to the sidecar file (debounced)."""
+        # Don't autosave while an image load is in flight: _img_idx has advanced
+        # but the canvas store may still hold the previous image's annotations,
+        # which would write them to the new index's sidecar.
+        if self._image_load_thread is not None and self._image_load_thread.isRunning():
+            return
         idx = self._img_idx
         path = self._autosave_path(idx)
         if path is None:

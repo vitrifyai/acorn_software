@@ -193,6 +193,15 @@ def normalize_bandpass(
 def apply_contrast(arr: np.ndarray, params: ContrastParams) -> np.ndarray:
     """Apply contrast normalisation from a ContrastParams object → float32 in [0, 1]."""
     f = arr.astype(np.float32)
+    # Sanitize NaN/inf (common in masked / gain-corrected micrographs) so they
+    # don't poison percentile/FFT normalisation → a blank image and NaN ROI stats.
+    if not np.isfinite(f).all():
+        finite = f[np.isfinite(f)]
+        if finite.size:
+            med, fmin, fmax = float(np.median(finite)), float(finite.min()), float(finite.max())
+        else:
+            med = fmin = fmax = 0.0
+        f = np.nan_to_num(f, nan=med, posinf=fmax, neginf=fmin)
     dispatch = {
         "fourier":    lambda: normalize_fourier_bandpass(f, params.fbp_hp_px, params.fbp_lp_px),
         "percentile": lambda: normalize_percentile(f, params.low_pct, params.high_pct),
