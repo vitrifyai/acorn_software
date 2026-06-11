@@ -634,8 +634,8 @@ class TrainPanel(QWidget):
     def update_loss_curve(self, epoch: int, train_loss: float, metric: float) -> None:
         """Append one epoch's data and refresh the chart.
 
-        Called from the background training thread — safe because Qt's GIL
-        serialises Python-level widget updates.
+        Called on the main thread from the log-tail QTimer (training itself runs
+        in a separate subprocess), so direct widget/canvas updates are safe.
 
         Parameters
         ----------

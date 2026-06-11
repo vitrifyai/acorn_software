@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import csv
+import io
+
 from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import (
     QApplication, QHBoxLayout, QHeaderView, QLabel,
@@ -94,13 +97,13 @@ class MeasurementPanel(QWidget):
         self._table.scrollToBottom()
 
     def _copy_csv(self) -> None:
-        rows = []
-        headers = ["Type", "Value", "Units", "Detail"]
-        rows.append(",".join(headers))
+        buf = io.StringIO()
+        writer = csv.writer(buf)
+        writer.writerow(["Type", "Value", "Units", "Detail"])
         for r in range(self._table.rowCount()):
             row = []
             for c in range(self._table.columnCount()):
                 item = self._table.item(r, c)
                 row.append(item.text() if item else "")
-            rows.append(",".join(row))
-        QApplication.clipboard().setText("\n".join(rows))
+            writer.writerow(row)
+        QApplication.clipboard().setText(buf.getvalue())

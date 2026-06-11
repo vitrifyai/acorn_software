@@ -2870,6 +2870,18 @@ class MainWindow(QMainWindow):
             self._statusbar.showMessage(f"Removed: {removed.type}")
 
     def _on_clear_annotations(self) -> None:
+        store = self._canvas_widget.canvas.store
+        n = len(store)
+        if n == 0:
+            return
+        resp = QMessageBox.question(
+            self, "Clear all annotations?",
+            f"Remove all {n} annotation(s) on this image? This cannot be undone.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if resp != QMessageBox.StandardButton.Yes:
+            return
         self._canvas_widget.canvas.store.clear()
         self._ann_states[self._img_idx] = []   # mark visited so auto-scalebar won't re-add
         self._click_buffer.clear()

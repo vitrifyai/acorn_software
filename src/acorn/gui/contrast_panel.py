@@ -350,8 +350,24 @@ class ContrastPanel(QWidget):
             )
             return
         user = _load_user_presets()
+        if name in user:
+            resp = QMessageBox.question(
+                self, "Overwrite preset?",
+                f'A preset named "{name}" already exists. Overwrite it?',
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No,
+            )
+            if resp != QMessageBox.StandardButton.Yes:
+                return
         user[name] = _params_to_dict(self.params())
-        _save_user_presets(user)
+        try:
+            _save_user_presets(user)
+        except Exception as e:
+            QMessageBox.warning(
+                self, "Could not save preset",
+                f"Failed to write the presets file:\n{e}",
+            )
+            return
         self._refresh_preset_combo(select=name)
 
     def _delete_preset(self) -> None:
