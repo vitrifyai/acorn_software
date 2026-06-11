@@ -67,19 +67,12 @@ class SAMPanel(QWidget):
     Workflow
     --------
     1. Load Model (downloads from HuggingFace Hub if no checkpoint set)
-    2. Click "Run Auto Segment" or switch to Point/Box prompt mode and click on canvas
+    2. Click "Run Auto-Segment", or pick a prompt mode (point / box / scribble)
+       and interact on the canvas
     3. Predicted masks appear as candidate ROI annotations
-    4. Use Undo to remove unwanted predictions, or Accept All to keep them all
+    4. Commit & New to keep a mask and start the next, or Accept All / Reject All
 
-    Signals
-    -------
-    load_model_requested(checkpoint, model_cfg)  — load the SAM model
-    auto_segment_requested()                     — run automatic mask generation
-    point_prompt_requested(x, y, label)          — add a point prompt (1=pos, 0=neg)
-    box_prompt_requested(x0, y0, x1, y1)         — add a box prompt
-    accept_all_requested()                       — confirm all pending masks as ROIs
-    reject_all_requested()                       — discard all pending masks
-    settings_changed()                           — any parameter changed
+    Signals are declared below with inline descriptions.
     """
 
     load_model_requested    = pyqtSignal(str, str, str)      # checkpoint_path, model_cfg, backend
@@ -89,7 +82,6 @@ class SAMPanel(QWidget):
     neg_box_prompt_mode_set = pyqtSignal()                   # box → negative SAM prompts
     scribble_mode_set       = pyqtSignal()                   # freehand stroke → SAM prompts
     scribble_neg_mode_set   = pyqtSignal()                   # freehand stroke → negative SAM prompts
-    prompt_mode_cleared     = pyqtSignal()                   # all mode buttons unchecked
     commit_new_requested    = pyqtSignal()                   # keep current preview, start next object
     clear_points_requested  = pyqtSignal()                   # discard accumulated points + preview
     undo_point_requested    = pyqtSignal()                   # remove the last added point

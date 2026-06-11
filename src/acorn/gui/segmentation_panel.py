@@ -28,13 +28,13 @@ class SegmentationPanel(QWidget):
         self._loaded = {"sam": False, "yolo": False, "unet": False}
         self._sel_btns: dict[str, QPushButton] = {}
         self._ind_labels: dict[str, QLabel] = {}
-        self._build_ui(sam_panel, yolo_panel, unet_panel)
+        self._build_ui()
 
     # ------------------------------------------------------------------
     # UI
     # ------------------------------------------------------------------
 
-    def _build_ui(self, sam_panel, yolo_panel, unet_panel) -> None:
+    def _build_ui(self) -> None:
         outer = QVBoxLayout(self)
         outer.setContentsMargins(6, 6, 6, 6)
         outer.setSpacing(6)
@@ -67,9 +67,10 @@ class SegmentationPanel(QWidget):
 
         outer.addLayout(sel_row)
 
-        # ── stacked tool area ──────────────────────────────────────────
+        # ── stacked tool area ── (stack order follows _TOOLS) ────────────
         self._stack = QStackedWidget()
-        for key, panel in (("sam", sam_panel), ("yolo", yolo_panel), ("unet", unet_panel)):
+        for key, _ in self._TOOLS:
+            panel = self._panels[key]
             panel.hide_footer()
             self._stack.addWidget(panel)
         outer.addWidget(self._stack, 1)
@@ -129,7 +130,8 @@ class SegmentationPanel(QWidget):
                 "background:#1a5fa8;color:white;font-weight:bold;"
                 if key == tool else ""
             )
-        self._stack.setCurrentIndex(["sam", "yolo", "unet"].index(tool))
+        order = [key for key, _ in self._TOOLS]
+        self._stack.setCurrentIndex(order.index(tool))
 
     def _on_accept(self) -> None:
         self.accept_all_requested.emit(self._active)

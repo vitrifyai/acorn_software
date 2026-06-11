@@ -38,7 +38,7 @@ class LLMSettingsDialog(QDialog):
         form.addRow("Provider:", self._provider)
 
         self._model = QLineEdit(self._config.model)
-        self._model.setPlaceholderText("e.g. claude-opus-4-7")
+        self._model.setPlaceholderText("e.g. claude-opus-4-8")
         form.addRow("Model:", self._model)
 
         self._key = QLineEdit(self._config.api_key)

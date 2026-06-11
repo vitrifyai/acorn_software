@@ -27,7 +27,7 @@ class UNetPanel(QWidget):
     3. Set inference parameters (threshold, foreground class, tile size)
     4. Click Run Segmentation
     5. Predicted instance masks appear as ROI annotations
-    6. Undo unwanted masks, or Accept All
+    6. Accept All to keep them, or Reject All to discard
 
     Signals
     -------

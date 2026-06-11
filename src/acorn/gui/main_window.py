@@ -1330,7 +1330,6 @@ class MainWindow(QMainWindow):
         self._sam_panel.neg_box_prompt_mode_set.connect(self._on_sam_neg_box_mode)
         self._sam_panel.scribble_mode_set.connect(self._on_sam_scribble_mode)
         self._sam_panel.scribble_neg_mode_set.connect(self._on_sam_neg_scribble_mode)
-        self._sam_panel.prompt_mode_cleared.connect(lambda: setattr(self, "_sam_mode", None))
         self._sam_panel.commit_new_requested.connect(self._on_sam_commit_new)
         self._sam_panel.undo_point_requested.connect(self._on_sam_undo_point)
         self._sam_panel.clear_points_requested.connect(self._on_sam_clear_points)

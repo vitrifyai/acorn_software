@@ -8,7 +8,7 @@ from pathlib import Path
 from PyQt6.QtCore import pyqtSignal
 from PyQt6.QtWidgets import (
     QCheckBox, QComboBox, QDoubleSpinBox, QFileDialog, QFormLayout,
-    QGroupBox, QHBoxLayout, QLabel, QLineEdit, QPushButton,
+    QGroupBox, QHBoxLayout, QLabel, QPushButton,
     QVBoxLayout, QWidget,
 )
 
@@ -76,10 +76,9 @@ class YOLOPanel(QWidget):
     Workflow
     --------
     1. Load Model (local .pt path or ultralytics model name, e.g. yolo11n.pt)
-    2. Click Run Detection or Run Detection + Segmentation
+    2. Click Run Detection or Detect + Segment
     3. Results appear as ROI annotations
-    4. Optionally pipe detected boxes to SAM for precise masks
-    5. Undo unwanted, or Accept All
+    4. Accept All to keep them, or Reject All to discard
 
     Signals
     -------
