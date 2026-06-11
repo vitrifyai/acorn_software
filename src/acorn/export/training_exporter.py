@@ -124,6 +124,28 @@ def _mask_to_rle(mask: np.ndarray) -> dict:
     return {"counts": counts, "size": [h, w]}
 
 
+def _mask_to_polygon(mask: np.ndarray) -> list:
+    """Largest external contour of a binary mask as [[x, y], ...] in mask-local px.
+
+    Derived from the (already-augmented) mask so the polygon always matches the
+    mask/RLE for every orientation — unlike transforming the original vertices.
+    """
+    try:
+        import cv2
+        m8 = (mask > 0).astype(np.uint8)
+        contours, _ = cv2.findContours(m8, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        if not contours:
+            return []
+        c = max(contours, key=cv2.contourArea)
+        eps = 0.01 * cv2.arcLength(c, True)
+        pts = cv2.approxPolyDP(c, eps, True).reshape(-1, 2)
+        if len(pts) < 3:
+            return []
+        return [[int(x), int(y)] for x, y in pts]
+    except Exception:
+        return []
+
+
 def _polygon_to_bbox(vertices: list) -> list[float]:
     """[x, y, w, h] from polygon vertex list."""
     xs = [v[0] for v in vertices]
@@ -186,11 +208,9 @@ def _compute_aug_instance_data(
         bbox    = _mask_bbox(m)
         rle     = _mask_to_rle(m) if config.encode_rle else None
         neg_pts = _negative_prompts(aug_masks_active, config.n_neg_prompts, rng, th, tw)
-        verts_global = meta["vertices"]
-        verts_local  = [
-            [x - x0, y - y0] for x, y in verts_global
-            if 0 <= x - x0 < tw and 0 <= y - y0 < th
-        ]
+        # Polygon from the augmented mask so it matches the mask/RLE for every
+        # orientation (transforming the original vertices would misalign flips/rots).
+        verts_local = _mask_to_polygon(m)
         instances.append({
             "label":       meta["label"],
             "mask":        m,

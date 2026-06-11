@@ -42,8 +42,18 @@ def polygon_metrics(vertices: list, px_nm: float) -> dict:
     circ     = (4.0 * math.pi * area_nm2 / perim_nm ** 2) if perim_nm > 0 else 0.0
     bb_w_nm  = (float(x.max()) - float(x.min())) * px_nm
     bb_h_nm  = (float(y.max()) - float(y.min())) * px_nm
-    long_nm  = max(bb_w_nm, bb_h_nm)
-    short_nm = min(bb_w_nm, bb_h_nm)
+    # Aspect ratio from the oriented (minimum-area) rectangle — the axis-aligned
+    # bbox understates elongation for tilted particles (a diagonal rod reads ~1:1).
+    try:
+        import cv2
+        (_rw, _rh) = cv2.minAreaRect(pts.astype(np.float32))[1]
+        obb_long  = max(_rw, _rh)
+        obb_short = min(_rw, _rh)
+        aspect = (obb_long / obb_short) if obb_short > 0 else 1.0
+    except Exception:
+        long_nm  = max(bb_w_nm, bb_h_nm)
+        short_nm = min(bb_w_nm, bb_h_nm)
+        aspect = (long_nm / short_nm) if short_nm > 0 else 1.0
     if len(pts) >= 2:
         d2 = ((pts[:, None, :] - pts[None, :, :]) ** 2).sum(axis=2)
         feret_nm = float(np.sqrt(d2.max())) * px_nm
@@ -54,7 +64,7 @@ def polygon_metrics(vertices: list, px_nm: float) -> dict:
         "ecd_nm":       round(ecd_nm,                                4),
         "perimeter_nm": round(perim_nm,                              4),
         "circularity":  round(min(circ, 1.0),                        4),
-        "aspect_ratio": round(long_nm / short_nm if short_nm > 0 else 1.0, 4),
+        "aspect_ratio": round(aspect,                                4),
         "feret_nm":     round(feret_nm,                              4),
         "bbox_w_nm":    round(bb_w_nm,                               4),
         "bbox_h_nm":    round(bb_h_nm,                               4),

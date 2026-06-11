@@ -186,14 +186,22 @@ class DM4Image:
         self.meta.raw_dtype = str(self.raw.dtype)
         self.meta.all_tags  = dm.allTags
 
+        has_ps = "pixelSize" in dataset
         ps_raw = dataset.get("pixelSize", [1.0, 1.0])
         pu_raw = dataset.get("pixelUnit", ["nm", "nm"])
         ps = float(ps_raw[0] if isinstance(ps_raw, (list, tuple, np.ndarray)) else ps_raw)
         pu = str(pu_raw[0] if isinstance(pu_raw, (list, tuple)) else pu_raw)
         pu_clean = pu.strip().lower().replace("\x00", "").replace(" ", "")
-        self.meta.pixel_size = ps * self.UNIT_TO_NM.get(pu_clean, 1.0)
+        ps_nm = ps * self.UNIT_TO_NM.get(pu_clean, 1.0)
         self.meta.pixel_unit = "nm"
-        self.meta.pixel_size_from_header = True
+        # Only flag as header-calibrated when the tag was actually present and valid,
+        # so downstream measurements/export can tell a real 1.0 nm/px from "unknown".
+        if has_ps and ps_nm > 0:
+            self.meta.pixel_size = ps_nm
+            self.meta.pixel_size_from_header = True
+        else:
+            self.meta.pixel_size = 1.0
+            self.meta.pixel_size_from_header = False
 
         for _, v in self._deep_search(dm.allTags, "magnification"):
             try:
@@ -257,11 +265,20 @@ class DM4Image:
                         elif unit == 3: # px/cm → nm/px
                             self.meta.pixel_size = 1e7 / px_per_unit
                             self.meta.pixel_size_from_header = True
-                # ImageJ metadata override
+                # ImageJ metadata override — spacing is in ij["unit"], not nm.
+                # Convert by unit; treat pixel/unknown units as uncalibrated.
                 ij = getattr(tf, "imagej_metadata", None) or {}
                 if "spacing" in ij:
-                    self.meta.pixel_size = float(ij["spacing"])
-                    self.meta.pixel_size_from_header = True
+                    ij_unit = (str(ij.get("unit", "nm")).strip().lower()
+                               .replace("\x00", "").replace(" ", ""))
+                    factor = self.UNIT_TO_NM.get(ij_unit)
+                    try:
+                        spacing = float(ij["spacing"])
+                    except (TypeError, ValueError):
+                        spacing = 0.0
+                    if factor is not None and spacing > 0:
+                        self.meta.pixel_size = spacing * factor
+                        self.meta.pixel_size_from_header = True
         except Exception:
             pass
 

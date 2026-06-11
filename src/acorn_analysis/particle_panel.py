@@ -110,7 +110,7 @@ _METRICS = [
     ("area_nm2",      "Area (nm^2)",           "2D projected area"),
     ("perimeter_nm",  "Perimeter (nm)",        "Polygon perimeter"),
     ("circularity",   "Circularity",           "4*pi*A/P^2 -- 1.0 = perfect circle"),
-    ("aspect_ratio",  "Aspect ratio",          "Long / short axis (bounding box)"),
+    ("aspect_ratio",  "Aspect ratio",          "Long / short axis (oriented bounding box)"),
     ("bbox_w_nm",     "BBox width (nm)",       "Bounding box width"),
     ("bbox_h_nm",     "BBox height (nm)",      "Bounding box height"),
 ]
