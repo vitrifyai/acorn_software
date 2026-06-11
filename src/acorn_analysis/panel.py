@@ -529,6 +529,7 @@ class AnalysisPanel(QWidget):
     def _install_canvas(self, fig) -> None:
         from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg
         old = self._fig_canvas_widget
+        old_fig = getattr(old, "figure", None)   # None for the initial placeholder widget
         canvas = FigureCanvasQTAgg(fig)
         canvas.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         idx = self._figures_layout.indexOf(old)
@@ -539,6 +540,11 @@ class AnalysisPanel(QWidget):
         self._fig_canvas_widget = canvas
         self._fig_canvas = canvas
         canvas.draw()
+        # Release the previous figure from pyplot's global registry to avoid a
+        # per-refresh memory leak (these are created via plt.subplots).
+        if old_fig is not None and old_fig is not fig:
+            import matplotlib.pyplot as plt
+            plt.close(old_fig)
 
     def _generate_inline_figure(self, plot_type: str):
         df = self._particles_df

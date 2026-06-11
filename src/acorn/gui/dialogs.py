@@ -73,9 +73,12 @@ class LineProfileDialog(QDialog):
         layout.addLayout(btn_row)
 
     def _plot(self, result) -> None:
+        """Full (re)build of the plot — used on first show and colour change."""
         ax = self._ax
         ax.clear()
-        ax.plot(result.distances_nm, result.intensities, color=self._line_color, lw=1.2)
+        (self._line,) = ax.plot(
+            result.distances_nm, result.intensities, color=self._line_color, lw=1.2
+        )
         ax.set_xlabel("Distance (nm)")
         ax.set_ylabel("Normalised intensity")
         ax.set_title("Line Profile")
@@ -107,9 +110,23 @@ class LineProfileDialog(QDialog):
                 f.write(f"{d:.6f},{i:.8f}\n")
 
     def update(self, result) -> None:
-        """Refresh the plot with new profile data (live drag update)."""
+        """Refresh the plot with new profile data (live drag update).
+
+        Fast path: reuse the existing Line2D via set_data + draw_idle instead of
+        clearing the axes and running tight_layout()/draw() on every drag motion.
+        """
         self._result = result
-        self._plot(result)
+        line = getattr(self, "_line", None)
+        if line is None:
+            self._plot(result)
+            return
+        line.set_data(result.distances_nm, result.intensities)
+        line.set_color(self._line_color)
+        ax = self._ax
+        ax.set_xlim(0, result.length_nm)
+        ax.relim()
+        ax.autoscale_view(scalex=False, scaley=True)
+        self._canvas.draw_idle()
 
     def _export_png(self) -> None:
         path, _ = QFileDialog.getSaveFileName(

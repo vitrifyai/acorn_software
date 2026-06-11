@@ -1926,6 +1926,7 @@ class MainWindow(QMainWindow):
         self._update_movie_bar(img)
 
         # Invalidate SAM embedding cache — new image, old embedding is stale
+        self._sam_img8_cache = None
         if self._sam_predictor is not None:
             self._sam_predictor.invalidate_cache()
             self._sam_warmup_encode()
@@ -3463,10 +3464,18 @@ class MainWindow(QMainWindow):
         img = self._canvas_widget.canvas.dm4
         if img is None or img.raw is None:
             return None, 0, 0
-        from acorn.core.contrast import apply_contrast
         import numpy as np
-        norm = apply_contrast(img.raw, self._contrast_panel.params())
-        img8 = (np.clip(norm, 0.0, 1.0) * 255).astype(np.uint8)
+        params = self._contrast_panel.params()
+        # Cache the full-res contrasted uint8 image; it depends only on the image
+        # and contrast params, so consecutive SAM clicks needn't recompute it.
+        cache = getattr(self, "_sam_img8_cache", None)
+        if cache is not None and cache[0] is img and cache[1] == params:
+            img8 = cache[2]
+        else:
+            from acorn.core.contrast import apply_contrast
+            norm = apply_contrast(img.raw, params)
+            img8 = (np.clip(norm, 0.0, 1.0) * 255).astype(np.uint8)
+            self._sam_img8_cache = (img, params, img8)
         if self._sam_crop_region is None:
             return img8, 0, 0
         x0, y0, x1, y1 = self._sam_crop_region
