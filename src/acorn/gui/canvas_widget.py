@@ -853,6 +853,8 @@ class CanvasWidget(QWidget):
     def _on_scroll(self, event) -> None:
         if event.inaxes is None:
             return
+        if self.canvas.dm4 is None:
+            return  # nothing loaded — don't zoom the splash placeholder
         factor = 1.25 if event.step < 0 else 1 / 1.25
         ax = event.inaxes
         xdata, ydata = event.xdata, event.ydata
