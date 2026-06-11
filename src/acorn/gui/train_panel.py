@@ -357,13 +357,34 @@ class TrainPanel(QWidget):
             for idx, name in gpus:
                 cb = QCheckBox(f"GPU {idx}: {name}")
                 cb.setChecked(idx == 0)
+                cb.toggled.connect(self._on_gpu_toggled)
                 self._gpu_checks.append(cb)
                 self._hw_layout.addWidget(cb)
             self._cpu_check.setEnabled(True)
+            self._cpu_check.toggled.connect(self._on_cpu_toggled)
+            # GPU 0 is auto-selected, so CPU must not also be checked
+            self._cpu_check.blockSignals(True)
+            self._cpu_check.setChecked(False)
+            self._cpu_check.blockSignals(False)
         else:
             no_gpu = QLabel("No CUDA GPUs detected — CPU only.")
             no_gpu.setStyleSheet("font-size: 11px; color: palette(mid);")
             self._hw_layout.addWidget(no_gpu)
+
+    def _on_cpu_toggled(self, checked: bool) -> None:
+        """CPU and GPU are mutually exclusive: checking CPU clears all GPU boxes."""
+        if checked:
+            for cb in self._gpu_checks:
+                cb.blockSignals(True)
+                cb.setChecked(False)
+                cb.blockSignals(False)
+
+    def _on_gpu_toggled(self, checked: bool) -> None:
+        """Checking any GPU clears the CPU box."""
+        if checked and self._cpu_check.isChecked():
+            self._cpu_check.blockSignals(True)
+            self._cpu_check.setChecked(False)
+            self._cpu_check.blockSignals(False)
 
     def _build_common_group(self) -> QGroupBox:
         box = QGroupBox("Training")
@@ -537,10 +558,8 @@ class TrainPanel(QWidget):
             for i, cb in enumerate(self._gpu_checks)
             if cb.isChecked()
         ]
-        if selected_gpus and not self._cpu_check.isChecked():
-            devices = selected_gpus
-        else:
-            devices = "cpu"
+        # Any selected GPU wins; CPU only when no GPU is selected.
+        devices = selected_gpus if selected_gpus else "cpu"
 
         config: dict = {
             "dataset_dir": dataset_dir,

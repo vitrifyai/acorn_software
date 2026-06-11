@@ -1835,6 +1835,7 @@ class MainWindow(QMainWindow):
         self._img_idx = idx
         self._click_buffer.clear()
         self._canvas_widget.reset_interaction()
+        self._reset_pending_segmentation()
         self._canvas_widget.set_nav_enabled(False)
         self._sync_image_list(idx)
         self._canvas_widget.update_nav_label(idx + 1, len(self._image_paths))
@@ -2894,6 +2895,9 @@ class MainWindow(QMainWindow):
         return f"Error: {e}"
 
     def _on_export(self, path: str, fmt: str, dpi: int) -> None:
+        if self._canvas_widget.canvas.dm4 is None:
+            self._export_panel.set_status("No image loaded.")
+            return
         try:
             out = self._canvas_widget.canvas.save(path, dpi=dpi, fmt=fmt)
             self._export_panel.set_status(f"Saved: {out.name}")
@@ -3744,10 +3748,36 @@ class MainWindow(QMainWindow):
             f"Masks accepted and image queued ({n} total in queue)."
         )
 
-    def _on_sam_reject(self) -> None:
+    def _reset_pending_segmentation(self) -> None:
+        """Forget all pending SAM/YOLO/UNet state when switching images.
+
+        The pending masks themselves stay in (and are autosaved with) the image
+        being left; we only clear the tracking lists/preview/prompt points so a
+        later Reject All on the new image can't act on stale references.
+        """
+        self._pending_sam_masks.clear()
+        self._pending_yolo_anns.clear()
+        self._pending_unet_masks.clear()
+        self._sam_prompt_points.clear()
+        self._sam_prompt_labels.clear()
+        self._sam_current_preview = None
+        self._sam_mode = None
+        self._clear_sam_point_artists()
+
+    def _remove_pending_annotations(self, pending: list) -> None:
+        """Remove specific pending annotations by identity (not via the undo stack).
+
+        Using the undo stack would pop the most-recent annotations, which may be
+        the user's own edits made after a detection ran — not the pending masks.
+        """
+        if not pending:
+            return
         store = self._canvas_widget.canvas.store
-        for _ in range(len(self._pending_sam_masks)):
-            store.undo()
+        pending_ids = {id(a) for a in pending}
+        store.replace_all([a for a in store if id(a) not in pending_ids])
+
+    def _on_sam_reject(self) -> None:
+        self._remove_pending_annotations(self._pending_sam_masks)
         self._pending_sam_masks.clear()
         self._sam_prompt_points.clear()
         self._sam_prompt_labels.clear()
@@ -4314,9 +4344,7 @@ class MainWindow(QMainWindow):
         self._yolo_panel.set_status("Detections accepted as ROI annotations.")
 
     def _on_yolo_reject(self) -> None:
-        store = self._canvas_widget.canvas.store
-        for _ in range(len(self._pending_yolo_anns)):
-            store.undo()
+        self._remove_pending_annotations(self._pending_yolo_anns)
         self._pending_yolo_anns.clear()
         self._yolo_panel.set_status("YOLO detections removed.")
 
@@ -4436,9 +4464,7 @@ class MainWindow(QMainWindow):
         self._unet_panel.set_status("Masks accepted as ROI annotations.")
 
     def _on_unet_reject(self) -> None:
-        store = self._canvas_widget.canvas.store
-        for _ in range(len(self._pending_unet_masks)):
-            store.undo()
+        self._remove_pending_annotations(self._pending_unet_masks)
         self._pending_unet_masks.clear()
         self._unet_panel.set_status("UNet masks removed.")
 

@@ -7,8 +7,9 @@ from pathlib import Path
 from PyQt6.QtCore import pyqtSignal, Qt
 from PyQt6.QtWidgets import (
     QCheckBox, QComboBox, QDoubleSpinBox, QFileDialog, QFormLayout, QGroupBox,
-    QHBoxLayout, QHeaderView, QLabel, QLineEdit, QProgressBar, QPushButton,
-    QScrollArea, QSpinBox, QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget,
+    QHBoxLayout, QHeaderView, QLabel, QLineEdit, QMessageBox, QProgressBar,
+    QPushButton, QScrollArea, QSpinBox, QTableWidget, QTableWidgetItem,
+    QVBoxLayout, QWidget,
 )
 
 
@@ -480,19 +481,55 @@ class ExportPanel(QWidget):
         if d:
             self._dataset_dir.setText(d)
 
+    def _save_dir_and_name(self) -> tuple[str, str] | tuple[None, None]:
+        """Validate the output directory and file name. Returns (None, None) on failure."""
+        d = self._dir.text().strip()
+        name = self._name.text().strip()
+        if not d:
+            self.set_status("Choose an output directory first.")
+            return None, None
+        if not name:
+            self.set_status("Enter a file name first.")
+            return None, None
+        return d, name
+
+    def _confirm_overwrite(self, path: str) -> bool:
+        if not Path(path).exists():
+            return True
+        resp = QMessageBox.question(
+            self, "Overwrite file?",
+            f"{Path(path).name} already exists in this directory.\n\nOverwrite it?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        return resp == QMessageBox.StandardButton.Yes
+
     def _on_save(self) -> None:
+        d, name = self._save_dir_and_name()
+        if d is None:
+            return
         fmt = self._active_fmt().lower()
         ext_map = {"jpeg": "jpg", "tiff": "tif"}
         ext = ext_map.get(fmt, fmt)
-        path = str(Path(self._dir.text()) / f"{self._name.text()}.{ext}")
+        path = str(Path(d) / f"{name}.{ext}")
+        if not self._confirm_overwrite(path):
+            return
         self.export_requested.emit(path, fmt, self._dpi.value())
 
     def _on_save_raw(self) -> None:
-        path = str(Path(self._dir.text()) / f"{self._name.text()}_raw.tif")
+        d, name = self._save_dir_and_name()
+        if d is None:
+            return
+        path = str(Path(d) / f"{name}_raw.tif")
+        if not self._confirm_overwrite(path):
+            return
         self.raw_export_requested.emit(path)
 
     def _on_save_masks(self) -> None:
-        stem = str(Path(self._dir.text()) / self._name.text())
+        d, name = self._save_dir_and_name()
+        if d is None:
+            return
+        stem = str(Path(d) / name)
         self.mask_export_requested.emit(stem)
 
     def _on_training_export(self) -> None:
