@@ -13,6 +13,23 @@ from dataclasses import asdict
 from pathlib import Path
 from typing import Optional
 
+
+def _atomic_write_text(path: Path, text: str) -> None:
+    """Write text by writing to a temp file in the same dir then os.replace().
+
+    Avoids leaving a truncated/empty file if the process is killed or a network
+    (NAS) write is interrupted mid-write — the previous good file is only
+    replaced once the new one is fully written.
+    """
+    path = Path(path)
+    tmp = path.with_name(f".{path.name}.tmp")
+    with open(tmp, "w") as f:
+        f.write(text)
+        f.flush()
+        os.fsync(f.fileno())
+    os.replace(tmp, path)
+
+
 from PyQt6.QtCore import Qt, QThread, QTimer, pyqtSignal
 from PyQt6.QtWidgets import (
     QApplication, QCheckBox, QComboBox, QDialog, QDialogButtonBox, QDockWidget, QFileDialog,
@@ -1576,7 +1593,7 @@ class MainWindow(QMainWindow):
                 "exclude_zone": list(ez) if ez else None,
                 "crop_region": list(cr) if cr else None,
             }
-            path.write_text(json.dumps(data))
+            _atomic_write_text(path, json.dumps(data))
         except OSError:
             pass  # NAS write failure — silently skip, in-memory state is preserved
 
@@ -1698,7 +1715,7 @@ class MainWindow(QMainWindow):
                 "pixel_size_nm": self._px_overrides.get(idx),
             }
         try:
-            Path(path).write_text(json.dumps(data, indent=2))
+            _atomic_write_text(Path(path), json.dumps(data, indent=2))
             n = sum(1 for v in data["images"].values() if v)
             self._statusbar.showMessage(
                 f"Session saved → {path}  ({n} image(s) with annotations)"

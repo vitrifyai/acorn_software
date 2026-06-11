@@ -43,6 +43,18 @@ import numpy as np
 
 _AUG_WORKERS = min(8, (os.cpu_count() or 4))
 
+
+def _atomic_write_text(path: Path, text: str) -> None:
+    """Write to a temp file in the same dir then os.replace() — never leaves the
+    accumulating manifest truncated if a write is interrupted (e.g. NAS drop)."""
+    path = Path(path)
+    tmp = path.with_name(f".{path.name}.tmp")
+    with open(tmp, "w") as f:
+        f.write(text)
+        f.flush()
+        os.fsync(f.fileno())
+    os.replace(tmp, path)
+
 if TYPE_CHECKING:
     from acorn.core.dm4_loader import DM4Image
     from acorn.core.annotations import AnnotationStore
@@ -94,6 +106,8 @@ def _mask_to_rle(mask: np.ndarray) -> dict:
     """COCO uncompressed RLE from a binary mask (Fortran/column-major order)."""
     h, w = mask.shape
     flat = (mask > 0).flatten(order="F").view(np.uint8)
+    if flat.size == 0:
+        return {"counts": [0], "size": [h, w]}
     counts: list[int] = []
     current = 0
     run = 0
@@ -548,8 +562,8 @@ def add_image(
         "n_written":     n_written,
         "n_skipped":     n_skipped,
     })
-    info_path.write_text(json.dumps(info, indent=2))
-    ann_path.write_text(json.dumps(coco, indent=2))
+    _atomic_write_text(info_path, json.dumps(info, indent=2))
+    _atomic_write_text(ann_path, json.dumps(coco, indent=2))
 
     return {
         "source_stem":       dm4img.filename,

@@ -20,7 +20,7 @@ def export_masks(
     """
     Export ROI annotations as a labelled mask PNG + JSON manifest.
 
-    The mask is a uint8 PNG the same size as the image:
+    The mask is a 16-bit PNG the same size as the image:
       - 0  = unlabelled
       - 1+ = region index (in draw order)
 
@@ -41,9 +41,14 @@ def export_masks(
 
     out = Path(output_path)
     h, w = image_shape[:2]
-    mask = np.zeros((h, w), dtype=np.uint8)
+    # 16-bit so region indices don't wrap and silently merge regions past 255.
+    mask = np.zeros((h, w), dtype=np.uint16)
 
     rois = [a for a in store if getattr(a, "type", None) == "roi"]
+    if len(rois) > 65535:
+        raise ValueError(
+            f"{len(rois)} ROIs exceed the 65535-region limit of a 16-bit label mask."
+        )
     manifest = {}
 
     for idx, roi in enumerate(rois, start=1):

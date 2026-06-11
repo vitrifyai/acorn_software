@@ -200,14 +200,32 @@ class AnnotationStore:
 
     @classmethod
     def from_json(cls, data: str) -> "AnnotationStore":
+        import dataclasses
         store = cls()
         for d in json.loads(data):
+            if not isinstance(d, dict):
+                continue
             ann_type = d.pop("type", None)
             klass = _TYPE_MAP.get(ann_type)
-            if klass is not None:
-                # convert list→tuple for point fields
-                for k, v in d.items():
-                    if isinstance(v, list) and len(v) == 2:
-                        d[k] = tuple(v)
-                store._items.append(klass(**d))
+            if klass is None:
+                continue
+            # Keep only fields this dataclass accepts, so an unknown/forward-
+            # incompatible key doesn't crash the whole load.
+            valid = {f.name for f in dataclasses.fields(klass) if f.init}
+            kwargs = {k: v for k, v in d.items() if k in valid}
+            # Point fields are (x, y) tuples
+            for pf in ("p1", "p2", "vertex"):
+                if isinstance(kwargs.get(pf), list):
+                    kwargs[pf] = tuple(kwargs[pf])
+            # ROI vertices is a list of (x, y) points
+            if isinstance(kwargs.get("vertices"), list):
+                kwargs["vertices"] = [
+                    tuple(v) if isinstance(v, (list, tuple)) else v
+                    for v in kwargs["vertices"]
+                ]
+            # One malformed record must not discard the rest.
+            try:
+                store._items.append(klass(**kwargs))
+            except (TypeError, ValueError):
+                continue
         return store
