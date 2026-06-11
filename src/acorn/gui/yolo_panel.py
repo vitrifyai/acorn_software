@@ -169,8 +169,13 @@ class YOLOPanel(QWidget):
         param_layout.addRow("NMS IoU:", self._iou_thresh)
 
         self._label_combo = QComboBox()
+        self._label_combo.setEditable(True)
+        self._label_combo.setInsertPolicy(QComboBox.InsertPolicy.NoInsert)
         for lbl in ["Foreground", "Background", "Ignore"]:
             self._label_combo.addItem(lbl)
+        self._label_combo.setToolTip(
+            "Pick a preset or type your own label for the detected objects."
+        )
         param_layout.addRow("Label:", self._label_combo)
 
         self._as_rects = QCheckBox("Add as rectangles (not polygons)")
