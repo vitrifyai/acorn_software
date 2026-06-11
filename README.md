@@ -113,7 +113,7 @@ signal on `AcornContext`.
 | `acorn_llm` | Floating dock (View menu) | Natural-language AI assistant; requires API key or Ollama base URL (see below) |
 | `acorn_plotting` | Floating dock | Publication-quality interactive plots, statistical analysis, hover/click data linking (see below) |
 
-The main right panel is organised into four workflow tabs — **Annotate**, **Measure**, **Train**, **Export** — plus any plugin-defined tabs. The **Annotate** tab contains the unified SAM / YOLO / UNet segmentation panel with loaded-model indicators and shared Accept/Reject controls.
+The main right panel is organised into workflow tabs — **Annotate**, **Segment**, **Measure**, **Train**, **Export** — plus any plugin-defined tabs. The **Annotate** tab holds the manual annotation tools (and detectors like CryoBLOB that inject here). The **Segment** tab contains the unified SAM / YOLO / UNet panel with loaded-model indicators and shared Accept/Reject controls.
 
 ### Writing a plugin
 
@@ -124,9 +124,9 @@ application state and signals.
 #### Choosing where your plugin lives
 
 By default, `create_panel()` opens a **new tab** in the right panel using `TAB_LABEL` as the
-tab name. If your plugin logically belongs inside one of the four built-in workflow stages
-(**Annotate**, **Measure**, **Train**, **Export**), set `WORKFLOW_STAGE` to that stage name
-instead — ACORN will inject your widget directly into that tab's layout rather than creating
+tab name. If your plugin logically belongs inside one of the built-in workflow stages
+(**Annotate**, **Segment**, **Measure**, **Train**, **Export**), set `WORKFLOW_STAGE` to that
+stage name instead — ACORN will inject your widget directly into that tab's layout rather than creating
 a new tab.
 
 ```python

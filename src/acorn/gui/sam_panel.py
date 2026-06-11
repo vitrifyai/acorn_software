@@ -9,7 +9,7 @@ from PyQt6.QtCore import pyqtSignal, Qt
 from PyQt6.QtWidgets import (
     QCheckBox, QComboBox, QDoubleSpinBox, QFileDialog, QFormLayout,
     QGroupBox, QHBoxLayout, QLabel, QLineEdit, QPushButton,
-    QScrollArea, QSpinBox, QVBoxLayout, QWidget,
+    QSpinBox, QVBoxLayout, QWidget,
 )
 
 _SAM3_AVAILABLE = importlib.util.find_spec("sam3") is not None
@@ -103,8 +103,7 @@ class SAMPanel(QWidget):
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        _content = QWidget()
-        layout = QVBoxLayout(_content)
+        layout = QVBoxLayout(self)
         layout.setContentsMargins(6, 6, 6, 6)
         layout.setSpacing(8)
 
@@ -473,12 +472,6 @@ class SAMPanel(QWidget):
         layout.addWidget(self._accept_queue_btn)
 
         layout.addStretch()
-        _scroll = QScrollArea()
-        _scroll.setWidgetResizable(True)
-        _scroll.setWidget(_content)
-        _outer = QVBoxLayout(self)
-        _outer.setContentsMargins(0, 0, 0, 0)
-        _outer.addWidget(_scroll)
 
     # ── public API ────────────────────────────────────────────────────────────
 

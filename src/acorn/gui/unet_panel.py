@@ -6,7 +6,7 @@ from PyQt6.QtCore import pyqtSignal
 from PyQt6.QtWidgets import (
     QComboBox, QDoubleSpinBox, QFileDialog, QFormLayout,
     QGroupBox, QHBoxLayout, QLabel, QLineEdit, QPushButton,
-    QScrollArea, QSpinBox, QVBoxLayout, QWidget,
+    QSpinBox, QVBoxLayout, QWidget,
 )
 
 from acorn.core.unet_predictor import SMP_ARCHITECTURES, SMP_ENCODERS
@@ -44,8 +44,7 @@ class UNetPanel(QWidget):
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        _content = QWidget()
-        layout = QVBoxLayout(_content)
+        layout = QVBoxLayout(self)
         layout.setContentsMargins(6, 6, 6, 6)
         layout.setSpacing(8)
 
@@ -190,12 +189,6 @@ class UNetPanel(QWidget):
         ar_row.addWidget(self._reject_btn)
         layout.addLayout(ar_row)
         layout.addStretch()
-        _scroll = QScrollArea()
-        _scroll.setWidgetResizable(True)
-        _scroll.setWidget(_content)
-        _outer = QVBoxLayout(self)
-        _outer.setContentsMargins(0, 0, 0, 0)
-        _outer.addWidget(_scroll)
 
     # ── public API ────────────────────────────────────────────────────────────
 

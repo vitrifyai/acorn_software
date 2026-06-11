@@ -1149,21 +1149,11 @@ class MainWindow(QMainWindow):
             scroll._plugin_inject_layout = lay   # tag on scroll too so lookup finds it
             return scroll
 
-        # Annotate tab: annotation tools + AI segmentation, all in one scrollable container
-        _annotate_inner = QWidget()
-        _aw_layout = QVBoxLayout(_annotate_inner)
-        _aw_layout.setContentsMargins(0, 0, 0, 0)
-        _aw_layout.setSpacing(0)
-        _aw_layout.addWidget(self._ann_panel)
-        _aw_layout.addWidget(self._seg_panel)
-        _aw_layout.addStretch()
-        _annotate_inner._plugin_inject_layout = _aw_layout
+        # Annotate tab: manual annotation tools (CryoBLOB and other detectors inject here)
+        _annotate_wrapper = _make_tab_wrapper(self._ann_panel)
 
-        from PyQt6.QtWidgets import QScrollArea as _SAnn
-        _annotate_wrapper = _SAnn()
-        _annotate_wrapper.setWidgetResizable(True)
-        _annotate_wrapper.setWidget(_annotate_inner)
-        _annotate_wrapper._plugin_inject_layout = _aw_layout
+        # Segment tab: AI-assisted segmentation (SAM / YOLO / UNet)
+        _segment_wrapper = _make_tab_wrapper(self._seg_panel)
 
         _measure_wrapper = _make_tab_wrapper(self._meas_panel)
         _export_wrapper  = _make_tab_wrapper(self._export_panel)
@@ -1171,6 +1161,7 @@ class MainWindow(QMainWindow):
 
         control.addTab(self._contrast_panel, "Contrast")
         control.addTab(_annotate_wrapper,    "Annotate")
+        control.addTab(_segment_wrapper,     "Segment")
         control.addTab(_measure_wrapper,     "Measure")
         control.addTab(_export_wrapper,      "Export")
         control.addTab(_train_wrapper,       "Train")

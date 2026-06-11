@@ -8,7 +8,7 @@ if TYPE_CHECKING:
     from PyQt6.QtWidgets import QMenuBar
 
 # Valid workflow stage names plugins can declare themselves part of.
-WORKFLOW_STAGES = ("Annotate", "Measure", "Train", "Export")
+WORKFLOW_STAGES = ("Annotate", "Segment", "Measure", "Train", "Export")
 
 
 class AcornPlugin:
@@ -28,7 +28,7 @@ class AcornPlugin:
       5. On quit, MainWindow calls teardown().
 
     Workflow injection:
-      Set WORKFLOW_STAGE to one of: "Annotate", "Measure", "Train", "Export"
+      Set WORKFLOW_STAGE to one of: "Annotate", "Segment", "Measure", "Train", "Export"
       Optionally set WORKFLOW_SECTION_LABEL for a visible header in the workflow tab.
       If the stage name is unknown or misspelled, the plugin falls back to its own tab.
     """
