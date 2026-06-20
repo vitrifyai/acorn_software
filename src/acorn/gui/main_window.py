@@ -3381,8 +3381,13 @@ class MainWindow(QMainWindow):
         self._sam_thread.error.connect(_err)
         self._sam_thread.start()
 
-    def _clear_sam_point_artists(self) -> None:
-        """Remove all SAM point-marker dots from the canvas."""
+    def _clear_sam_point_artists(self, blit: bool = True) -> None:
+        """Remove all SAM point-marker dots from the canvas.
+
+        blit=False skips the redraw — used during an image switch, where
+        _finish_switch's load_image() does the authoritative render instead
+        (avoids a redundant blit on the transitional canvas).
+        """
         for group in self._sam_point_artists:
             for a in group:
                 try:
@@ -3391,7 +3396,8 @@ class MainWindow(QMainWindow):
                     pass
         self._sam_point_artists.clear()
         self._canvas_widget.canvas._overlay_artists.clear()
-        self._canvas_widget.canvas.blit_annotations()
+        if blit:
+            self._canvas_widget.canvas.blit_annotations()
 
     @staticmethod
     def _sam_color_for_label(label: str) -> str:
@@ -3805,7 +3811,7 @@ class MainWindow(QMainWindow):
         self._sam_prompt_labels.clear()
         self._sam_current_preview = None
         self._sam_mode = None
-        self._clear_sam_point_artists()
+        self._clear_sam_point_artists(blit=False)
 
     def _remove_pending_annotations(self, pending: list) -> None:
         """Remove specific pending annotations by identity (not via the undo stack).
