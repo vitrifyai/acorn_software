@@ -313,7 +313,7 @@ class SAMPanel(QWidget):
 
         action_row = QHBoxLayout()
         commit_btn = QPushButton("Commit & New")
-        commit_btn.setStyleSheet("background:#1a5fa8;color:white;font-weight:bold;")
+        commit_btn.setStyleSheet("background:#7030A0;color:white;font-weight:bold;")
         commit_btn.setToolTip(
             "Lock the current preview mask, switch to Select mode for vertex editing,\n"
             "then click + Positive Point to start the next object."
