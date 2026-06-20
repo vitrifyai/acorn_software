@@ -225,13 +225,13 @@ class SAMPanel(QWidget):
 
         self._mode_box_btn = QPushButton("Box")
         self._mode_box_btn.setCheckable(True)
-        self._mode_box_btn.setStyleSheet("background:#1a5fa8;color:white;")
+        self._mode_box_btn.setStyleSheet("background:#00703C;color:white;")
         self._mode_box_btn.setToolTip("Click two corners to define a bounding box prompt")
         self._mode_box_btn.clicked.connect(self._on_box_clicked)
 
         self._mode_scribble_btn = QPushButton("+ Scribble")
         self._mode_scribble_btn.setCheckable(True)
-        self._mode_scribble_btn.setStyleSheet("background:#1a5fa8;color:white;")
+        self._mode_scribble_btn.setStyleSheet("background:#00703C;color:white;")
         self._mode_scribble_btn.setToolTip(
             "Draw a freehand stroke along a feature.\n"
             "Points sampled along the stroke become positive SAM prompts."
