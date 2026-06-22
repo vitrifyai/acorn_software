@@ -1,6 +1,7 @@
 """LLM agent — runs in a QThread, streams tokens and fires tool signals."""
 from __future__ import annotations
 import json
+import threading
 from typing import Optional
 
 from PyQt6.QtCore import QThread, pyqtSignal
@@ -1088,6 +1089,13 @@ class LLMAgent(QThread):
         self._state     = state
         self._image_b64 = image_b64
         self._context   = context  # AcornContext — used to refresh state after navigation
+        self._confirm_event  = threading.Event()
+        self._confirm_result = False
+
+    def set_confirm_result(self, ok: bool) -> None:
+        """Called from the UI thread with the user's Yes/No on a confirm dialog."""
+        self._confirm_result = bool(ok)
+        self._confirm_event.set()
 
     # ------------------------------------------------------------------
 
@@ -1163,6 +1171,10 @@ class LLMAgent(QThread):
 
             msgs.append({"role": "user", "content": tool_results})
 
+            if self.isInterruptionRequested():
+                self.token_emitted.emit("\n\n_(stopped by user)_")
+                break
+
         self.done.emit()
 
     def _build_anthropic_messages(self) -> list[dict]:
@@ -1214,6 +1226,9 @@ class LLMAgent(QThread):
         tokens_key = "max_tokens"
 
         while True:
+            if self.isInterruptionRequested():
+                self.token_emitted.emit("\n\n_(stopped by user)_")
+                break
             create_kwargs: dict = dict(
                 model=self._config.model,
                 messages=msgs,
@@ -1405,10 +1420,39 @@ class LLMAgent(QThread):
         if name == "run_unet" and not self._state.get("unet_loaded"):
             return "Error: UNet model is not loaded. Call load_unet first, then retry."
 
+        # Prerequisite checks that prevent silent no-op "successes": refuse the
+        # action with an actionable message instead of dispatching a no-op.
+        ann_count = self._state.get("annotation_count", 0)
+        img_count = self._state.get("image_count", 0)
+        if name in ("export_masks", "run_particle_analysis", "run_surface_area",
+                    "queue_for_export", "export_nexus") and not ann_count:
+            return ("Error: the current image has no annotations, so there is nothing to "
+                    f"{name.replace('_', ' ')}. Tell the user to annotate (or run SAM/YOLO/UNet "
+                    "and Accept) first — do NOT claim this succeeded.")
+        if name == "track_particles" and img_count < 2:
+            return ("Error: tracking needs at least 2 images with annotations. "
+                    "Tell the user to load a multi-image sequence and annotate it first.")
+        if name == "start_training" and not self._state.get("train_dataset_dir"):
+            return ("Error: no training dataset directory is set, so training cannot start. "
+                    "The dataset must be exported and finalized first (Export tab → finalize, "
+                    "or finalize_dataset). Do NOT claim training started.")
+        if name == "finalize_dataset" and not self._state.get("export_dataset_dir"):
+            return ("Error: no export dataset directory is set. Annotations must be exported "
+                    "to a dataset first before it can be finalized. Do NOT claim it was rebuilt.")
+
         if name in _NEEDS_CONFIRM:
             summary = params.get("summary", name)
+            self._confirm_event.clear()
             self.confirm_needed.emit(name, summary, params)
-            return "Confirmation dialog shown to user."
+            if not self._confirm_event.wait(timeout=300):
+                return ("No response to the confirmation dialog (timed out). The action did "
+                        "NOT run. Do not claim it completed.")
+            if not self._confirm_result:
+                return (f"The user DECLINED the '{name}' action — it did NOT run. "
+                        "Do not claim it was done; ask the user how they want to proceed.")
+            return (f"The user confirmed and '{name}' was dispatched. It may still take time "
+                    "or fail downstream — do not assert completion details you cannot see; "
+                    "tell the user to watch the relevant tab/log for progress.")
         else:
             is_nav  = name in ("next_image", "prev_image", "go_to_image")
             is_meas = name == "export_measurements"

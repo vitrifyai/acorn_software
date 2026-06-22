@@ -136,10 +136,18 @@ class AssistantPanel(QWidget):
         self._input.installEventFilter(self)
         layout.addWidget(self._input)
 
-        send_btn = QPushButton("Send")
-        send_btn.setStyleSheet("background:#00703C;color:white;font-weight:bold;")
-        send_btn.clicked.connect(self._send)
-        layout.addWidget(send_btn)
+        btn_row = QHBoxLayout()
+        self._send_btn = QPushButton("Send")
+        self._send_btn.setStyleSheet("background:#00703C;color:white;font-weight:bold;")
+        self._send_btn.clicked.connect(self._send)
+        self._stop_btn = QPushButton("Stop")
+        self._stop_btn.setStyleSheet("background:#c0392b;color:white;font-weight:bold;")
+        self._stop_btn.setToolTip("Interrupt the assistant after the current step.")
+        self._stop_btn.clicked.connect(self._stop)
+        self._stop_btn.setEnabled(False)
+        btn_row.addWidget(self._send_btn, 1)
+        btn_row.addWidget(self._stop_btn)
+        layout.addLayout(btn_row)
 
     def _sync_base_url_row(self) -> None:
         compat = self._provider_combo.currentData() == "openai_compat"
@@ -232,7 +240,18 @@ class AssistantPanel(QWidget):
         self._stream_text = ""
         self._streaming   = True
         self._render_timer.start()
+        self._stop_btn.setEnabled(True)
+        self._send_btn.setEnabled(False)
         self._agent.start()
+
+    def _stop(self) -> None:
+        """Interrupt the running agent after its current step."""
+        if self._agent is not None and self._agent.isRunning():
+            self._agent.requestInterruption()
+            # If it's blocked on a confirm dialog, release it as a decline.
+            self._agent.set_confirm_result(False)
+            self._add_note("Stopping…")
+        self._stop_btn.setEnabled(False)
 
     # ------------------------------------------------------------------
     # Agent slots
@@ -256,11 +275,15 @@ class AssistantPanel(QWidget):
         dlg.setInformativeText("Proceed?")
         dlg.setStandardButtons(QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
         dlg.setDefaultButton(QMessageBox.StandardButton.Yes)
-        if dlg.exec() == QMessageBox.StandardButton.Yes:
+        ok = dlg.exec() == QMessageBox.StandardButton.Yes
+        if ok:
             self._items.append(("tool", _tool_label(name, params)))
             self._context.action_requested.emit(name, params)
         else:
             self._items.append(("warn", f"Cancelled: {name}"))
+        # Unblock the agent thread waiting on this confirmation with the real result.
+        if self._agent is not None:
+            self._agent.set_confirm_result(ok)
         self._render()
 
     @pyqtSlot()
@@ -271,6 +294,8 @@ class AssistantPanel(QWidget):
             self._items.append(("asst", self._stream_text))
         self._stream_text = ""
         self._streaming   = False
+        self._stop_btn.setEnabled(False)
+        self._send_btn.setEnabled(True)
         self._render()
 
     @pyqtSlot(str)
@@ -278,6 +303,8 @@ class AssistantPanel(QWidget):
         self._render_timer.stop()
         self._streaming   = False
         self._stream_text = ""
+        self._stop_btn.setEnabled(False)
+        self._send_btn.setEnabled(True)
         self._add_note(f"Error: {msg}")
 
     def _add_note(self, text: str) -> None:
