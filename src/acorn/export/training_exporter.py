@@ -108,17 +108,11 @@ def _mask_to_rle(mask: np.ndarray) -> dict:
     flat = (mask > 0).flatten(order="F").view(np.uint8)
     if flat.size == 0:
         return {"counts": [0], "size": [h, w]}
-    counts: list[int] = []
-    current = 0
-    run = 0
-    for v in flat:
-        if v == current:
-            run += 1
-        else:
-            counts.append(run)
-            run = 1
-            current = v
-    counts.append(run)
+    # Vectorised run-length encoding — a per-pixel Python loop here was the export
+    # bottleneck (millions of iterations per instance × 8 augmentations × image).
+    change = np.flatnonzero(flat[1:] != flat[:-1]) + 1
+    boundaries = np.concatenate(([0], change, [flat.size]))
+    counts = np.diff(boundaries).tolist()
     if flat[0] > 0:          # COCO always starts with the 0-run length
         counts = [0] + counts
     return {"counts": counts, "size": [h, w]}
