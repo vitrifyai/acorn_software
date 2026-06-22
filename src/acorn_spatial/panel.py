@@ -24,7 +24,7 @@ class SpatialPanel(QWidget):
         self._canvas = None
         self._build_ui()
         context.annotations_changed.connect(lambda *_: self._refresh_labels())
-        context.image_loaded.connect(lambda *_: self._refresh_labels())
+        context.image_loaded.connect(self._on_image_loaded)
 
     # ── UI ──────────────────────────────────────────────────────────────────────
 
@@ -86,6 +86,17 @@ class SpatialPanel(QWidget):
         run_btn.setStyleSheet("background:#1a5fa8;color:white;font-weight:bold;")
         run_btn.clicked.connect(self._run)
         layout.addWidget(run_btn)
+
+        ov_row = QHBoxLayout()
+        self._overlay_chk = QCheckBox("Draw clusters + hotspot on the image")
+        self._overlay_chk.setChecked(True)
+        self._overlay_chk.setToolTip("Overlay the cluster colours and hotspot heatmap on the canvas.")
+        clear_ov_btn = QPushButton("Clear overlay")
+        clear_ov_btn.setFixedWidth(110)
+        clear_ov_btn.clicked.connect(self._clear_canvas_overlay)
+        ov_row.addWidget(self._overlay_chk, 1)
+        ov_row.addWidget(clear_ov_btn)
+        layout.addLayout(ov_row)
 
         # results
         self._stats = QTextEdit()
@@ -207,7 +218,34 @@ class SpatialPanel(QWidget):
 
         self._stats.setPlainText("\n".join(lines))
         self._draw_figures(pts_by_label, pooled, nnd, cl, area, wn, hn, unit)
+        if self._overlay_chk.isChecked():
+            self._overlay_on_canvas(pooled, cl.labels, px, wn, hn)
+        else:
+            self._clear_canvas_overlay()
         self._context.set_status(f"Spatial analysis: {nnd.verdict}", timeout_ms=4000)
+
+    # ── canvas overlay ───────────────────────────────────────────────────────────
+
+    def _overlay_on_canvas(self, pooled_nm, labels, px, wn, hn) -> None:
+        cw = self._context.canvas_widget()
+        if cw is None:
+            return
+        import numpy as np
+        pts_px = pooled_nm / px                          # nm → image pixels (aligned with labels)
+        w_px, h_px = wn / px, hn / px
+        kde, _ = S.kde_grid(pts_px, w_px, h_px, n_grid=160,
+                            bandwidth_nm=(self._bandwidth.value() / px) if self._bandwidth.value() else None)
+        extent = (0, w_px, h_px, 0) if kde is not None else None
+        cw.show_spatial_overlay(pts_px, labels, kde=kde, kde_extent=extent)
+
+    def _clear_canvas_overlay(self) -> None:
+        cw = self._context.canvas_widget()
+        if cw is not None and hasattr(cw, "clear_spatial_overlay"):
+            cw.clear_spatial_overlay()
+
+    def _on_image_loaded(self, *_) -> None:
+        self._clear_canvas_overlay()   # stale overlay belongs to the previous image
+        self._refresh_labels()
 
     def _run_batch(self, labels: set[str]) -> None:
         ctx = self._context
@@ -233,6 +271,7 @@ class SpatialPanel(QWidget):
             else:
                 rows.append(f"{name[:28]:<28} {pooled.shape[0]:>4} {'—':>9} {'—':>6} {'—':>8}  (too few)")
         self._stats.setPlainText("\n".join(rows))
+        self._clear_canvas_overlay()
         self._fig.clear(); self._canvas.draw_idle()
 
     # ── figures ────────────────────────────────────────────────────────────────────

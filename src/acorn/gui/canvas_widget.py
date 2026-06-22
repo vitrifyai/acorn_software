@@ -118,6 +118,7 @@ class CanvasWidget(QWidget):
         # ── persistent region overlays ────────────────────────────────────────
         self._exclude_artists: list = []
         self._crop_artists: list = []
+        self._spatial_artists: list = []   # spatial-analysis cluster/hotspot overlay
         self._profile_overlays: list[list] = []   # groups of artists per profile
         self._live_profile_artists: list = []      # replaced on every drag motion
 
@@ -404,6 +405,49 @@ class CanvasWidget(QWidget):
             except Exception:
                 pass
         self._crop_artists.clear()
+        self._mpl_canvas.draw_idle()
+
+    # ── spatial-analysis overlay (clusters + hotspot heatmap) ───────────────────
+    _SPATIAL_PALETTE = ["#4878D0", "#EE854A", "#6ACC65", "#D65F5F", "#956CB4",
+                        "#8C613C", "#DC7EC0", "#FFD43B", "#D5BB67", "#82C6E2"]
+
+    def show_spatial_overlay(self, points_px, cluster_labels=None,
+                             kde=None, kde_extent=None) -> None:
+        """Draw cluster-coloured feature markers and/or a KDE hotspot heatmap on
+        the image. points_px is (N,2) in image pixels; cluster_labels[i] = cluster
+        id (-1 = isolated). kde is a 2-D density grid with kde_extent (l,r,b,t)."""
+        import numpy as _np
+        self.clear_spatial_overlay()
+        ax = self.canvas.ax
+        if kde is not None and kde_extent is not None:
+            im = ax.imshow(kde, extent=kde_extent, origin="upper", cmap="inferno",
+                           alpha=0.45, zorder=6, interpolation="bilinear")
+            self._spatial_artists.append(im)
+        if points_px is not None and len(points_px):
+            pts = _np.asarray(points_px, dtype=float)
+            if cluster_labels is None:
+                cluster_labels = _np.zeros(len(pts), dtype=int)
+            labels = _np.asarray(cluster_labels)
+            noise = labels == -1
+            if noise.any():
+                sc = ax.scatter(pts[noise, 0], pts[noise, 1], s=18, marker="x",
+                                color="#bbbbbb", linewidths=0.8, zorder=11)
+                self._spatial_artists.append(sc)
+            for c in sorted(set(labels[labels >= 0].tolist())):
+                m = labels == c
+                col = self._SPATIAL_PALETTE[c % len(self._SPATIAL_PALETTE)]
+                sc = ax.scatter(pts[m, 0], pts[m, 1], s=26, color=col,
+                                edgecolors="#101010", linewidths=0.5, zorder=12)
+                self._spatial_artists.append(sc)
+        self._mpl_canvas.draw_idle()
+
+    def clear_spatial_overlay(self) -> None:
+        for a in self._spatial_artists:
+            try:
+                a.remove()
+            except Exception:
+                pass
+        self._spatial_artists.clear()
         self._mpl_canvas.draw_idle()
 
     def _clear_sam_box_artists(self) -> None:
