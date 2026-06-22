@@ -3355,19 +3355,28 @@ class MainWindow(QMainWindow):
             return
         if self._sam_busy():
             return
-        norm = self._canvas_widget.canvas.norm_image
-        if norm is None:
+        img = self._canvas_widget.canvas.dm4
+        if img is None or img.raw is None:
             return
-        import numpy as np
-        from acorn.render.canvas import _make_display_array
-        img8 = (_make_display_array(np.clip(norm, 0.0, 1.0)) * 255).astype(np.uint8)
+        params = self._contrast_panel.params()
         self._sam_panel.set_sam_status("Encoding image…")
 
         def _run():
-            result = self._sam_predictor.encode_image(img8)
-            return result  # True = loaded from disk, False = recomputed
+            # Compute the SAME full-res working image the prompt path uses, off
+            # the UI thread, and encode it — so the first click hits both the
+            # img8 cache and the embedding cache instead of freezing the GUI.
+            from acorn.core.contrast import apply_contrast
+            import numpy as np
+            norm = apply_contrast(img.raw, params)
+            img8 = (np.clip(norm, 0.0, 1.0) * 255).astype(np.uint8)
+            from_cache = self._sam_predictor.encode_image(img8)
+            return img8, from_cache
 
-        def _done(from_cache):
+        def _done(result):
+            img8, from_cache = result
+            # Prime the working-image cache so _get_sam_working_image is instant.
+            if self._canvas_widget.canvas.dm4 is img:
+                self._sam_img8_cache = (img, params, img8)
             if from_cache is True:
                 self._sam_panel.set_sam_status("Ready  (embedding loaded from cache).")
             else:
@@ -5129,7 +5138,41 @@ class MainWindow(QMainWindow):
     # ── application quit ──────────────────────────────────────────────────────
 
     def closeEvent(self, event) -> None:
-        """Tear down plugins on quit."""
+        """Stop background threads, then tear down plugins on quit.
+
+        Destroying a running QThread aborts the process ("QThread: Destroyed
+        while thread is still running"), so wait for each in-flight worker to
+        finish (bounded) before shutting down.
+        """
+        for attr in ("_thread", "_image_load_thread", "_frame_proc_thread",
+                     "_sam_thread", "_yolo_thread", "_unet_thread",
+                     "_train_thread", "_batch_export_thread"):
+            t = getattr(self, attr, None)
+            if t is None:
+                continue
+            try:
+                if t.isRunning():
+                    t.quit()                 # stop event-loop threads (no-op for run-once)
+                    if not t.wait(3000):     # give run() up to 3s to return
+                        t.terminate()
+                        t.wait(1000)
+            except RuntimeError:
+                pass  # underlying C++ object already deleted
+
+        # Stop the training subprocess + its log-tail timer if active
+        proc = getattr(self, "_train_proc", None)
+        if proc is not None:
+            try:
+                proc.terminate()
+            except Exception:
+                pass
+        timer = getattr(self, "_train_tail_timer", None)
+        if timer is not None:
+            try:
+                timer.stop()
+            except RuntimeError:
+                pass
+
         for plugin in getattr(self, "_plugins", []):
             plugin.teardown()
         super().closeEvent(event)

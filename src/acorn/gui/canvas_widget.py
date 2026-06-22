@@ -412,33 +412,41 @@ class CanvasWidget(QWidget):
                 a.remove()
             except Exception:
                 pass
+            try:
+                self.canvas._overlay_artists.remove(a)
+            except (ValueError, AttributeError):
+                pass
         self._sam_box_artists.clear()
-        try:
-            self.canvas.ax.figure.canvas.draw_idle()
-        except Exception:
-            pass
+        self.canvas.blit_annotations()
 
-    def _update_sam_box_preview(self, x2: float, y2: float) -> None:
-        """Redraw the dashed-rectangle preview from the box anchor to (x2, y2)."""
-        if self._sam_box_anchor is None:
+    def _update_sam_box_preview(self, x2: float, y2: float, origin=None) -> None:
+        """Update the dashed-rectangle preview from the anchor/origin to (x2, y2).
+
+        origin lets the drag-to-draw path (exclude/crop) preview from the press
+        point; the two-click box path uses the stored anchor. Uses a persistent
+        Rectangle + blit (not draw_idle) so dragging stays fast on large images
+        — a full re-render per motion event was ~110 ms.
+        """
+        anchor = origin if origin is not None else self._sam_box_anchor
+        if anchor is None:
             return
-        import matplotlib.patches as mpatches
-        x0, y0 = self._sam_box_anchor
-        self._clear_sam_box_artists()
+        x0, y0 = anchor
         rx, ry = min(x0, x2), min(y0, y2)
         rw, rh = abs(x2 - x0), abs(y2 - y0)
-        rect = mpatches.Rectangle(
-            (rx, ry), rw, rh,
-            linewidth=1.5, edgecolor="#4d8ec4", facecolor="none",
-            linestyle="--", alpha=0.9,
-        )
-        self.canvas.ax.add_patch(rect)
-        self._sam_box_artists.append(rect)
-        try:
-            self.canvas.ax.figure.canvas.draw_idle()
-        except Exception:
-            pass
-        self._mpl_canvas.draw_idle()
+        if self._sam_box_artists:
+            self._sam_box_artists[0].set_bounds(rx, ry, rw, rh)
+        else:
+            import matplotlib.patches as mpatches
+            rect = mpatches.Rectangle(
+                (rx, ry), rw, rh,
+                linewidth=1.5, edgecolor="#4d8ec4", facecolor="none",
+                linestyle="--", alpha=0.9, zorder=10,
+            )
+            self.canvas.ax.add_patch(rect)
+            self._sam_box_artists.append(rect)
+            if rect not in self.canvas._overlay_artists:
+                self.canvas._overlay_artists.append(rect)
+        self.canvas.blit_annotations()
 
     def update_nav_label(self, current: int, total: int) -> None:
         self._nav_label.setText(f"{current} / {total}")
@@ -749,9 +757,14 @@ class CanvasWidget(QWidget):
         if self._rubber_band_pts and event.inaxes is not None and event.xdata is not None:
             self._update_rubber_band_preview(float(event.xdata), float(event.ydata))
 
-        # ── SAM box live preview ───────────────────────────────────────────────
-        if self._sam_box_anchor is not None and event.inaxes is not None and event.xdata is not None:
-            self._update_sam_box_preview(float(event.xdata), float(event.ydata))
+        # ── SAM box live preview (two-click anchor, or drag from press point) ──
+        if self._tool == "sam" and event.inaxes is not None and event.xdata is not None:
+            if self._sam_box_anchor is not None:
+                self._update_sam_box_preview(float(event.xdata), float(event.ydata))
+            elif self._sam_press is not None:
+                self._update_sam_box_preview(
+                    float(event.xdata), float(event.ydata), origin=self._sam_press
+                )
 
         # ── drag preview update ───────────────────────────────────────────────
         if not self._drag_active or self._drag_start is None:
@@ -809,6 +822,10 @@ class CanvasWidget(QWidget):
                     min(x0, x1), min(y0, y1), max(x0, x1), max(y0, y1)
                 )
                 return
+            # Plain click (no real drag): drop any stray drag-preview rectangle
+            # so it doesn't linger over a point-mode click.
+            if self._sam_box_anchor is None and self._sam_box_artists:
+                self._clear_sam_box_artists()
         self._sam_press = None
 
         # Clear annotation move/resize state on any release
