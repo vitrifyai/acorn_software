@@ -82,6 +82,7 @@ acorn_tracking  = "acorn_tracking.plugin:TrackingPlugin"
 acorn_3d        = "acorn_3d.plugin:VolumePlugin"
 acorn_llm       = "acorn_llm.plugin:LLMPlugin"
 acorn_plotting  = "acorn_plotting.clu_integration:PlottingPlugin"
+acorn_spatial   = "acorn_spatial.plugin:SpatialPlugin"
 
 [tool.hatch.build.targets.wheel]
 packages = [
@@ -91,6 +92,7 @@ packages = [
     "src/acorn_3d",
     "src/acorn_llm",
     "src/acorn_plotting",
+    "src/acorn_spatial",
 ]
 
 

@@ -110,6 +110,7 @@ signal on `AcornContext`.
 | `acorn_analysis` | **Measure** tab | Surface area estimation and particle shape measurements (ECD, Feret, circularity) from ROI masks; single or batch; multi-GPU |
 | `acorn_tracking` | Floating dock (View → Particle Tracking) | Particle / feature tracking across image sequences; configurable displacement and gap tolerance |
 | `acorn_3d` | Floating dock (View → 3D Viewer) | Volume rendering and z-slice navigation for MRC tomograms |
+| `acorn_spatial` | Floating dock (View → Spatial Analysis) | Spatial statistics on detected features: nearest-neighbour + Clark-Evans clustering, DBSCAN clusters, KDE hotspots, local crowding, Ripley's K, and cross-label association (e.g. are spores near nanopillars?) |
 | `acorn_llm` | Floating dock (View → AI Assistant) | Natural-language AI assistant; requires API key or Ollama base URL (see below) |
 | `acorn_plotting` | Floating dock | Publication-quality interactive plots, statistical analysis, hover/click data linking (see below) |
 
