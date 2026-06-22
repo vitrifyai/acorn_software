@@ -139,11 +139,16 @@ class SpatialPanel(QWidget):
 
         from matplotlib.figure import Figure
         from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg
-        self._fig = Figure(figsize=(5.5, 6.5), facecolor="none")
+        # Match ACORN's dark theme (a QSS stylesheet, not a palette, so we can't
+        # read it from palette()); #1a1a1a is the in-app matplotlib-on-dark colour.
+        self._fig_bg = "#1e1e1e"
+        self._fig = Figure(figsize=(5.5, 6.5), facecolor=self._fig_bg)
         self._canvas = FigureCanvasQTAgg(self._fig)
+        self._canvas.setStyleSheet("background-color: transparent;")
         self._canvas.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
-        self._canvas.setMinimumHeight(420)
+        self._canvas.setMinimumHeight(360)
         layout.addWidget(self._canvas, 1)
+        self._show_placeholder()
 
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
@@ -449,13 +454,29 @@ class SpatialPanel(QWidget):
                       "nnd": np.array([])}
         self._save_btn.setEnabled(True)
         self._clear_canvas_overlay()
-        self._fig.clear(); self._canvas.draw_idle()
+        self._show_placeholder("Per-image summary shown above.\n(No figure in batch mode.)")
 
     # ── figures ────────────────────────────────────────────────────────────────────
+
+    def _show_placeholder(self, msg=None) -> None:
+        """Dark, themed empty state instead of a glaring white canvas."""
+        self._fig.clear()
+        self._fig.patch.set_facecolor(self._fig_bg)
+        ax = self._fig.add_subplot(111)
+        ax.set_facecolor(self._fig_bg)
+        for s in ax.spines.values():
+            s.set_visible(False)
+        ax.set_xticks([]); ax.set_yticks([])
+        ax.text(0.5, 0.5,
+                msg or "Run Spatial Analysis to see cluster, hotspot,\n"
+                       "nearest-neighbour and Ripley figures here.",
+                ha="center", va="center", color="#888888", fontsize=10)
+        self._canvas.draw_idle()
 
     def _draw_figures(self, pts_by_label, pooled, nnd, cl, area, wn, hn, unit) -> None:
         fig = self._fig
         fig.clear()
+        fig.patch.set_facecolor(self._fig_bg)
         ax1 = fig.add_subplot(2, 2, 1)   # cluster scatter
         ax2 = fig.add_subplot(2, 2, 2)   # hotspot KDE
         ax3 = fig.add_subplot(2, 2, 3)   # NND histogram
@@ -506,6 +527,22 @@ class SpatialPanel(QWidget):
             ax4.axhline(0, color="#888888", lw=0.8)
         ax4.set_title("Ripley's L − r  (>0 clustered)", fontsize=9)
         ax4.set_xlabel(f"radius ({unit})", fontsize=8); ax4.tick_params(labelsize=7)
+
+        # Dark theme: dark plot panels + light text, to match the rest of ACORN.
+        for ax in fig.axes:
+            ax.set_facecolor(self._fig_bg)
+            ax.tick_params(colors="#cccccc", labelsize=7)
+            ax.title.set_color("#e6e6e6")
+            ax.xaxis.label.set_color("#cccccc")
+            ax.yaxis.label.set_color("#cccccc")
+            for s in ax.spines.values():
+                s.set_edgecolor("#555555")
+            leg = ax.get_legend()
+            if leg is not None:
+                leg.get_frame().set_facecolor(self._fig_bg)
+                leg.get_frame().set_edgecolor("#555555")
+                for t in leg.get_texts():
+                    t.set_color("#cccccc")
 
         fig.tight_layout()
         self._canvas.draw_idle()
