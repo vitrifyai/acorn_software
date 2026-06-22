@@ -351,7 +351,8 @@ class SpatialPanel(QWidget):
         self._refresh_labels()
 
     def run_from_clu(self, labels=None) -> None:
-        """Entry point for the CLU assistant: tick labels (or all) and run."""
+        """Entry point for the CLU assistant: tick labels (or all), run, and
+        report a concise real result back to the agent."""
         self._refresh_labels()
         want = {str(x) for x in labels} if labels else None
         for i in range(self._label_list.count()):
@@ -360,6 +361,12 @@ class SpatialPanel(QWidget):
             it.setCheckState(Qt.CheckState.Checked if checked else Qt.CheckState.Unchecked)
         self._scope.setCurrentIndex(0)   # current image
         self._run()
+        # Report the actual outcome so the assistant states facts, not guesses.
+        result = self._stats.toPlainText().strip() or "Spatial analysis produced no result."
+        if hasattr(self._context, "report_action_result"):
+            self._context.report_action_result(
+                "Spatial analysis complete (results also shown in the Spatial panel):\n"
+                + result)
 
     def _condition_for(self, name: str) -> str:
         pat = self._group_re.text().strip()
@@ -391,9 +398,13 @@ class SpatialPanel(QWidget):
             keys = list(pts_by.keys())
             pooled = np.vstack([pts_by[k] for k in keys]) if keys else np.empty((0, 2))
             if pooled.shape[0] >= 2:
-                # study window = point bounding box (no per-image dims available)
-                lo = pooled.min(0); span = pooled.max(0) - lo
-                wn, hn = float(max(span[0], 1)), float(max(span[1], 1))
+                # Prefer the true field of view; fall back to the point bbox.
+                shape = ctx.image_shape_for_index(idx)
+                if shape is not None:
+                    hn, wn = shape[0] * px, shape[1] * px
+                else:
+                    lo = pooled.min(0); span = pooled.max(0) - lo
+                    wn, hn = float(max(span[0], 1)), float(max(span[1], 1))
                 nnd = S.nearest_neighbour(pooled, wn * hn, wn, hn, n_mc=self._mc.value())
                 cl = S.dbscan(pooled, self._eps.value(), self._min_samples.value())
                 per_cond.setdefault(cond, []).append(nnd.clark_evans_R)

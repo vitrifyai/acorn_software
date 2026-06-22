@@ -38,6 +38,8 @@ class AcornContext(QObject):
         super().__init__()
         self._window_ref = weakref.ref(main_window)
         self._nav_loaded_event = threading.Event()
+        self._action_event = threading.Event()
+        self._action_result: Optional[str] = None
         self.image_loaded.connect(self._on_image_loaded_set_event)
 
     def _on_image_loaded_set_event(self, _img=None) -> None:
@@ -50,6 +52,23 @@ class AcornContext(QObject):
     def wait_for_image_load(self, timeout: float = 10.0) -> bool:
         """Block until image_loaded fires (or timeout). Call after arm_nav_wait()."""
         return self._nav_loaded_event.wait(timeout=timeout)
+
+    # ── action result channel (lets a dispatched tool return a real outcome) ────
+    def begin_action_wait(self) -> None:
+        """Arm the result event before emitting a result-returning action."""
+        self._action_event.clear()
+        self._action_result = None
+
+    def report_action_result(self, message: str) -> None:
+        """Called by a handler (UI thread) once the action has actually run."""
+        self._action_result = message
+        self._action_event.set()
+
+    def wait_for_action_result(self, timeout: float = 30.0) -> Optional[str]:
+        """Block (agent thread) until report_action_result, or None on timeout."""
+        if self._action_event.wait(timeout=timeout):
+            return self._action_result
+        return None
 
     def _w(self) -> Optional["MainWindow"]:
         return self._window_ref()
@@ -109,6 +128,39 @@ class AcornContext(QObject):
             return None
         p = w._image_paths[idx]
         return p.parent / f".{p.stem}.acorn.json"
+
+    def image_shape_for_index(self, idx: int) -> Optional[tuple[int, int]]:
+        """Return (height, width) in pixels for image at idx, or None.
+
+        Uses the live/cached image when available, else reads only the file
+        header (no pixel decode) so batch spatial analysis can use the true
+        field of view instead of a point bounding box.
+        """
+        w = self._w()
+        if w is None or not (0 <= idx < len(w._image_paths)):
+            return None
+        if idx == w._img_idx:
+            img = w._canvas_widget.canvas.dm4
+            if img is not None and img.shape:
+                return (int(img.shape[0]), int(img.shape[1]))
+        cached = w._image_cache.get(idx)
+        if cached is not None and getattr(cached, "shape", None):
+            return (int(cached.shape[0]), int(cached.shape[1]))
+        path = w._image_paths[idx]
+        ext = path.suffix.lower()
+        try:
+            if ext in (".png", ".jpg", ".jpeg", ".tif", ".tiff", ".bmp"):
+                from PIL import Image
+                with Image.open(str(path)) as im:
+                    wpx, hpx = im.size      # PIL .size is lazy (header only)
+                    return (int(hpx), int(wpx))
+            if ext in (".mrc", ".mrcs"):
+                import mrcfile
+                with mrcfile.open(str(path), permissive=True, header_only=True) as m:
+                    return (int(m.header.ny), int(m.header.nx))
+        except Exception:
+            return None
+        return None
 
     def pixel_size_for_index(self, idx: int) -> float:
         """Return calibrated pixel size for image at idx.
