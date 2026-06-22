@@ -23,6 +23,7 @@ class ExportPanel(QWidget):
     training_export_requested = pyqtSignal(str)            # dataset directory (add now)
     queue_requested           = pyqtSignal(str)            # dataset directory (queue image)
     batch_export_requested    = pyqtSignal(str)            # dataset directory (export all queued)
+    batch_cancel_requested    = pyqtSignal()               # cancel a running batch export
     clear_queue_requested     = pyqtSignal()               # clear the export queue
     import_negatives_requested = pyqtSignal()              # open file picker for negative images
     finalize_requested        = pyqtSignal(str, float, float, object)  # dir, val_frac, test_frac, assignments
@@ -241,8 +242,14 @@ class ExportPanel(QWidget):
         clear_btn = QPushButton("Clear Queue")
         clear_btn.setToolTip("Remove all images from the queue without exporting.")
         clear_btn.clicked.connect(self._on_clear_queue)
+        self._cancel_export_btn = QPushButton("Cancel Export")
+        self._cancel_export_btn.setStyleSheet("background:#c0392b;color:white;font-weight:bold;")
+        self._cancel_export_btn.setToolTip("Stop the running export at the next image/tile boundary.")
+        self._cancel_export_btn.clicked.connect(self._on_cancel_export)
+        self._cancel_export_btn.setVisible(False)
         batch_row.addWidget(self._batch_btn, 3)
         batch_row.addWidget(clear_btn, 1)
+        batch_row.addWidget(self._cancel_export_btn, 2)
         train_layout.addLayout(batch_row)
 
         self._train_status = QLabel("")
@@ -380,6 +387,19 @@ class ExportPanel(QWidget):
 
     def set_train_status(self, msg: str) -> None:
         self._train_status.setText(msg)
+
+    def set_export_running(self, running: bool) -> None:
+        """Toggle the batch/cancel buttons while an export is in flight."""
+        self._cancel_export_btn.setVisible(running)
+        self._batch_btn.setEnabled(not running)
+        if running:
+            self._cancel_export_btn.setEnabled(True)
+            self._cancel_export_btn.setText("Cancel Export")
+
+    def _on_cancel_export(self) -> None:
+        self._cancel_export_btn.setEnabled(False)
+        self._cancel_export_btn.setText("Cancelling…")
+        self.batch_cancel_requested.emit()
 
     def set_image_progress(self, current: int, total: int) -> None:
         self._image_progress.setRange(0, total)

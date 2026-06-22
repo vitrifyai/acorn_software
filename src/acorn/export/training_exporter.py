@@ -349,6 +349,7 @@ def add_image(
     params: "ContrastParams",
     config: TrainingConfig | None = None,
     progress_callback=None,
+    should_cancel=None,
 ) -> dict:
     """
     Tile, augment, and export one annotated image into the training dataset.
@@ -427,6 +428,8 @@ def add_image(
         prompts_grp = h5.require_group("prompts")
 
         for tile_num, tile in enumerate(tiles, start=1):
+            if should_cancel is not None and should_cancel():
+                break
             if progress_callback is not None:
                 progress_callback(tile_num, n_tiles_total)
             tile_img   = tile["img"]
@@ -472,10 +475,11 @@ def add_image(
                 instances  = cv["instances"]
                 img_key    = str(next_img_id)
 
-                # write tile image to HDF5
+                # write tile image to HDF5 (light gzip — level 4 was a major write
+                # bottleneck; level 1 is ~the same size on 8-bit tiles, much faster)
                 ds = images_grp.create_dataset(
                     img_key, data=aug_img,
-                    compression="gzip", compression_opts=4, shuffle=True,
+                    compression="gzip", compression_opts=1, shuffle=True,
                 )
                 ds.attrs["width"]           = tw
                 ds.attrs["height"]          = th
@@ -508,9 +512,10 @@ def add_image(
                     cat_id  = _cat_id_for(label, categories)
                     ann_key = str(next_ann_id)
 
+                    # Binary masks compress fast and well with lzf; gzip level 6
+                    # here was extremely slow per instance × augmentation.
                     mds = img_masks_grp.create_dataset(
-                        ann_key, data=m,
-                        compression="gzip", compression_opts=6,
+                        ann_key, data=m, compression="lzf",
                     )
                     mds.attrs["label"]       = label
                     mds.attrs["category_id"] = cat_id

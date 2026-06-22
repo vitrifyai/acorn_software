@@ -252,9 +252,14 @@ class BatchExportThread(QThread):
 
     def __init__(self, items: list[dict], dataset_dir: str, config, parent=None):
         super().__init__(parent)
+        self._cancelled   = False
         self._items       = items        # list of {dm4img, store_snapshot, params, stem}
         self._dataset_dir = dataset_dir
         self._config      = config
+
+    def cancel(self) -> None:
+        """Request the export stop at the next image / tile boundary."""
+        self._cancelled = True
 
     def run(self) -> None:
         from acorn.export.training_exporter import add_image
@@ -264,6 +269,9 @@ class BatchExportThread(QThread):
         n = len(self._items)
 
         for i, item in enumerate(self._items):
+            if self._cancelled:
+                self.image_status.emit(f"Export cancelled after {i} of {n} image(s).")
+                break
             stem = item["stem"]
             self.image_progress.emit(i + 1, n)
             self.image_status.emit(f"[{i + 1}/{n}] {stem} — preparing…")
@@ -304,6 +312,7 @@ class BatchExportThread(QThread):
                     item["params"],
                     cfg,
                     progress_callback=_cb,
+                    should_cancel=lambda: self._cancelled,
                 )
                 results.append(result)
                 self.item_done.emit(i, stem)
@@ -1330,6 +1339,7 @@ class MainWindow(QMainWindow):
         self._export_panel.training_export_requested.connect(self._on_training_export)
         self._export_panel.queue_requested.connect(self._on_queue_image)
         self._export_panel.batch_export_requested.connect(self._on_batch_export)
+        self._export_panel.batch_cancel_requested.connect(self._on_batch_cancel)
         self._export_panel.clear_queue_requested.connect(self._on_clear_queue)
         self._export_panel.import_negatives_requested.connect(self._on_import_negatives)
         self._export_panel.finalize_requested.connect(self._on_finalize_dataset)
@@ -3165,9 +3175,16 @@ class MainWindow(QMainWindow):
             lambda idx, msg: self._export_panel.set_train_status(f"Error: {msg}")
         )
         self._batch_export_thread.finished.connect(self._on_batch_export_done)
+        self._export_panel.set_export_running(True)
         self._batch_export_thread.start()
 
+    def _on_batch_cancel(self) -> None:
+        if self._batch_export_thread is not None and self._batch_export_thread.isRunning():
+            self._batch_export_thread.cancel()
+            self._export_panel.set_train_status("Cancelling export — finishing current image…")
+
     def _on_batch_export_done(self, results: list) -> None:
+        self._export_panel.set_export_running(False)
         self._export_panel.reset_train_progress()
         total_aug   = sum(r.get("n_augmented", 0) for r in results)
         total_inst  = sum(r.get("n_instances_total", 0) for r in results)
