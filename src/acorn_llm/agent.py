@@ -671,6 +671,13 @@ except ImportError:
 
 _NEEDS_CONFIRM = {t["name"] for t in _TOOLS if t["needs_confirm"]}
 
+# Tools whose handler reports a real outcome back to the agent (count / path /
+# verdict) via the action-result channel, so the assistant states facts.
+_RESULT_TOOLS = {
+    "spatial_analysis", "run_yolo_detect", "run_yolo_segment", "run_unet",
+    "run_sam_auto", "export_masks", "finalize_dataset",
+}
+
 
 def _to_anthropic_tools(tools: list[dict]) -> list[dict]:
     out = []
@@ -1476,18 +1483,19 @@ class LLMAgent(QThread):
         else:
             is_nav  = name in ("next_image", "prev_image", "go_to_image")
             is_meas = name == "export_measurements"
-            # Result-returning actions: wait for the handler to report a real outcome.
-            is_result = name == "spatial_analysis"
+            # Result-returning actions block until their handler reports a real
+            # outcome (count / path / verdict) instead of a blind "dispatched".
+            is_result = name in _RESULT_TOOLS
             if is_nav and self._context is not None:
                 self._context.arm_nav_wait()   # clear event BEFORE signal fires
             if is_result and self._context is not None:
                 self._context.begin_action_wait()
             self.tool_called.emit(name, params)
             if is_result:
-                res = (self._context.wait_for_action_result(timeout=60.0)
+                res = (self._context.wait_for_action_result(timeout=120.0)
                        if self._context is not None else None)
-                return res or ("Spatial analysis was dispatched (no result returned in time) — "
-                               "tell the user to check the Spatial Analysis panel.")
+                return res or (f"'{name}' was dispatched but returned no result in time — "
+                               "tell the user to check the relevant panel; do not assert it succeeded.")
             if is_meas:
                 return (
                     "Measurements exported and displayed. "

@@ -2971,6 +2971,7 @@ class MainWindow(QMainWindow):
         rois = [a for a in store if getattr(a, "type", None) == "roi"]
         if not rois:
             self._export_panel.set_status("No ROI regions to export.")
+            self._report_clu("No ROI regions on the image — nothing to export as masks.")
             return
         try:
             from acorn.export.mask_exporter import export_masks
@@ -2980,8 +2981,11 @@ class MainWindow(QMainWindow):
             self._statusbar.showMessage(
                 f"Mask → {result['mask_path']}  Labels → {result['json_path']}"
             )
+            self._report_clu(f"Exported {n} ROI region(s) to {result['mask_path']} "
+                             f"(+ labels JSON).")
         except Exception as e:
             self._export_panel.set_status(self._format_write_error(e, stem))
+            self._report_clu(f"Mask export failed: {self._format_write_error(e, stem)}")
 
     def _on_training_export(self, dataset_dir: str) -> None:
         import shutil
@@ -3644,6 +3648,12 @@ class MainWindow(QMainWindow):
                 "Accept All to keep all remaining masks."
             )
             self._statusbar.showMessage(f"{active} auto-segment: {n} masks found — click to select, Delete to remove.")
+            if n:
+                self._report_clu(f"SAM auto-segment produced {n} mask(s), added as pending "
+                                 "annotations. Tell the user to Accept All to keep them.")
+            else:
+                self._report_clu("SAM auto-segment produced 0 masks — nothing was added. "
+                                 "Do NOT claim masks were made.")
             if _batch_done_cb is not None:
                 _batch_done_cb()
 
@@ -3652,6 +3662,7 @@ class MainWindow(QMainWindow):
         self._sam_thread.error.connect(
             lambda e: (
                 self._sam_panel.set_sam_status(f"Error: {e}"),
+                self._report_clu(f"SAM auto-segment failed: {e}"),
                 _batch_done_cb() if _batch_done_cb else None,
             )
         )
@@ -4288,8 +4299,11 @@ class MainWindow(QMainWindow):
                 f"Dataset finalized -> {dataset_dir}/splits/  "
                 f"train={sc['train']} val={sc['val']} test={sc['test']}"
             )
+            self._report_clu(f"Dataset finalized at {dataset_dir}: "
+                             f"train={sc['train']}, val={sc['val']}, test={sc['test']} tiles.")
         except Exception as e:
             self._export_panel.set_fin_status(f"Error: {e}")
+            self._report_clu(f"Dataset finalize failed: {e}")
 
     # ── YOLO handlers ─────────────────────────────────────────────────────────
 
@@ -4366,9 +4380,17 @@ class MainWindow(QMainWindow):
                 f"{len(detections)} detection(s). Undo unwanted, then Accept All."
             )
             self._statusbar.showMessage(f"YOLO: {len(detections)} detection(s).")
+            if detections:
+                self._report_clu(f"YOLO produced {len(detections)} detection(s), added as "
+                                 "pending annotations. Tell the user to Accept All to keep them.")
+            else:
+                self._report_clu("YOLO produced 0 detections — nothing was added. Suggest the "
+                                 "user lower the confidence threshold or check the model. Do NOT "
+                                 "claim detections were made.")
 
         def _err(msg):
             self._yolo_panel.set_status(f"Error: {msg}")
+            self._report_clu(f"YOLO detection failed: {msg}")
 
         self._yolo_thread = SAMThread(_run, self)
         self._yolo_thread.finished.connect(_done)
@@ -4499,9 +4521,16 @@ class MainWindow(QMainWindow):
                 f"{len(masks)} mask(s) found. Undo unwanted, then Accept All."
             )
             self._statusbar.showMessage(f"UNet: {len(masks)} instance mask(s).")
+            if masks:
+                self._report_clu(f"UNet produced {len(masks)} mask(s), added as pending "
+                                 "annotations. Tell the user to Accept All to keep them.")
+            else:
+                self._report_clu("UNet produced 0 masks — nothing was added. Do NOT claim "
+                                 "masks were made; suggest adjusting the threshold/min-area.")
 
         def _err(msg):
             self._unet_panel.set_status(f"Error: {msg}")
+            self._report_clu(f"UNet segmentation failed: {msg}")
 
         self._unet_thread = SAMThread(_run, self)
         self._unet_thread.finished.connect(_done)
@@ -4718,8 +4747,23 @@ class MainWindow(QMainWindow):
 
     # ── LLM assistant action dispatcher ──────────────────────────────────────
 
+    _CLU_RESULT_ACTIONS = {
+        "spatial_analysis", "run_yolo_detect", "run_yolo_segment", "run_unet",
+        "run_sam_auto", "export_masks", "finalize_dataset",
+    }
+
+    def _report_clu(self, message: str) -> None:
+        """Report a real outcome back to a waiting CLU agent (once per action)."""
+        if getattr(self, "_clu_result_pending", False):
+            self._clu_result_pending = False
+            try:
+                self._context.report_action_result(message)
+            except Exception:
+                pass
+
     def _on_action_requested(self, action: str, params: dict) -> None:
         print(f"[_on_action_requested] action={action} params={params}", flush=True)
+        self._clu_result_pending = action in self._CLU_RESULT_ACTIONS
         if action == "run_sam_auto":
             label = params.get("label", "")
             if label:
@@ -4796,6 +4840,8 @@ class MainWindow(QMainWindow):
                 panel = dock.widget()
                 if panel is not None and hasattr(panel, "run_from_clu"):
                     panel.run_from_clu(params.get("labels"))
+                    self._report_clu("Spatial analysis complete (also shown in the "
+                                     "Spatial panel):\n" + panel.clu_result_text())
 
         elif action == "load_yolo":
             self._yolo_panel._on_load_model()

@@ -361,12 +361,11 @@ class SpatialPanel(QWidget):
             it.setCheckState(Qt.CheckState.Checked if checked else Qt.CheckState.Unchecked)
         self._scope.setCurrentIndex(0)   # current image
         self._run()
-        # Report the actual outcome so the assistant states facts, not guesses.
-        result = self._stats.toPlainText().strip() or "Spatial analysis produced no result."
-        if hasattr(self._context, "report_action_result"):
-            self._context.report_action_result(
-                "Spatial analysis complete (results also shown in the Spatial panel):\n"
-                + result)
+
+    def clu_result_text(self) -> str:
+        """Concise outcome string for the CLU assistant after run_from_clu()."""
+        return (self._stats.toPlainText().strip()
+                or "Spatial analysis produced no result.")
 
     def _condition_for(self, name: str) -> str:
         pat = self._group_re.text().strip()
