@@ -71,6 +71,26 @@ _TOOLS: list[dict] = [
         "needs_confirm": False,
     },
     {
+        "name": "spatial_analysis",
+        "description": (
+            "Run spatial-statistics on the current image's detected features: "
+            "nearest-neighbour clustering (Clark-Evans), DBSCAN clusters, hotspot "
+            "density, and — when two or more labels are given — cross-label "
+            "association (e.g. are spores near nanopillars?). Opens the Spatial "
+            "Analysis panel and draws clusters/hotspots on the image. Requires "
+            "annotations on the current image."
+        ),
+        "properties": {
+            "labels": {
+                "type": "array", "items": {"type": "string"},
+                "description": "Feature labels to analyse. Omit/empty = all labels. "
+                               "Give 2+ to test cross-label association.",
+            },
+        },
+        "required": [],
+        "needs_confirm": False,
+    },
+    {
         "name": "start_training",
         "description": (
             "Start model training using the settings already configured on the Train tab. "
@@ -1425,7 +1445,7 @@ class LLMAgent(QThread):
         ann_count = self._state.get("annotation_count", 0)
         img_count = self._state.get("image_count", 0)
         if name in ("export_masks", "run_particle_analysis", "run_surface_area",
-                    "queue_for_export", "export_nexus") and not ann_count:
+                    "queue_for_export", "export_nexus", "spatial_analysis") and not ann_count:
             return ("Error: the current image has no annotations, so there is nothing to "
                     f"{name.replace('_', ' ')}. Tell the user to annotate (or run SAM/YOLO/UNet "
                     "and Accept) first — do NOT claim this succeeded.")

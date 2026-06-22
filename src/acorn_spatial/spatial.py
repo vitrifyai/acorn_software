@@ -81,6 +81,8 @@ class NNDResult:
     clark_evans_R: float = 0.0
     z_score: float = 0.0
     p_value: float = 1.0
+    p_montecarlo: float | None = None
+    edge_corrected: bool = False
     verdict: str = ""
     nnd_nm: np.ndarray = field(default_factory=lambda: np.empty(0))
 
@@ -90,33 +92,77 @@ def _norm_sf2(z: float) -> float:
     return math.erfc(abs(z) / math.sqrt(2.0))
 
 
-def nearest_neighbour(points: np.ndarray, area_nm2: float) -> NNDResult:
-    """Nearest-neighbour distances + Clark-Evans clustering index over `area_nm2`."""
+def _mean_nnd(points: np.ndarray) -> float:
+    from scipy.spatial import cKDTree
+    if len(points) < 2:
+        return 0.0
+    d, _ = cKDTree(points).query(points, k=2)
+    return float(d[:, 1].mean())
+
+
+def nearest_neighbour(points: np.ndarray, area_nm2: float,
+                      width_nm: float | None = None, height_nm: float | None = None,
+                      n_mc: int = 0, seed: int = 0) -> NNDResult:
+    """Nearest-neighbour distances + Clark-Evans clustering index.
+
+    If width/height are given, the expected NND uses Donnelly's edge correction
+    (sparse patterns near the border no longer read as falsely "regular").
+    If n_mc > 0, also computes a Monte-Carlo p-value by simulating n_mc complete
+    spatial randomness (CSR) patterns in the same field — robust to edge effects.
+    """
     n = len(points)
     if n < 2 or area_nm2 <= 0:
         return NNDResult(n=n, verdict="Too few points for nearest-neighbour analysis.")
-    from scipy.spatial import cKDTree
-    tree = cKDTree(points)
-    d, _ = tree.query(points, k=2)        # k=2: self + nearest other
-    nnd = d[:, 1]
+    nnd = _nnd_array(points)
     mean_obs = float(nnd.mean())
     density = n / area_nm2
     expected = 0.5 / math.sqrt(density)
+    edge_corrected = False
+    if width_nm and height_nm:
+        # Donnelly (1978) edge correction for a rectangular study region
+        perim = 2.0 * (width_nm + height_nm)
+        expected = (0.5 * math.sqrt(area_nm2 / n)
+                    + (0.0514 + 0.041 / math.sqrt(n)) * perim / n)
+        edge_corrected = True
     R = mean_obs / expected if expected > 0 else 0.0
     se = 0.26136 / math.sqrt(n * density)
     z = (mean_obs - expected) / se if se > 0 else 0.0
-    p = _norm_sf2(z)
+    p_analytic = _norm_sf2(z)
+
+    p_mc = None
+    if n_mc > 0 and width_nm and height_nm:
+        rng = np.random.default_rng(seed)
+        sims = np.array([_mean_nnd(_csr(n, width_nm, height_nm, rng)) for _ in range(n_mc)])
+        # two-sided empirical p: fraction of sims at least as extreme as observed
+        n_le = int((sims <= mean_obs).sum())
+        n_ge = int((sims >= mean_obs).sum())
+        p_mc = 2.0 * min(n_le, n_ge) / (n_mc + 1)
+        p_mc = min(p_mc, 1.0)
+
+    p = p_mc if p_mc is not None else p_analytic
+    tag = "Monte-Carlo" if p_mc is not None else "analytic"
     if p < 0.05 and R < 1:
-        verdict = f"Clustered (R={R:.2f}, p={p:.1e})"
+        verdict = f"Clustered (R={R:.2f}, p={p:.1e}, {tag})"
     elif p < 0.05 and R > 1:
-        verdict = f"Regularly/evenly spaced (R={R:.2f}, p={p:.1e})"
+        verdict = f"Regularly/evenly spaced (R={R:.2f}, p={p:.1e}, {tag})"
     else:
-        verdict = f"Random / no significant pattern (R={R:.2f}, p={p:.2f})"
+        verdict = f"Random / no significant pattern (R={R:.2f}, p={p:.2f}, {tag})"
     return NNDResult(
         n=n, mean_nnd_nm=mean_obs, median_nnd_nm=float(np.median(nnd)),
-        expected_nnd_nm=expected, clark_evans_R=R, z_score=z, p_value=p,
-        verdict=verdict, nnd_nm=nnd,
+        expected_nnd_nm=expected, clark_evans_R=R, z_score=z, p_value=p_analytic,
+        p_montecarlo=p_mc, edge_corrected=edge_corrected, verdict=verdict, nnd_nm=nnd,
     )
+
+
+def _nnd_array(points: np.ndarray) -> np.ndarray:
+    from scipy.spatial import cKDTree
+    d, _ = cKDTree(points).query(points, k=2)
+    return d[:, 1]
+
+
+def _csr(n: int, width_nm: float, height_nm: float, rng) -> np.ndarray:
+    """n points of complete spatial randomness in a [0,w]×[0,h] rectangle."""
+    return np.column_stack([rng.uniform(0, width_nm, n), rng.uniform(0, height_nm, n)])
 
 
 # ── DBSCAN clustering (scipy cKDTree) ────────────────────────────────────────────
@@ -203,12 +249,9 @@ def local_density(points: np.ndarray, radius_nm: float) -> np.ndarray:
 
 # ── Ripley's K / L ───────────────────────────────────────────────────────────────
 
-def ripleys_l(points: np.ndarray, area_nm2: float, radii_nm: np.ndarray):
-    """Ripley's L(r) − r. >0 = clustering at scale r, <0 = dispersion. Returns L_minus_r."""
-    n = len(points)
-    if n < 2 or area_nm2 <= 0:
-        return None
+def _ripleys_l_values(points: np.ndarray, area_nm2: float, radii_nm: np.ndarray) -> np.ndarray:
     from scipy.spatial import cKDTree
+    n = len(points)
     tree = cKDTree(points)
     lam = n / area_nm2
     out = np.empty(len(radii_nm))
@@ -218,6 +261,31 @@ def ripleys_l(points: np.ndarray, area_nm2: float, radii_nm: np.ndarray):
         L = math.sqrt(K / math.pi) if K > 0 else 0.0
         out[i] = L - r
     return out
+
+
+def ripleys_l(points: np.ndarray, area_nm2: float, radii_nm: np.ndarray,
+              width_nm: float | None = None, height_nm: float | None = None,
+              n_mc: int = 0, seed: int = 0):
+    """Ripley's L(r) − r (>0 = clustering at scale r).
+
+    Returns (L, lo, hi): lo/hi are the Monte-Carlo CSR confidence envelope
+    (2.5/97.5 percentile across n_mc simulations) or None when n_mc == 0.
+    Observed L outside [lo, hi] is significant clustering/dispersion at that scale.
+    """
+    n = len(points)
+    if n < 2 or area_nm2 <= 0:
+        return None, None, None
+    L = _ripleys_l_values(points, area_nm2, radii_nm)
+    lo = hi = None
+    if n_mc > 0 and width_nm and height_nm:
+        rng = np.random.default_rng(seed)
+        sims = np.array([
+            _ripleys_l_values(_csr(n, width_nm, height_nm, rng), area_nm2, radii_nm)
+            for _ in range(n_mc)
+        ])
+        lo = np.percentile(sims, 2.5, axis=0)
+        hi = np.percentile(sims, 97.5, axis=0)
+    return L, lo, hi
 
 
 # ── cross-label (bivariate) association ──────────────────────────────────────────
@@ -233,13 +301,16 @@ class CrossResult:
     association_R: float = 0.0
     z_score: float = 0.0
     p_value: float = 1.0
+    p_montecarlo: float | None = None
     verdict: str = ""
     cross_nnd_nm: np.ndarray = field(default_factory=lambda: np.empty(0))
 
 
 def cross_nearest_neighbour(points_a: np.ndarray, points_b: np.ndarray,
                             area_nm2: float, label_a: str = "A",
-                            label_b: str = "B") -> CrossResult:
+                            label_b: str = "B",
+                            width_nm: float | None = None, height_nm: float | None = None,
+                            n_mc: int = 0, seed: int = 0) -> CrossResult:
     """For each A feature, distance to the nearest B feature; association vs random.
 
     association_R < 1 ⇒ A sits closer to B than chance (associated/co-located);
@@ -258,15 +329,29 @@ def cross_nearest_neighbour(points_a: np.ndarray, points_b: np.ndarray,
     R = mean_obs / expected if expected > 0 else 0.0
     se = 0.26136 / math.sqrt(na * density_b)
     z = (mean_obs - expected) / se if se > 0 else 0.0
-    p = _norm_sf2(z)
+    p_analytic = _norm_sf2(z)
+
+    p_mc = None
+    if n_mc > 0 and width_nm and height_nm:
+        rng = np.random.default_rng(seed)
+        sims = np.empty(n_mc)
+        for k in range(n_mc):
+            # null: B independently placed; keep A fixed, randomise B in the field
+            tb = cKDTree(_csr(nb, width_nm, height_nm, rng))
+            sims[k] = float(tb.query(points_a, k=1)[0].mean())
+        n_le = int((sims <= mean_obs).sum()); n_ge = int((sims >= mean_obs).sum())
+        p_mc = min(2.0 * min(n_le, n_ge) / (n_mc + 1), 1.0)
+
+    p = p_mc if p_mc is not None else p_analytic
+    tag = "Monte-Carlo" if p_mc is not None else "analytic"
     if p < 0.05 and R < 1:
-        verdict = f"{label_a} is associated with / near {label_b} (R={R:.2f}, p={p:.1e})"
+        verdict = f"{label_a} associated with / near {label_b} (R={R:.2f}, p={p:.1e}, {tag})"
     elif p < 0.05 and R > 1:
-        verdict = f"{label_a} avoids / is segregated from {label_b} (R={R:.2f}, p={p:.1e})"
+        verdict = f"{label_a} avoids / segregated from {label_b} (R={R:.2f}, p={p:.1e}, {tag})"
     else:
-        verdict = f"{label_a} and {label_b} independently placed (R={R:.2f}, p={p:.2f})"
+        verdict = f"{label_a} & {label_b} independently placed (R={R:.2f}, p={p:.2f}, {tag})"
     return CrossResult(
         label_a=label_a, label_b=label_b, n_a=na, n_b=nb,
         mean_cross_nnd_nm=mean_obs, expected_nnd_nm=expected, association_R=R,
-        z_score=z, p_value=p, verdict=verdict, cross_nnd_nm=d,
+        z_score=z, p_value=p_analytic, p_montecarlo=p_mc, verdict=verdict, cross_nnd_nm=d,
     )

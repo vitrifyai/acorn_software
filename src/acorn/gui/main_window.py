@@ -4789,6 +4789,14 @@ class MainWindow(QMainWindow):
                     combo.setCurrentIndex(idx)
             self._sam_panel._on_load_model()
 
+        elif action == "spatial_analysis":
+            dock = getattr(self, "_plugin_docks", {}).get("acorn_spatial")
+            if dock is not None:
+                dock.show(); dock.raise_()
+                panel = dock.widget()
+                if panel is not None and hasattr(panel, "run_from_clu"):
+                    panel.run_from_clu(params.get("labels"))
+
         elif action == "load_yolo":
             self._yolo_panel._on_load_model()
 
