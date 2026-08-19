@@ -32,41 +32,98 @@ def test_every_extracted_module_imports():
     import acorn.gui.threads              # noqa: F401
 
 
-def test_no_undefined_module_globals():
-    """Catches an import stranded on the wrong side of the split."""
-    import ast
-    import importlib
-    import builtins
+def test_no_function_references_a_name_its_module_cannot_supply():
+    """
+    The bug class the mixin split introduces: a method lands in a file whose
+    imports do not cover it. The module still imports and the suite still
+    collects; the NameError waits for a user to walk that path.
 
-    for mod_name in ("acorn.gui.movie", "acorn.gui.threads", "acorn.gui.sam_controller",
-                     "acorn.gui.detector_controller", "acorn.gui.export_controller",
-                     "acorn.gui.main_window"):
+    acorn.gui._split_audit resolves every loaded name against its own scope, its
+    enclosing scopes, the module, and builtins — reading the module scope from the
+    source rather than from vars(module), which would happily pass a file whose
+    import line had been deleted.
+    """
+    from acorn.gui._split_audit import audit
+    report = audit()
+    assert not report, "\n".join(
+        f"{mod}.{fn} uses undefined {sorted(names)}"
+        for mod, fns in report.items() for fn, names in fns.items()
+    )
+
+
+def test_the_audit_actually_catches_a_missing_import():
+    """
+    Guards the guard. An audit that passes because it looks in the wrong place is
+    worse than none — the first version of this check read vars(module), which
+    still holds a name after its import is deleted, so it verified nothing.
+    """
+    import textwrap
+    from acorn.gui._split_audit import undefined_names
+
+    sound = textwrap.dedent("""
+        import numpy as np
+        def f():
+            return np.zeros(3)
+    """)
+    broken = textwrap.dedent("""
+        def f():
+            return np.zeros(3)
+    """)
+    closure = textwrap.dedent("""
+        def outer(msg):
+            def inner():
+                return msg          # closure, not an undefined name
+            return inner
+    """)
+    import tempfile, os
+    def check(src):
+        fd, path = tempfile.mkstemp(suffix=".py")
+        with os.fdopen(fd, "w") as fh:
+            fh.write(src)
+        try:
+            return undefined_names(path)
+        finally:
+            os.unlink(path)
+
+    assert not check(sound), "flagged a correct module"
+    assert check(broken), "missed a deleted import — the check is vacuous"
+    assert not check(closure), "flagged a closure variable as undefined"
+
+
+def test_no_two_mixins_define_the_same_method():
+    """
+    Two mixins defining one name would have the MRO silently pick the first,
+    and the other body would never run again.
+    """
+    import ast
+    from acorn.gui._split_audit import MIXIN_MODULES
+    import importlib
+
+    seen: dict[str, str] = {}
+    clashes = []
+    for mod_name in MIXIN_MODULES:
+        if mod_name == "acorn.gui.main_window":
+            continue                      # MainWindow legitimately overrides
         mod = importlib.import_module(mod_name)
         tree = ast.parse(open(mod.__file__).read())
-        defined = set(dir(builtins)) | set(vars(mod))
-        missing = set()
-        for node in ast.walk(tree):
-            # only module-level calls we can attribute confidently
-            if isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
-                if node.func.id not in defined:
-                    missing.add(node.func.id)
-        # names bound locally inside functions are fine; filter those out
-        local_binds = {n.id for n in ast.walk(tree)
-                       if isinstance(n, ast.Name) and isinstance(n.ctx, ast.Store)}
-        local_binds |= {a.arg for n in ast.walk(tree)
-                        if isinstance(n, ast.FunctionDef) for a in n.args.args}
-        # functions defined anywhere, including nested inside other functions
-        local_binds |= {n.name for n in ast.walk(tree)
-                        if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))}
-        local_binds |= {(al.asname or al.name).split(".")[0]
-                        for n in ast.walk(tree)
-                        if isinstance(n, (ast.Import, ast.ImportFrom)) for al in n.names}
-        real = missing - local_binds
-        assert not real, f"{mod_name} calls undefined names: {sorted(real)}"
+        for cls in [n for n in tree.body if isinstance(n, ast.ClassDef)
+                    and n.name.endswith("Mixin")]:
+            for m in cls.body:
+                if isinstance(m, ast.FunctionDef):
+                    if m.name in seen:
+                        clashes.append(f"{m.name}: {seen[m.name]} and {cls.name}")
+                    seen[m.name] = cls.name
+    assert not clashes, "; ".join(clashes)
 
 
 def test_motion_plot_dialog_runs_its_numpy_maths(app):
-    """movie.py lost `import numpy as np` in the split; this would have caught it."""
+    """
+    Exercises the drift-plot maths rather than only importing the module.
+
+    (The module-level numpy import in movie.py is not load-bearing — every runtime
+    use has its own local import. It is there because the string annotations
+    reference np, which ruff reports as an undefined name.)
+    """
     from acorn.gui.movie import MotionPlotDialog
     shifts = np.cumsum(np.random.RandomState(0).randn(12, 2), axis=0)
     dlg = MotionPlotDialog(shifts, start_frame=0)
