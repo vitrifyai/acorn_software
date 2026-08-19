@@ -816,6 +816,10 @@ class MainWindow(
 
         # Apply the saved workspace now that tabs, docks and menus all exist.
         self._apply_workspace(self._active_workspace, persist=False)
+        if self._workspace_prefs.show_all:
+            # The user pinned every panel open last session — honour that rather
+            # than quietly dropping them back into a workspace.
+            self.show_all_panels(persist=False)
 
         # ── signals ───────────────────────────────────────────────────────────
         self._contrast_panel.contrast_changed.connect(self._on_contrast_changed)
@@ -1028,15 +1032,16 @@ class MainWindow(
             elif plugin_id in owned_by_any:
                 dock.hide()
 
-    def show_all_panels(self) -> None:
+    def show_all_panels(self, persist: bool = True) -> None:
         """Escape hatch: every tab and every dock at once, ignoring the workspace."""
         self._show_all_panels = True
         self._rebuild_tabs(visible=[label for label, _w in self._all_tabs])
         for dock in getattr(self, "_plugin_docks", {}).values():
             dock.show()
         self._workspace_bar.set_all_shown(True)
-        self._workspace_prefs.show_all = True
-        save_workspace_prefs(self._workspace_prefs)
+        if persist:
+            self._workspace_prefs.show_all = True
+            save_workspace_prefs(self._workspace_prefs)
         self._statusbar.showMessage(
             "Showing every panel — pick a workspace above to narrow it down again", 6000
         )
@@ -1117,7 +1122,7 @@ class MainWindow(
         show_all_a = view_menu.addAction("Show Every Panel")
         show_all_a.setShortcut("Ctrl+Shift+E")
         show_all_a.setStatusTip("Ignore the workspace and show every tab and tool at once")
-        show_all_a.triggered.connect(self.show_all_panels)
+        show_all_a.triggered.connect(lambda _checked=False: self.show_all_panels())
 
         welcome_a = view_menu.addAction("Welcome Screen…")
         welcome_a.setStatusTip("Show the five workspaces again")
@@ -3177,7 +3182,10 @@ class MainWindow(
                     anns = sidecar[0]
                     self._ann_states[cur] = anns
                     self._canvas_widget.canvas.store.replace_all(anns)
-                    self._canvas_widget.canvas.force_redraw()
+                    # force_redraw lives on the widget, not on the canvas it wraps —
+                    # calling it on the canvas raised AttributeError here, which is why
+                    # CryoBLOB detections only appeared after switching images.
+                    self._canvas_widget.force_redraw()
             return
         if action == "run_sam_auto":
             label = params.get("label", "")
