@@ -12,7 +12,7 @@ from typing import Optional
 from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtGui import QKeySequence, QShortcut
 from PyQt6.QtWidgets import (
-    QButtonGroup, QCheckBox, QDialog, QDialogButtonBox, QFrame, QHBoxLayout,
+    QButtonGroup, QDialog, QDialogButtonBox, QFrame, QHBoxLayout,
     QLabel, QPushButton, QSizePolicy, QVBoxLayout, QWidget,
 )
 
@@ -176,7 +176,9 @@ class WelcomeDialog(QDialog):
         lede = QLabel(
             "ACORN opens in one workspace at a time so you only see the tools for the "
             "job in front of you. Switch any time from the bar at the top of the window — "
-            "your image and annotations stay loaded."
+            "your image and annotations stay loaded.\n\n"
+            "This screen only appears on first launch. You can reopen it from "
+            "View \u25b8 Welcome Screen."
         )
         lede.setObjectName("welcomeLede")
         lede.setWordWrap(True)
@@ -184,9 +186,6 @@ class WelcomeDialog(QDialog):
 
         for ws in WORKSPACES:
             outer.addWidget(self._make_card(ws))
-
-        self._dont_show = QCheckBox("Don't show this again")
-        outer.addWidget(self._dont_show)
 
         buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
         buttons.rejected.connect(self.reject)
@@ -225,6 +224,4 @@ class WelcomeDialog(QDialog):
     def chosen_workspace(self) -> str:
         return self._chosen
 
-    @property
-    def dont_show_again(self) -> bool:
-        return self._dont_show.isChecked()
+

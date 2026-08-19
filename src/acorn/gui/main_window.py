@@ -1127,9 +1127,6 @@ class MainWindow(
         dlg = WelcomeDialog(self)
         if dlg.exec():
             self._apply_workspace(dlg.chosen_workspace, persist=True)
-        if dlg.dont_show_again:
-            self._workspace_prefs.welcome_seen = True
-            save_workspace_prefs(self._workspace_prefs)
 
     def _maybe_show_welcome(self) -> None:
         """First launch only: name the five workspaces instead of hiding them."""
@@ -1137,7 +1134,9 @@ class MainWindow(
             return
         dlg = WelcomeDialog(self)
         accepted = dlg.exec()
-        self._workspace_prefs.welcome_seen = dlg.dont_show_again or bool(accepted)
+        # Shown once, whether or not a workspace was picked — closing it is an
+        # answer too, and View ▸ Welcome Screen brings it back on demand.
+        self._workspace_prefs.welcome_seen = True
         if accepted:
             self._apply_workspace(dlg.chosen_workspace, persist=True)
         else:
