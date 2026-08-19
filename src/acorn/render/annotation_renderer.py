@@ -42,6 +42,7 @@ class AnnotationRenderer:
         self.pixel_size = pixel_size
         self._label_counts: dict[str, int] = {}   # label -> how many ROIs carry it
         self._legend_artists: list = []
+        self._batch_render = False   # True while render()/render_noblit() walk the store
         self._ann_to_artists: dict[int, list] = {}      # id(ann) → artists
         self._id_to_ann: dict[int, "AnyAnnotation"] = {}
         self._selected_id: Optional[int] = None
@@ -73,8 +74,12 @@ class AnnotationRenderer:
         """Clear and redraw every annotation in *store*."""
         self.clear()
         self._count_labels(store)
-        for ann in store:
-            self._draw_and_register(ann)
+        self._batch_render = True
+        try:
+            for ann in store:
+                self._draw_and_register(ann)
+        finally:
+            self._batch_render = False
         self._draw_legend()
         self.ax.figure.canvas.draw_idle()
 
@@ -100,8 +105,12 @@ class AnnotationRenderer:
             art.set_visible(True)
         # Now draw annotations on top of the saved background
         self._count_labels(store)
-        for ann in store:
-            self._draw_and_register(ann)
+        self._batch_render = True
+        try:
+            for ann in store:
+                self._draw_and_register(ann)
+        finally:
+            self._batch_render = False
         self._draw_legend()
         canvas.blit_annotations()
 
@@ -175,6 +184,7 @@ class AnnotationRenderer:
 
     def remove_one(self, ann: "AnyAnnotation") -> None:
         """Remove a single annotation's artists (no redraw)."""
+        self._drop_label(ann)
         ann_id = id(ann)
         if ann_id == self._selected_id:
             self._clear_selection_artists()
@@ -330,10 +340,59 @@ class AnnotationRenderer:
     def _draw_and_register(self, ann: "AnyAnnotation") -> None:
         ann_id = id(ann)
         self._id_to_ann[ann_id] = ann
+        # Outside a full redraw the count has to grow as shapes arrive — accepting
+        # thirty SAM masks reaches this one at a time, and without this the label
+        # policy never engages and every one of them prints its name.
+        crossed = False
+        if not self._batch_render:
+            crossed = self._note_label(ann)
         self._staging = []
         self._draw_one(ann)
         self._ann_to_artists[ann_id] = self._staging
         self._staging = []
+        if crossed:
+            self._collapse_label_texts(self._roi_label(ann))
+            self._draw_legend()
+
+    @staticmethod
+    def _roi_label(ann) -> str:
+        """The label of a labelled ROI, or '' for anything the policy ignores."""
+        if not hasattr(ann, "vertices"):
+            return ""
+        return getattr(ann, "label", "") or ""
+
+    def _note_label(self, ann) -> bool:
+        """Count one more ROI. Returns True if it is the one that tips the label off."""
+        label = self._roi_label(ann)
+        if not label:
+            return False
+        before = self._label_counts.get(label, 0)
+        self._label_counts[label] = before + 1
+        return before <= self.LABEL_TEXT_LIMIT < before + 1
+
+    def _drop_label(self, ann) -> None:
+        """Count one fewer ROI, so deleting shapes does not leave the tally drifting."""
+        label = self._roi_label(ann)
+        if not label:
+            return
+        remaining = self._label_counts.get(label, 0) - 1
+        if remaining > 0:
+            self._label_counts[label] = remaining
+        else:
+            self._label_counts.pop(label, None)
+
+    def _collapse_label_texts(self, label: str) -> None:
+        """Remove the per-shape text for a label that has just become too common."""
+        if not label:
+            return
+        for artists in self._ann_to_artists.values():
+            for art in list(artists):
+                if getattr(art, "get_text", None) and art.get_text() == label:
+                    try:
+                        art.remove()
+                    except Exception:
+                        pass
+                    artists.remove(art)
 
     def _update_selection_geometry(self, ann: "AnyAnnotation") -> None:
         """Update glow + handle square positions in-place during a drag.

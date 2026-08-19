@@ -129,3 +129,62 @@ def test_clear_removes_the_legend(renderer):
     assert renderer._legend_artists
     renderer.clear()
     assert not renderer._legend_artists
+
+
+# ── the incremental path ──────────────────────────────────────────────────────
+# Accepting SAM/YOLO masks appends one annotation at a time through add_one, not
+# through render(). The label policy has to engage there too, or the fix only
+# works on a reload.
+
+def _shape_texts(r):
+    legend = {id(a) for a in r._legend_artists}
+    return [t.get_text() for t in r.ax.texts if t.get_text() and id(t) not in legend]
+
+
+def test_labels_collapse_when_annotations_arrive_one_at_a_time(renderer):
+    for ann in _rois(30, "nanoparticle"):
+        renderer.add_one(ann, draw=False)
+    assert _shape_texts(renderer) == [], (
+        "30 accepted masks each printed their label — the policy only ran on full redraws"
+    )
+    assert len(renderer._legend_artists) == 1
+
+
+def test_incremental_below_the_limit_still_labels_each_shape(renderer):
+    for ann in _rois(3, "vesicle"):
+        renderer.add_one(ann, draw=False)
+    assert _shape_texts(renderer).count("vesicle") == 3
+    assert not renderer._legend_artists
+
+
+def test_incremental_and_batch_agree(renderer):
+    from acorn.core.annotations import AnnotationStore
+    anns = _rois(30, "nanoparticle")
+    for ann in anns:
+        renderer.add_one(ann, draw=False)
+    incremental = (len(_shape_texts(renderer)), len(renderer._legend_artists))
+
+    store = AnnotationStore()
+    store.replace_all(anns)
+    renderer.render(store)
+    batch = (len(_shape_texts(renderer)), len(renderer._legend_artists))
+    assert incremental == batch, f"incremental {incremental} != batch {batch}"
+
+
+def test_the_shape_that_crosses_the_limit_removes_the_earlier_labels(renderer):
+    anns = _rois(9, "ice")
+    for ann in anns[:8]:
+        renderer.add_one(ann, draw=False)
+    assert len(_shape_texts(renderer)) == 8      # still worth printing
+    renderer.add_one(anns[8], draw=False)        # the ninth tips it over
+    assert _shape_texts(renderer) == []
+    assert len(renderer._legend_artists) == 1
+
+
+def test_removing_annotations_keeps_the_tally_honest(renderer):
+    anns = _rois(30, "nanoparticle")
+    for ann in anns:
+        renderer.add_one(ann, draw=False)
+    for ann in anns[:25]:
+        renderer.remove_one(ann)
+    assert renderer._label_counts.get("nanoparticle") == 5

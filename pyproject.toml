@@ -71,6 +71,9 @@ sim = ["acorn[viewer]", "acorn-sim"]
 # — CLU, the assistant —
 clu = ["acorn-clu"]
 
+# — CryoBLOB blob detection (JAX/GPU) —
+cryoblob = ["acorn-cryoblob"]
+
 # — publishing datasets —
 hub = ["datasets>=2.18", "huggingface_hub>=0.22"]
 
@@ -84,7 +87,7 @@ yolo  = ["ultralytics>=8.0"]
 unet  = ["segmentation-models-pytorch>=0.3", "torch>=2.0"]
 
 dev  = ["pytest>=8.0", "pytest-cov", "ruff"]
-full = ["acorn[viewer,annotate,lab,sim,clu,hub]"]
+full = ["acorn[viewer,annotate,lab,sim,clu,cryoblob,hub]"]
 all  = ["acorn[full,dev]"]
 
 [project.scripts]
@@ -95,6 +98,21 @@ acorn-gui = "acorn.gui.main_window:launch"
 
 # Plugins register themselves through the "acorn.plugins" entry point from their
 # own distribution — see packages/*/pyproject.toml. The core declares none.
+
+# The plugin packages live in this repository and are not published to any index,
+# so the profiles above cannot resolve them from PyPI. uv reads the table below and
+# takes them from packages/ instead, which makes `uv pip install ".[lab]"` work from
+# a checkout. Plain pip ignores it — install those with an explicit path:
+#     pip install -e . -e packages/acorn-analysis -e packages/acorn-plotting  ...
+[tool.uv.sources]
+acorn-analysis = { path = "packages/acorn-analysis", editable = true }
+acorn-spatial  = { path = "packages/acorn-spatial",  editable = true }
+acorn-plotting = { path = "packages/acorn-plotting", editable = true }
+acorn-tracking = { path = "packages/acorn-tracking", editable = true }
+acorn-3d       = { path = "packages/acorn-3d",       editable = true }
+acorn-clu      = { path = "packages/acorn-clu",      editable = true }
+acorn-sim      = { path = "packages/acorn-sim",      editable = true }
+acorn-cryoblob = { path = "packages/acorn-cryoblob", editable = true }
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/acorn"]

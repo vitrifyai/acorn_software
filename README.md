@@ -16,6 +16,32 @@ Center for Nanophase Materials Sciences, Oak Ridge National Laboratory.
 
 ---
 
+## Workspaces
+
+ACORN opens in one **workspace** at a time. A workspace is a job, not a mode: it
+decides which control tabs are shown and which tool panels open, and nothing
+else. Your image, your annotations and any model already in memory survive a
+switch untouched.
+
+| Workspace | For | You get |
+|---|---|---|
+| **Explore** | Looking at images | Contrast, navigation, measurement, scale bars |
+| **Annotate** | Marking things up | Manual tools, SAM, YOLO, UNet, CryoBLOB |
+| **Dataset** | Building training data | Queue, quality check, training, export |
+| **Analyze** | Getting numbers out | Measurements, spatial stats, tracking, plots, 3D |
+| **Simulate** | Making synthetic data | TEM, FIB-SEM, 4D-STEM, reference matching |
+
+Switch from the bar at the top of the window, from **View ▸ Workspace**, or with
+`Ctrl+1` … `Ctrl+5`. **View ▸ Show Every Panel** (`Ctrl+Shift+E`) ignores the
+workspace and shows everything at once, the way earlier versions did.
+
+CLU, the assistant, is available in every workspace, and is offered only the
+commands that belong to the current one — about fifteen instead of fifty-five,
+which is why it now picks the right tool far more reliably. Ask it for something
+outside the current workspace and it will switch first, then do it.
+
+---
+
 ## Features
 
 ### Core image viewing and annotation
@@ -490,6 +516,13 @@ src/
                 yolo_trainer.py      YOLO training wrapper
                 unet_trainer.py      UNet training wrapper
     gui/        main_window.py       main application window
+                workspaces.py        the five workspaces and their preferences
+                workspace_bar.py     workspace switcher + first-launch welcome
+                threads.py           background worker threads
+                sam_controller.py    SAM prompting / preview / accept (mixin)
+                detector_controller.py  YOLO and UNet (mixin)
+                export_controller.py    queue, batch, masks, NEXUS, Hub (mixin)
+                movie.py             multi-frame handling + drift/dose dialogs
                 canvas_widget.py     matplotlib-backed image canvas
                 contrast_panel.py    contrast tab
                 annotation_panel.py  manual annotation tab
@@ -512,34 +545,70 @@ src/
     analysis/   surface_area.py      3D surface area estimation
                 surface_area_stats.py batch statistics
     cli/        main.py              CLI entry point
-  acorn_analysis/  Analysis plugin: surface area tab
-  acorn_tracking/  Track plugin: particle tracking tab
-  acorn_3d/        3D plugin: volume rendering tab
-  acorn_llm/       CLU plugin: AI assistant tab
-    agent.py        LLM agent (Anthropic / OpenAI-compatible)
-    panel.py        chat UI panel
-    config.py       provider and model configuration
-    plugin.py       plugin entry point
+
+packages/                       each plugin is its own installable distribution
+  acorn-analysis/  particle and surface-area measurements
+  acorn-spatial/   clustering, hotspots, nearest neighbour
+  acorn-plotting/  publication figures and statistics
+  acorn-tracking/  particle tracking across a series
+  acorn-3d/        volume viewer
+  acorn-clu/       CLU, the assistant
+    agent.py         LLM agent (Anthropic / OpenAI-compatible)
+    tool_scope.py    which commands each workspace offers
+    panel.py         chat UI panel
+    config.py        provider and model configuration
+  acorn-sim/       TEM, FIB-SEM and 4D-STEM simulation
+  acorn-cryoblob/  CryoBLOB blob detection (JAX/GPU)
 ```
+
+Plugins are discovered through the `acorn.plugins` entry point, so installing one
+is all it takes to make it appear — and uninstalling it makes it disappear
+cleanly. The core declares no plugin entry points of its own.
 
 ---
 
-## Optional dependencies
+## Install profiles
+
+The first four match the workspaces, so you install the jobs you actually do.
+Run these **from a checkout of this repository, with uv** — the plugin packages
+live in `packages/` and are not published to any index:
 
 ```bash
-pip install "acorn[gui]"       # PyQt6, matplotlib (required for GUI)
-pip install "acorn[mrc]"       # mrcfile (MRC/MRCS support)
-pip install "acorn[sam]"       # sam3 + micro-sam
-pip install "acorn[yolo]"      # ultralytics
-pip install "acorn[unet]"      # segmentation-models-pytorch + torch
-pip install "acorn[hub]"       # huggingface datasets (push to Hub)
-pip install "acorn[llm]"       # anthropic + openai (CLU with cloud providers)
-pip install "acorn[analysis]"  # opencv-python + pandas (surface area analysis)
-pip install "acorn[tracking]"  # pandas + scipy (particle tracking)
-pip install "acorn[volume]"    # mrcfile + tifffile (3D plugin)
-pip install "acorn[full]"      # all of the above (no dev tools)
-pip install "acorn[all]"       # everything including dev tools
+uv pip install ".[viewer]"     # open, contrast, navigate, measure
+uv pip install ".[annotate]"   # the above + SAM / YOLO / UNet   (pulls torch)
+uv pip install ".[lab]"        # the above + measurements, stats, plots, 3D
+uv pip install ".[sim]"        # the above + TEM / FIB / 4D-STEM simulation
+uv pip install ".[clu]"        # CLU, the assistant
+uv pip install ".[cryoblob]"   # CryoBLOB blob detection (JAX/GPU)
+uv pip install ".[full]"       # everything (no dev tools)
+uv pip install ".[all]"        # everything including dev tools
 ```
+
+`[tool.uv.sources]` in `pyproject.toml` is what points those names at `packages/`.
+Plain pip ignores that table, so with pip name the paths yourself:
+
+```bash
+pip install -e . -e packages/acorn-analysis -e packages/acorn-plotting \
+                 -e packages/acorn-spatial  -e packages/acorn-tracking \
+                 -e packages/acorn-3d       -e packages/acorn-clu \
+                 -e packages/acorn-sim      -e packages/acorn-cryoblob
+```
+
+`[viewer]` and `[annotate]` need nothing local and install from PyPI either way.
+
+`acorn[viewer]` installs 27 packages and pulls **no torch, no CUDA, no
+ultralytics** — a broken GPU driver cannot stop you opening a micrograph. Only
+`[annotate]` brings the machine-learning stack.
+
+Individual plugins can also be installed on their own, by path:
+
+```bash
+uv pip install -e packages/acorn-analysis -e packages/acorn-plotting
+uv pip install -e "packages/acorn-sim[gpu]"    # CUDA 12 multislice / 4D-STEM
+```
+
+Narrower extras still exist if you want exactly one piece:
+`[gui]`, `[mrc]`, `[sam]`, `[sam2]`, `[usam]`, `[yolo]`, `[unet]`, `[hub]`, `[dev]`.
 
 ---
 
