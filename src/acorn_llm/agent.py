@@ -1018,6 +1018,33 @@ _NEEDS_CONFIRM = {t["name"] for t in _TOOLS if t["needs_confirm"]}
 
 # Tools whose handler reports a real outcome back to the agent (count / path /
 # verdict) via the action-result channel, so the assistant states facts.
+_WORKSPACE_TOOL = {
+    "name": "switch_workspace",
+    "description": (
+        "Switch the ACORN window to a different workspace so the tools for that job "
+        "become available. Use this when the user asks for something the current "
+        "workspace does not cover — e.g. they ask to simulate an image while in "
+        "Explore. Workspaces: explore (viewing, contrast, measuring), annotate "
+        "(SAM/YOLO/UNet/CryoBLOB and accepting picks), dataset (queue, training, "
+        "export), analyze (measurements, spatial stats, tracking, plots), simulate "
+        "(TEM/FIB/4D-STEM generation). Switching keeps the open image, annotations "
+        "and loaded models."
+    ),
+    "properties": {
+        "workspace": {
+            "type": "string",
+            "enum": ["explore", "annotate", "dataset", "analyze", "simulate"],
+            "description": "Workspace to switch to",
+        },
+    },
+    "required": ["workspace"],
+    "needs_confirm": False,
+    "needs_image": False,
+}
+_TOOLS.append(_WORKSPACE_TOOL)
+
+from acorn_llm.tool_scope import scope_tools
+
 _RESULT_TOOLS = {
     "spatial_analysis", "run_yolo_detect", "run_yolo_segment", "run_unet",
     "run_sam_auto", "export_masks", "finalize_dataset",
@@ -1067,6 +1094,16 @@ def build_system_prompt(state: dict) -> str:
             img_info += f" ({shape[-1]}×{shape[-2]} px)"
         if px and px > 0:
             img_info += f", {px:.4f} nm/px"
+
+    workspace = state.get("workspace")
+    if workspace:
+        ws_info = (
+            f"\nWORKSPACE: {workspace}. You are only given the commands that belong to "
+            f"this workspace. If the user asks for something outside it, call "
+            f"switch_workspace first, then carry out the request.\n"
+        )
+    else:
+        ws_info = ""
 
     loaded = [m for m, k in [("SAM", "sam_loaded"), ("YOLO", "yolo_loaded"), ("UNet", "unet_loaded")] if state.get(k)]
     model_info = ", ".join(loaded) if loaded else "none loaded"
@@ -1205,6 +1242,7 @@ def build_system_prompt(state: dict) -> str:
     return f"""You are CLU, the AI assistant built into ACORN — a cryo-EM and electron microscopy image analysis platform at Oak Ridge National Laboratory (ORNL). Your name is CLU. If asked who you are, say you are CLU, ACORN's microscopy analysis assistant. Never bold or format your own name — write it as plain text: CLU, not **CLU**. You think and communicate like a senior microscopist and data scientist.
 
 ## Current application state
+- Workspace: {workspace or 'all tools available'}
 - Image: {img_info}{f"  [MOVIE: {state['n_frames']} frames — call compress_frames to average]" if state.get('is_movie') else ""}
 - Queue: {n_imgs} images  (viewing #{idx + 1})
 - Models loaded: {model_info}
@@ -1222,6 +1260,7 @@ def build_system_prompt(state: dict) -> str:
 - Dataset-wide: {state.get("dataset_total_annotations", 0)} total annotations across {state.get("dataset_images_annotated", 0)}/{n_imgs} images  |  labels: {", ".join(f"{k}:{v}" for k, v in (state.get("dataset_label_counts") or {}).items()) or "none"}
 {ds_stats_section}
 {image_list_section}
+{ws_info}
 
 ## Your role
 Your purpose is to help researchers with their microscopy analysis and model training needs. You annotate, segment, analyze images, run surface area and tracking analysis, manage training datasets, and guide users through the full pipeline — all through natural language. You understand scientific intent — "find the vesicles", "how dense is the sample?", "prep this for training", "the contrast looks off" — and translate it into the right sequence of actions without the user needing to know tool names.
@@ -1518,7 +1557,7 @@ class LLMAgent(QThread):
             max_retries=2,
         )
         system = build_system_prompt(self._state)
-        tools  = _to_anthropic_tools(_TOOLS)
+        tools  = _to_anthropic_tools(scope_tools(_TOOLS, self._state.get("workspace")))
         msgs   = self._build_anthropic_messages()
 
         while True:
@@ -1616,7 +1655,7 @@ class LLMAgent(QThread):
         import httpx
         client = OpenAI(timeout=httpx.Timeout(90.0, connect=15.0), max_retries=2, **kwargs)
         system = build_system_prompt(self._state)
-        tools  = _to_openai_tools(_TOOLS)
+        tools  = _to_openai_tools(scope_tools(_TOOLS, self._state.get("workspace")))
         msgs: list[dict] = [{"role": "system", "content": system}]
         msgs  += self._build_openai_messages()
         # use_api_tools: True = OpenAI function-calling format; False = text JSON fallback (Ollama)

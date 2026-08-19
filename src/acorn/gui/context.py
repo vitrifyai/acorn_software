@@ -330,6 +330,12 @@ class AcornContext(QObject):
             state["is_movie"]  = img.is_movie
             state["n_frames"]  = img.n_frames
         state["image_count"]         = len(self.image_paths)
+        # Which job the user is in — CLU offers only this workspace's commands.
+        # None (every panel pinned open) means "offer everything", as before.
+        state["workspace"] = (
+            None if getattr(w, "_show_all_panels", False)
+            else getattr(w, "active_workspace", None)
+        )
         state["current_image_index"] = self.current_image_index
 
         state["sam_loaded"]  = getattr(w, "_sam_predictor",  None) is not None and getattr(w._sam_predictor,  "is_loaded", False)

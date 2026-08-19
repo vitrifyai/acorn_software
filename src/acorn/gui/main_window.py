@@ -60,6 +60,13 @@ from acorn.gui.yolo_panel import YOLOPanel
 from acorn.gui.unet_panel import UNetPanel
 from acorn.gui.segmentation_panel import SegmentationPanel
 from acorn.gui.train_panel import TrainPanel
+from acorn.gui.workspace_bar import WelcomeDialog, WorkspaceBar
+from acorn.gui.workspaces import (
+    ALWAYS_AVAILABLE_DOCKS, DEFAULT_WORKSPACE, WORKSPACES,
+    by_id as workspace_by_id,
+    load_prefs as load_workspace_prefs,
+    save_prefs as save_workspace_prefs,
+)
 
 
 ImageFingerprint = tuple[str, int, int, int]
@@ -1289,7 +1296,26 @@ class MainWindow(QMainWindow):
         splitter.setStretchFactor(1, 0)
         splitter.setSizes([9999, 400])   # initial: canvas gets all extra, panel starts at 400px
 
-        self.setCentralWidget(splitter)
+        # ── workspace switcher ────────────────────────────────────────────────
+        # Snapshot every tab now that core tabs and plugin tabs are both in place.
+        # Switching workspaces removes and re-inserts tabs from this registry, so
+        # the panel widgets themselves are never rebuilt and never lose state.
+        self._all_tabs = [
+            (control.tabText(i), control.widget(i)) for i in range(control.count())
+        ]
+        self._workspace_prefs = load_workspace_prefs()
+        self._active_workspace = self._workspace_prefs.last_workspace
+        self._workspace_bar = WorkspaceBar(self)
+        self._workspace_bar.workspace_selected.connect(self.set_workspace)
+
+        _shell = QWidget()
+        _shell_v = QVBoxLayout(_shell)
+        _shell_v.setContentsMargins(0, 0, 0, 0)
+        _shell_v.setSpacing(0)
+        _shell_v.addWidget(self._workspace_bar)
+        _shell_v.addWidget(splitter, 1)
+
+        self.setCentralWidget(_shell)
 
         # ── status bar ────────────────────────────────────────────────────────
         self._statusbar = QStatusBar()
@@ -1336,6 +1362,9 @@ class MainWindow(QMainWindow):
                 _logging.getLogger(__name__).warning(
                     "Plugin %s menu setup failed: %s", plugin.PLUGIN_ID, _plugin_exc
                 )
+
+        # Apply the saved workspace now that tabs, docks and menus all exist.
+        self._apply_workspace(self._active_workspace, persist=False)
 
         # ── signals ───────────────────────────────────────────────────────────
         self._contrast_panel.contrast_changed.connect(self._on_contrast_changed)
@@ -1463,6 +1492,125 @@ class MainWindow(QMainWindow):
                     "Floating plugin %s failed to dock: %s", plugin.PLUGIN_ID, _exc
                 )
 
+    # ── workspaces ────────────────────────────────────────────────────────────
+    # A workspace decides which control tabs are visible and which tool docks are
+    # open. It never touches loaded images, annotations, or models held in memory.
+
+    @property
+    def active_workspace(self) -> str:
+        """Id of the workspace currently applied (see acorn.gui.workspaces)."""
+        return self._active_workspace
+
+    def set_workspace(self, wid: str) -> None:
+        """Switch to workspace `wid` and remember the choice for next launch."""
+        self._apply_workspace(wid, persist=True)
+
+    def _tab_is_unclaimed(self, label: str) -> bool:
+        """True if no workspace lists this tab — such tabs stay visible everywhere."""
+        return not any(label in ws.tabs for ws in WORKSPACES)
+
+    def _apply_workspace(self, wid: str, persist: bool = True) -> None:
+        ws = workspace_by_id(wid)
+        if ws is None:
+            ws = workspace_by_id(DEFAULT_WORKSPACE)
+            wid = ws.wid
+        self._active_workspace = wid
+        self._show_all_panels = False
+
+        self._rebuild_tabs(visible=[
+            label for label, _w in self._all_tabs
+            if label in ws.tabs or self._tab_is_unclaimed(label)
+        ], order=ws.tabs)
+        self._apply_workspace_docks(ws)
+
+        self._workspace_bar.set_all_shown(False)
+        self._workspace_bar.set_active(wid)
+        if hasattr(self, "_statusbar"):
+            self._statusbar.showMessage(f"{ws.label} — {ws.tagline}", 4000)
+
+        if persist:
+            self._workspace_prefs.last_workspace = wid
+            self._workspace_prefs.show_all = False
+            save_workspace_prefs(self._workspace_prefs)
+
+    def _rebuild_tabs(self, visible: list[str], order: tuple[str, ...] = ()) -> None:
+        """
+        Show exactly `visible`, with the labels in `order` first.
+
+        Tabs are removed from and re-inserted into the same QTabWidget; the panel
+        widgets are held in self._all_tabs and are never recreated, so scroll
+        position, entered values and loaded models all survive a switch.
+        """
+        tabs = self._control_tabs
+        current_label = tabs.tabText(tabs.currentIndex()) if tabs.count() else ""
+
+        tabs.blockSignals(True)
+        while tabs.count():
+            tabs.removeTab(0)
+
+        def sort_key(item):
+            label = item[0]
+            return (order.index(label) if label in order else len(order))
+
+        for label, widget in sorted(self._all_tabs, key=sort_key):
+            if label in visible:
+                tabs.addTab(widget, label)
+        tabs.blockSignals(False)
+
+        # Keep the user on the same tab if it survived the switch.
+        for i in range(tabs.count()):
+            if tabs.tabText(i) == current_label:
+                tabs.setCurrentIndex(i)
+                break
+        else:
+            if tabs.count():
+                tabs.setCurrentIndex(0)
+
+    def _apply_workspace_docks(self, ws) -> None:
+        """Open the docks this workspace owns; put other workspaces' docks away."""
+        owned_by_any = {d for w in WORKSPACES for d in w.docks}
+        for plugin_id, dock in getattr(self, "_plugin_docks", {}).items():
+            if plugin_id in ALWAYS_AVAILABLE_DOCKS:
+                continue                       # e.g. the assistant — user's choice stands
+            if plugin_id in ws.docks:
+                dock.show()
+            elif plugin_id in owned_by_any:
+                dock.hide()
+
+    def show_all_panels(self) -> None:
+        """Escape hatch: every tab and every dock at once, ignoring the workspace."""
+        self._show_all_panels = True
+        self._rebuild_tabs(visible=[label for label, _w in self._all_tabs])
+        for dock in getattr(self, "_plugin_docks", {}).values():
+            dock.show()
+        self._workspace_bar.set_all_shown(True)
+        self._workspace_prefs.show_all = True
+        save_workspace_prefs(self._workspace_prefs)
+        self._statusbar.showMessage(
+            "Showing every panel — pick a workspace above to narrow it down again", 6000
+        )
+
+    def _show_welcome_again(self) -> None:
+        """View ▸ Welcome Screen — reopen the chooser on demand."""
+        dlg = WelcomeDialog(self)
+        if dlg.exec():
+            self._apply_workspace(dlg.chosen_workspace, persist=True)
+        if dlg.dont_show_again:
+            self._workspace_prefs.welcome_seen = True
+            save_workspace_prefs(self._workspace_prefs)
+
+    def _maybe_show_welcome(self) -> None:
+        """First launch only: name the five workspaces instead of hiding them."""
+        if self._workspace_prefs.welcome_seen:
+            return
+        dlg = WelcomeDialog(self)
+        accepted = dlg.exec()
+        self._workspace_prefs.welcome_seen = dlg.dont_show_again or bool(accepted)
+        if accepted:
+            self._apply_workspace(dlg.chosen_workspace, persist=True)
+        else:
+            save_workspace_prefs(self._workspace_prefs)
+
     def _build_menus(self) -> None:
         mb = self.menuBar()
 
@@ -1505,6 +1653,26 @@ class MainWindow(QMainWindow):
 
         # View
         view_menu = mb.addMenu("View")
+
+        # Workspaces first — the same five choices as the bar at the top of the window.
+        ws_menu = view_menu.addMenu("Workspace")
+        for _ws in WORKSPACES:
+            _a = ws_menu.addAction(f"{_ws.label} — {_ws.tagline}")
+            if _ws.shortcut:
+                _a.setShortcut(_ws.shortcut)
+            _a.triggered.connect(lambda _c=False, w=_ws.wid: self.set_workspace(w))
+        view_menu.addSeparator()
+
+        show_all_a = view_menu.addAction("Show Every Panel")
+        show_all_a.setShortcut("Ctrl+Shift+E")
+        show_all_a.setStatusTip("Ignore the workspace and show every tab and tool at once")
+        show_all_a.triggered.connect(self.show_all_panels)
+
+        welcome_a = view_menu.addAction("Welcome Screen…")
+        welcome_a.setStatusTip("Show the five workspaces again")
+        welcome_a.triggered.connect(self._show_welcome_again)
+        view_menu.addSeparator()
+
         toggle_list_a = view_menu.addAction("Show Image List")
         toggle_list_a.setCheckable(True)
         toggle_list_a.setChecked(True)
@@ -5243,6 +5411,14 @@ class MainWindow(QMainWindow):
     def _on_action_requested(self, action: str, params: dict) -> None:
         print(f"[_on_action_requested] action={action} params={params}", flush=True)
         self._clu_result_pending = action in self._CLU_RESULT_ACTIONS
+        if action == "switch_workspace":
+            # CLU was asked for something this workspace does not cover.
+            wid = str(params.get("workspace") or "").strip().lower()
+            if workspace_by_id(wid) is None:
+                self._statusbar.showMessage(f"No workspace called '{wid}'", 4000)
+            else:
+                self.set_workspace(wid)
+            return
         if action == "reload_annotations_from_disk":
             # A plugin (e.g. CryoBLOB) wrote new sidecars to disk. Evict our in-memory
             # per-image annotation cache for those images so the next switch reloads the
@@ -5968,6 +6144,10 @@ def launch(files: list[str] | None = None) -> None:
     if files:
         from pathlib import Path
         window.open_files([Path(f) for f in files if Path(f).is_file()])
+
+    # First launch only — name the five workspaces rather than leave tools hidden.
+    # Deferred so it appears over a drawn window, not a grey rectangle.
+    QTimer.singleShot(0, window._maybe_show_welcome)
 
     _log("entering event loop")
     sys.exit(app.exec())
