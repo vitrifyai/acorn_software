@@ -17,7 +17,9 @@ from PyQt6.QtWidgets import (
     QLineEdit,
     QMessageBox,
     QPushButton,
+    QScrollArea,
     QSpinBox,
+    QTabWidget,
     QVBoxLayout,
     QWidget,
 )
@@ -35,28 +37,72 @@ class TemSimPanel(QWidget):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(8, 8, 8, 8)
         layout.setSpacing(8)
+
+        # Three separate jobs used to share one 45-field scroll. Each gets a tab,
+        # and each tab ends with the one button that runs it. Output settings are
+        # shared, so they sit above the tabs.
         layout.addWidget(self._build_output_group())
-        layout.addWidget(self._build_path_group())
-        layout.addWidget(self._build_optics_group())
-        layout.addWidget(self._build_specimen_group())
-        layout.addWidget(self._build_advanced_group())
 
-        self._generate_btn = QPushButton("Generate TEM Simulation")
-        self._generate_btn.clicked.connect(self._on_generate)
-        layout.addWidget(self._generate_btn)
+        self._tabs = QTabWidget()
+        self._tabs.addTab(self._make_tab(
+            [self._build_path_group(), self._build_optics_group(),
+             self._build_specimen_group(), self._build_engine_group()],
+            button=self._make_run_button(
+                "Generate TEM Simulation", self._on_generate, attr="_generate_btn"),
+        ), "Micrograph")
 
-        self._fourd_btn = QPushButton("Generate 4D-STEM")
-        self._fourd_btn.clicked.connect(lambda: self._emit_action("generate_4dstem"))
-        layout.addWidget(self._fourd_btn)
-        self._ref_btn = QPushButton("Match Reference Image…")
-        self._ref_btn.clicked.connect(lambda: self._emit_action("simulate_from_reference"))
-        layout.addWidget(self._ref_btn)
+        self._tabs.addTab(self._make_tab(
+            [self._build_fourd_group()],
+            note="Uses the optics and specimen from the Micrograph tab, scanned with "
+                 "the probe set here. Produces BF, ADF, HAADF, DPC, CoM and iDPC images.",
+            button=self._make_run_button(
+                "Generate 4D-STEM",
+                lambda: self._emit_action("generate_4dstem"), attr="_fourd_btn"),
+        ), "4D-STEM")
+
+        self._tabs.addTab(self._make_tab(
+            [self._build_reference_group()],
+            note="Reads a real micrograph, measures its defocus and spectral falloff, "
+                 "then generates fresh images that match it.",
+            button=self._make_run_button(
+                "Match Reference Image",
+                lambda: self._emit_action("simulate_from_reference"), attr="_ref_btn"),
+        ), "Match a real image")
+
+        layout.addWidget(self._tabs, 1)
 
         self._status = QLabel("Ready.")
         self._status.setWordWrap(True)
         self._status.setStyleSheet("font-size: 11px; color: #6c7086;")
         layout.addWidget(self._status)
-        layout.addStretch()
+
+    def _make_run_button(self, text: str, slot, attr: str) -> QPushButton:
+        btn = QPushButton(text)
+        btn.clicked.connect(slot)
+        setattr(self, attr, btn)
+        return btn
+
+    def _make_tab(self, groups: list, button: QPushButton, note: str = "") -> QWidget:
+        """One tab: its settings, an optional explanation, and the button that runs it."""
+        page = QWidget()
+        v = QVBoxLayout(page)
+        v.setContentsMargins(6, 8, 6, 6)
+        v.setSpacing(8)
+        for g in groups:
+            v.addWidget(g)
+        if note:
+            lbl = QLabel(note)
+            lbl.setWordWrap(True)
+            lbl.setStyleSheet("font-size: 11px; color: #8a8a8a;")
+            v.addWidget(lbl)
+        v.addStretch()
+        v.addWidget(button)
+
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setWidget(page)
+        scroll.setFrameShape(QScrollArea.Shape.NoFrame)
+        return scroll
 
     def _build_output_group(self) -> QGroupBox:
         box = QGroupBox("Output")
@@ -189,8 +235,9 @@ class TemSimPanel(QWidget):
         form.addRow("", self._overlap)
         return box
 
-    def _build_advanced_group(self) -> QGroupBox:
-        box = QGroupBox("Advanced engine / 4D-STEM / Reference")
+    def _build_engine_group(self) -> QGroupBox:
+        """Specimen and instrument choices the physics engine needs."""
+        box = QGroupBox("Engine")
         form = QFormLayout(box)
         self._microscope = QComboBox()
         for m in ["krios", "krios-cfeg", "glacios", "talos-arctica", "talos-l120c", "cs-corrected"]:
@@ -207,12 +254,27 @@ class TemSimPanel(QWidget):
         form.addRow("", self._add_contam)
         self._energy_filter = self._spin(0.0, 0.0, 100.0, 5.0)
         form.addRow("Energy filter eV (0=off):", self._energy_filter)
+        return box
+
+    def _build_fourd_group(self) -> QGroupBox:
+        """Scanned-probe settings — only 4D-STEM reads these."""
+        box = QGroupBox("Probe and scan")
+        form = QFormLayout(box)
         self._conv_mrad = self._spin(20.0, 0.5, 60.0, 1.0)
-        form.addRow("4D-STEM convergence mrad:", self._conv_mrad)
+        form.addRow("Convergence mrad:", self._conv_mrad)
         self._scan_size = QSpinBox()
         self._scan_size.setRange(8, 256)
         self._scan_size.setValue(64)
-        form.addRow("4D-STEM scan size:", self._scan_size)
+        self._scan_size.setToolTip(
+            "Scan positions per side. The run cost grows with the square of this number."
+        )
+        form.addRow("Scan size:", self._scan_size)
+        return box
+
+    def _build_reference_group(self) -> QGroupBox:
+        """Point at a real micrograph and generate images that match it."""
+        box = QGroupBox("Reference image")
+        form = QFormLayout(box)
         ref_row = QHBoxLayout()
         self._reference_path = QLineEdit("")
         rb = QPushButton("Browse")
