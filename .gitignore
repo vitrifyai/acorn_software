@@ -42,8 +42,9 @@ htmlcov/
 
 # Output / results
 *.log
-runs/          # YOLO/UNet training output directories
-datasets/      # exported training datasets
+runs/
+datasets/
+.runtime/
 
 # Jupyter
 .ipynb_checkpoints/
@@ -55,3 +56,6 @@ datasets/      # exported training datasets
 
 # Private documents
 paper_draft.md
+
+# Second venv used by the launchers
+.venv-py312/

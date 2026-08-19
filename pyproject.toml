@@ -27,6 +27,8 @@ dependencies = [
     "Pillow>=10.0",
     "h5py>=3.8",
     "roifile>=2023.5",    # ImageJ ROI import
+    "mrcfile>=1.4",       # TEM-sim engine: MRC header probe / export + reference-matching
+    "pyyaml>=6.0",        # TEM-sim engine: setup/config serialization
 ]
 
 [project.optional-dependencies]
@@ -63,6 +65,7 @@ dev = [
     "pytest-cov",
     "ruff",
 ]
+gpu      = ["cupy-cuda12x>=13"]   # GPU multislice/4D-STEM (CUDA 12.x); engine falls back to CPU without it
 llm      = ["anthropic>=0.52", "openai>=1.0"]
 analysis = ["opencv-python>=4.8", "pandas>=1.5"]
 tracking = ["pandas>=1.5", "scipy>=1.10"]
@@ -83,6 +86,8 @@ acorn_3d        = "acorn_3d.plugin:VolumePlugin"
 acorn_llm       = "acorn_llm.plugin:LLMPlugin"
 acorn_plotting  = "acorn_plotting.clu_integration:PlottingPlugin"
 acorn_spatial   = "acorn_spatial.plugin:SpatialPlugin"
+acorn_fib_sim   = "acorn_fib_sim.plugin:FibSimulationPlugin"
+acorn_tem_sim   = "acorn_tem_sim.plugin:TemSimulationPlugin"
 
 [tool.hatch.build.targets.wheel]
 packages = [
@@ -93,6 +98,8 @@ packages = [
     "src/acorn_llm",
     "src/acorn_plotting",
     "src/acorn_spatial",
+    "src/acorn_fib_sim",
+    "src/acorn_tem_sim",
 ]
 
 

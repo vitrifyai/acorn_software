@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256">
+  <rect width="256" height="256" rx="36" fill="#17191f"/>
+  <rect x="22" y="22" width="212" height="212" rx="28" fill="#242936" stroke="#42d392" stroke-width="6"/>
+  <path d="M52 72h152v24H52z" fill="#42d392"/>
+  <path d="M52 118h152v20H52z" fill="#c7f9cc" opacity=".9"/>
+  <path d="M52 160h152v24H52z" fill="#62b6cb"/>
+  <path d="M72 48v160M112 48v160M150 48v160M190 48v160" stroke="#f8f9fa" stroke-opacity=".32" stroke-width="8"/>
+  <circle cx="88" cy="128" r="18" fill="#ffce5c"/>
+  <circle cx="156" cy="136" r="13" fill="#ffce5c"/>
+  <path d="M42 214h172" stroke="#42d392" stroke-width="10" stroke-linecap="round"/>
+  <text x="128" y="232" text-anchor="middle" font-family="Arial, sans-serif" font-size="24" font-weight="700" fill="#f8f9fa">SIM</text>
+</svg>

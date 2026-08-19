@@ -94,6 +94,7 @@ class YOLOPanel(QWidget):
     detect_seg_requested  = pyqtSignal()
     accept_all_requested  = pyqtSignal()
     reject_all_requested  = pyqtSignal()
+    batch_requested       = pyqtSignal()   # run the loaded model over ALL images
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -204,6 +205,16 @@ class YOLOPanel(QWidget):
         )
         seg_btn.clicked.connect(self.detect_seg_requested)
         run_layout.addWidget(seg_btn)
+
+        batch_btn = QPushButton("Run on ALL Images")
+        batch_btn.setStyleSheet("background:#6a1b9a;color:white;font-weight:bold;")
+        batch_btn.setToolTip(
+            "Run this YOLO model on every loaded image (skipping already-annotated ones).\n"
+            "Predictions are added as EDITABLE annotations and saved to each image's sidecar.\n"
+            "They are NOT auto-queued for training — review and correct them first."
+        )
+        batch_btn.clicked.connect(self.batch_requested)
+        run_layout.addWidget(batch_btn)
 
         layout.addWidget(run_box)
 

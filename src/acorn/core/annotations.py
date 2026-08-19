@@ -1,10 +1,24 @@
-"""Annotation data model — typed dataclasses + observable store with undo."""
+"""Annotation data model — typed dataclasses + observable store with undo.
+
+Every annotation carries a ``provenance`` block (see ``acorn.core.provenance``).
+The store is the single choke point that stamps provenance on ``add`` and logs
+mutations, so predictors, plugins, CLU, and manual drawing are all captured
+without per-caller changes.
+"""
 
 from __future__ import annotations
 
 import json
 from dataclasses import dataclass, field, asdict
 from typing import Callable, Optional, Union
+
+from acorn.core.provenance import (
+    Provenance, provenance_from_dict, on_add, on_update, on_remove,
+)
+
+
+def _prov() -> Provenance:
+    return Provenance()
 
 
 # ── Annotation primitives ─────────────────────────────────────────────────────
@@ -16,6 +30,7 @@ class ArrowAnnotation:
     p2: tuple[float, float] = (0.0, 0.0)   # head
     color: str = "#FFFF00"
     linewidth: float = 2.0
+    provenance: Provenance = field(default_factory=_prov)
 
 
 @dataclass
@@ -26,6 +41,7 @@ class LineAnnotation:
     color: str = "#FFFF00"
     linewidth: float = 2.0
     linestyle: str = "-"
+    provenance: Provenance = field(default_factory=_prov)
 
 
 @dataclass
@@ -37,6 +53,7 @@ class CircleAnnotation:
     color: str = "#FFFF00"
     linewidth: float = 2.0
     linestyle: str = "-"
+    provenance: Provenance = field(default_factory=_prov)
 
 
 @dataclass
@@ -49,6 +66,7 @@ class RectangleAnnotation:
     color: str = "#FFFF00"
     linewidth: float = 2.0
     linestyle: str = "-"
+    provenance: Provenance = field(default_factory=_prov)
 
 
 @dataclass
@@ -59,6 +77,7 @@ class TextAnnotation:
     label: str = "Label"
     color: str = "#FFFF00"
     fontsize: int = 12
+    provenance: Provenance = field(default_factory=_prov)
 
 
 @dataclass
@@ -70,6 +89,7 @@ class ScalebarAnnotation:
     color: str = "#FFFFFF"
     linewidth: float = 2.0
     fontsize: int = 12
+    provenance: Provenance = field(default_factory=_prov)
 
 
 # ── Measurement overlays (output from MeasurementEngine) ──────────────────────
@@ -84,6 +104,7 @@ class DistanceMeasurement:
     calibrated: bool = True
     color: str = "#00FF88"
     linewidth: float = 1.5
+    provenance: Provenance = field(default_factory=_prov)
 
 
 @dataclass
@@ -95,6 +116,7 @@ class AngleMeasurement:
     angle_deg: float = 0.0
     color: str = "#00FF88"
     linewidth: float = 1.5
+    provenance: Provenance = field(default_factory=_prov)
 
 
 @dataclass
@@ -106,6 +128,7 @@ class ROIAnnotation:
     color: str = "#00AAFF"
     linewidth: float = 1.5
     label: str = ""                                 # user-assigned region label
+    provenance: Provenance = field(default_factory=_prov)
 
 
 AnyAnnotation = Union[
@@ -134,7 +157,8 @@ class AnnotationStore:
     Observable list of annotations. Supports undo and JSON serialisation.
 
     Register callbacks with ``on_change()``; they are called with the
-    current list whenever the store is mutated.
+    current list whenever the store is mutated. ``add``/``update``/``remove``
+    are the provenance choke point (stamp on add, log every mutation).
     """
 
     def __init__(self) -> None:
@@ -144,12 +168,20 @@ class AnnotationStore:
     # ── mutation ──────────────────────────────────────────────────────────────
 
     def add(self, annotation: AnyAnnotation) -> None:
+        on_add(annotation)          # stamp provenance + log annotation_add
         self._items.append(annotation)
+        self._notify()
+
+    def update(self, annotation: AnyAnnotation, event: str = "annotation_edit") -> None:
+        """Record an in-place edit of an already-added annotation (bumps
+        modified_at / modification_count and logs the event)."""
+        on_update(annotation, event)
         self._notify()
 
     def undo(self) -> Optional[AnyAnnotation]:
         if self._items:
             removed = self._items.pop()
+            on_remove(removed)
             self._notify()
             return removed
         return None
@@ -158,6 +190,7 @@ class AnnotationStore:
         """Remove a specific annotation by identity. Returns True if found."""
         for i, item in enumerate(self._items):
             if item is annotation:
+                on_remove(item)
                 self._items.pop(i)
                 self._notify()
                 return True
@@ -168,7 +201,8 @@ class AnnotationStore:
         self._notify()
 
     def replace_all(self, items: list[AnyAnnotation]) -> None:
-        """Replace the entire store contents (e.g. after loading a session)."""
+        """Replace the entire store contents (e.g. after loading a session).
+        Does NOT stamp — loaded annotations keep their existing provenance."""
         self._items = list(items)
         self._notify()
 
@@ -223,6 +257,11 @@ class AnnotationStore:
                     tuple(v) if isinstance(v, (list, tuple)) else v
                     for v in kwargs["vertices"]
                 ]
+            # Provenance block: rebuild from dict; v3 sidecars have none, so the
+            # dataclass default (origin=unknown, created_at=None) applies — which
+            # is exactly the "fill unknown rather than fail" behaviour we want.
+            if isinstance(kwargs.get("provenance"), dict):
+                kwargs["provenance"] = provenance_from_dict(kwargs["provenance"])
             # One malformed record must not discard the rest.
             try:
                 store._items.append(klass(**kwargs))

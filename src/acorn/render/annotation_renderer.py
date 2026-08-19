@@ -127,9 +127,12 @@ class AnnotationRenderer:
             artists[0].set_xy(xy)
             cx, cy = xy[:, 0].mean(), xy[:, 1].mean()
             artists[1].set_position((cx, cy))
-            lbl = ann.label if ann.label else f"A={ann.area_nm2:.0f} nm²"
-            if ann.stats:
-                lbl += f"\nμ={ann.stats.get('mean', 0):.3f}"
+            if ann.label:
+                lbl = ann.label
+                if ann.stats:
+                    lbl += f"\nμ={ann.stats.get('mean', 0):.3f}"
+            else:
+                lbl = ""                # empty label -> clean shape, no text drawn
             artists[1].set_text(lbl)
             return
         if t == "distance" and len(artists) >= 4:
@@ -608,9 +611,7 @@ class AnnotationRenderer:
         if ann.label:
             centroid_text = ann.label
         else:
-            centroid_text = f"A={ann.area_nm2:.0f} nm²"
-            if ann.stats:
-                centroid_text += f"\nμ={ann.stats.get('mean', 0):.3f}"
+            centroid_text = ""          # empty label -> clean shape, no text drawn
         txt = self.ax.text(
             cx, cy, centroid_text,
             color=ann.color, fontsize=9, fontweight="bold",

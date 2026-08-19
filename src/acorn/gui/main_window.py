@@ -62,6 +62,23 @@ from acorn.gui.segmentation_panel import SegmentationPanel
 from acorn.gui.train_panel import TrainPanel
 
 
+ImageFingerprint = tuple[str, int, int, int]
+
+
+def _image_file_fingerprint(path: Path) -> ImageFingerprint | None:
+    """Cheap identity for deciding whether an already-open image file changed."""
+    try:
+        stat = Path(path).stat()
+    except OSError:
+        return None
+    return (
+        str(Path(path).resolve()),
+        int(stat.st_size),
+        int(stat.st_mtime_ns),
+        int(getattr(stat, "st_ino", 0)),
+    )
+
+
 # ── folder file-picker dialog ─────────────────────────────────────────────────
 
 class FolderPickerDialog(QDialog):
@@ -85,6 +102,7 @@ class FolderPickerDialog(QDialog):
         self._type_filter.addItem("DM4",           {".dm4"})
         self._type_filter.addItem("TIFF",          {".tif", ".tiff"})
         self._type_filter.addItem("MRC / MRCS",    {".mrc", ".mrcs"})
+        self._type_filter.addItem("EMD / HDF5",    {".emd", ".h5", ".hdf5"})
         self._type_filter.addItem("PNG / JPEG",    {".png", ".jpg", ".jpeg"})
         self._type_filter.currentIndexChanged.connect(self._apply_filter)
         filter_row.addWidget(self._type_filter)
@@ -1071,6 +1089,7 @@ class MainWindow(QMainWindow):
         # ── application state ─────────────────────────────────────────────────
         self._image_paths: list[Path] = []          # all file paths (no data held)
         self._image_cache: dict[int, DM4Image] = {} # at most _MAX_CACHE loaded at once
+        self._image_cache_fingerprints: dict[int, ImageFingerprint | None] = {}
         self._MAX_CACHE = 3
         self._img_idx: int = -1          # -1 = no image loaded yet
         self._click_buffer: list[tuple[float, float]] = []
@@ -1117,6 +1136,13 @@ class MainWindow(QMainWindow):
         self._yolo_predictor = None     # YOLOPredictor, loaded on demand
         self._yolo_thread: Optional[SAMThread] = None
         self._last_yolo_detections: list = []   # kept to pipe to SAM
+        self._batch_model_proc = None   # state for batch_run_yolo / batch_run_unet
+        # ── provenance / study instrumentation ───────────────────────────────
+        self._current_invocation = "direct_gui"   # or "clu_nl"; set per action
+        self._current_turn_id = None               # CLU turn id when clu_nl
+        self._yolo_source_model = None             # {"path","sha256"} cached at load
+        self._unet_source_model = None
+        self._sam_source_model = None
         self._pending_yolo_anns: list = []
 
         # UNet state
@@ -1374,12 +1400,14 @@ class MainWindow(QMainWindow):
         self._yolo_panel.detect_seg_requested.connect(self._on_yolo_detect_seg)
         self._yolo_panel.accept_all_requested.connect(self._on_yolo_accept)
         self._yolo_panel.reject_all_requested.connect(self._on_yolo_reject)
+        self._yolo_panel.batch_requested.connect(self._on_yolo_batch)
 
         # UNet panel signals
         self._unet_panel.load_model_requested.connect(self._on_unet_load_model)
         self._unet_panel.segment_requested.connect(self._on_unet_segment)
         self._unet_panel.accept_all_requested.connect(self._on_unet_accept)
         self._unet_panel.reject_all_requested.connect(self._on_unet_reject)
+        self._unet_panel.batch_requested.connect(self._on_unet_batch)
 
         # Train panel signals
         self._train_panel.train_requested.connect(self._on_train_requested)
@@ -1495,10 +1523,11 @@ class MainWindow(QMainWindow):
         dlg = QFileDialog(self, "Open image file(s)", str(Path.home()))
         dlg.setFileMode(QFileDialog.FileMode.ExistingFiles)
         dlg.setNameFilters([
-            "All supported (*.dm4 *.tif *.tiff *.mrc *.mrcs *.png *.jpg *.jpeg)",
+            "All supported (*.dm4 *.tif *.tiff *.mrc *.mrcs *.emd *.h5 *.hdf5 *.png *.jpg *.jpeg)",
             "DM4 (*.dm4)",
             "TIFF (*.tif *.tiff)",
             "MRC (*.mrc *.mrcs)",
+            "EMD / HDF5 (*.emd *.h5 *.hdf5)",
             "Images (*.png *.jpg *.jpeg)",
             "All files (*)",
         ])
@@ -1560,7 +1589,7 @@ class MainWindow(QMainWindow):
             QMessageBox.information(
                 self, "No supported files",
                 f"No supported image files found in:\n{d}\n\n"
-                "Supported: .dm4, .tif/.tiff, .mrc/.mrcs, .png, .jpg/.jpeg"
+                "Supported: .dm4, .tif/.tiff, .mrc/.mrcs, .emd, .h5/.hdf5, .png, .jpg/.jpeg"
             )
             return
         dlg = FolderPickerDialog(files, parent=self)
@@ -1602,7 +1631,7 @@ class MainWindow(QMainWindow):
             ez = self._sam_exclude_zones.get(idx)
             cr = self._sam_crop_regions_saved.get(idx)
             data = {
-                "version": 3,
+                "version": 4,   # v4 adds the per-annotation provenance block
                 "annotations": [asdict(a) for a in anns],
                 "pixel_size_nm": self._px_overrides.get(idx),
                 "exclude_zone": list(ez) if ez else None,
@@ -1841,6 +1870,7 @@ class MainWindow(QMainWindow):
             return
         self._image_paths = paths
         self._image_cache.clear()
+        self._image_cache_fingerprints.clear()
         self._img_idx = -1           # sentinel so _switch_to doesn't save stale data
         self._contrast_states.clear()
         self._ann_states.clear()
@@ -1872,10 +1902,13 @@ class MainWindow(QMainWindow):
         self._sync_image_list(idx)
         self._canvas_widget.update_nav_label(idx + 1, len(self._image_paths))
 
-        if idx in self._image_cache:
+        if idx in self._image_cache and self._cached_image_is_current(idx):
             # Already cached — complete immediately without a thread.
             self._finish_switch(idx, self._image_cache[idx])
             return
+        if idx in self._image_cache:
+            self._image_cache.pop(idx, None)
+            self._image_cache_fingerprints.pop(idx, None)
 
         path = self._image_paths[idx]
         # Resolve contrast params now (before thread starts) so the
@@ -1897,7 +1930,9 @@ class MainWindow(QMainWindow):
         if len(self._image_cache) >= self._MAX_CACHE:
             oldest = next(iter(self._image_cache))
             del self._image_cache[oldest]
+            self._image_cache_fingerprints.pop(oldest, None)
         self._image_cache[idx] = img
+        self._image_cache_fingerprints[idx] = _image_file_fingerprint(img.filepath) if img.filepath else None
         # Only render if this is still the current image (user may not have switched).
         if idx == self._img_idx:
             self._finish_switch(idx, img, precomputed_norm=norm)
@@ -1907,6 +1942,15 @@ class MainWindow(QMainWindow):
     def _on_image_load_error(self, idx: int, message: str) -> None:
         self._canvas_widget.set_nav_enabled(len(self._image_paths) > 1)
         self._statusbar.showMessage(f"Error loading image {idx}: {message}")
+
+    def _cached_image_is_current(self, idx: int) -> bool:
+        if idx not in self._image_cache or idx >= len(self._image_paths):
+            return False
+        cached = self._image_cache[idx]
+        path = cached.filepath if cached.filepath else self._image_paths[idx]
+        cached_fp = self._image_cache_fingerprints.get(idx)
+        current_fp = _image_file_fingerprint(path)
+        return cached_fp is not None and cached_fp == current_fp
 
     def _finish_switch(self, idx: int, img: DM4Image, precomputed_norm=None) -> None:
         """Complete the image switch once the DM4Image is available."""
@@ -3105,7 +3149,7 @@ class MainWindow(QMainWindow):
             self,
             "Select negative images",
             str(Path.home()),
-            "Images (*.dm4 *.tif *.tiff *.mrc *.mrcs *.png *.jpg *.jpeg)",
+            "Images (*.dm4 *.tif *.tiff *.mrc *.mrcs *.emd *.h5 *.hdf5 *.png *.jpg *.jpeg)",
         )
 
         # Also offer folder import
@@ -3751,6 +3795,147 @@ class MainWindow(QMainWindow):
         bp["processed"] += 1
         self._batch_next_image()
 
+    # ── batch YOLO / UNet state machine ───────────────────────────────────────
+    # Reuses the proven per-image navigate → run → accept path (same as manual and
+    # as batch SAM), so predictions are identical to a manual run and auto-save to
+    # each image's .acorn.json sidecar as editable annotations. Kept separate from
+    # the SAM batch methods so that path is untouched.
+
+    def _start_batch_model(self, params: dict, model: str) -> None:
+        """Run a loaded YOLO/UNet model over all images, adding editable predictions."""
+        if self._batch_model_proc is not None:
+            self._statusbar.showMessage("A batch model run is already in progress.")
+            return
+        if model == "yolo":
+            if self._yolo_predictor is None or not self._yolo_predictor.is_loaded:
+                self._statusbar.showMessage("Batch YOLO: load a YOLO model first.")
+                self._report_clu("Batch YOLO could not run — no YOLO model is loaded. Tell the "
+                                 "user to load_yolo first. Do NOT claim anything was detected.")
+                return
+        elif model == "unet":
+            if self._unet_predictor is None or not self._unet_predictor.is_loaded:
+                self._statusbar.showMessage("Batch UNet: load a UNet model first.")
+                self._report_clu("Batch UNet could not run — no UNet model is loaded. Tell the "
+                                 "user to load_unet first. Do NOT claim anything was segmented.")
+                return
+        else:
+            return
+
+        label          = params.get("label", "")
+        segmentation   = bool(params.get("segmentation", False))
+        skip_annotated = bool(params.get("skip_annotated", True))
+        queue_after    = bool(params.get("queue_after", False))
+
+        # Set the label on the relevant panel so predictions are labelled correctly.
+        if label:
+            combo = (self._yolo_panel if model == "yolo" else self._unet_panel)._label_combo
+            idx = combo.findText(label)
+            if idx < 0:
+                combo.addItem(label)
+                idx = combo.count() - 1
+            combo.setCurrentIndex(idx)
+
+        queue: list[int] = []
+        for i in range(len(self._image_paths)):
+            if skip_annotated:
+                existing = self._ann_states.get(i, [])
+                if i == self._img_idx:
+                    existing = list(self._canvas_widget.canvas.store)
+                if existing:
+                    continue
+            queue.append(i)
+
+        if not queue:
+            self._statusbar.showMessage(
+                f"Batch {model.upper()}: all images already annotated — nothing to do."
+            )
+            self._report_clu(f"Batch {model.upper()}: every image already has annotations, so "
+                             "nothing was run. Do NOT claim new predictions were made.")
+            return
+
+        self._batch_model_proc = {
+            "queue":        queue,
+            "model":        model,
+            "segmentation": segmentation,
+            "queue_after":  queue_after,
+            "label":        label,
+            "processed":    0,
+            "total":        len(queue),
+            "detections":   0,
+        }
+        self._statusbar.showMessage(
+            f"Batch {model.upper()}: starting — {len(queue)} image(s) to process…"
+        )
+        self._batch_model_next()
+
+    def _batch_model_next(self) -> None:
+        bp = self._batch_model_proc
+        if bp is None:
+            return
+        if not bp["queue"]:
+            n, total, det, model = bp["processed"], bp["total"], bp["detections"], bp["model"]
+            queued = bp["queue_after"]
+            self._batch_model_proc = None
+            msg = (f"Batch {model.upper()} complete — {det} object(s) added as editable "
+                   f"annotations across {n}/{total} image(s).")
+            if not queued:
+                msg += " Review and correct them, then queue for training."
+            self._statusbar.showMessage(msg)
+            self._report_clu(
+                f"Batch {model.upper()} finished: {det} prediction(s) were added as EDITABLE "
+                f"annotations to {n} image(s) and saved to their sidecars. "
+                + ("They were auto-queued for training export." if queued else
+                   "They were NOT queued for training — a fresh model produces false positives, so "
+                   "tell the user to review/correct the predictions (they can edit or reject them per "
+                   "image) BEFORE finalizing the dataset. Do NOT claim the predictions are correct.")
+            )
+            return
+        target = bp["queue"][0]
+        if target == self._img_idx:
+            # Already on this image — navigation would no-op (no image_loaded emit),
+            # so run directly instead of waiting for a signal that never fires.
+            self._batch_model_on_loaded(None)
+        else:
+            self._context.image_loaded.connect(self._batch_model_on_loaded)
+            self._on_image_list_select(target)
+
+    def _batch_model_on_loaded(self, _img) -> None:
+        bp = self._batch_model_proc
+        try:
+            self._context.image_loaded.disconnect(self._batch_model_on_loaded)
+        except Exception:
+            pass
+        if bp is None or not bp["queue"]:
+            return
+        if self._img_idx != bp["queue"][0]:
+            return  # spurious signal from a different navigation
+        n, total = bp["processed"], bp["total"]
+        self._statusbar.showMessage(f"Batch {bp['model'].upper()}: image {n+1}/{total}…")
+        if bp["model"] == "yolo":
+            self._run_yolo(bp["segmentation"], on_complete=self._batch_model_after)
+        else:
+            self._on_unet_segment(on_complete=self._batch_model_after)
+
+    def _batch_model_after(self) -> None:
+        bp = self._batch_model_proc
+        if bp is None:
+            return
+        # Predictions are already in the store as pending; accept keeps them (editable).
+        if bp["model"] == "yolo":
+            bp["detections"] += len(self._pending_yolo_anns)
+            self._on_yolo_accept()
+        else:
+            bp["detections"] += len(self._pending_unet_masks)
+            self._on_unet_accept()
+        # Persist this image's predictions to its sidecar now (don't rely on debounce).
+        self._do_autosave()
+        if bp["queue_after"]:
+            self._on_queue_image("")
+        if bp["queue"]:
+            bp["queue"].pop(0)
+        bp["processed"] += 1
+        self._batch_model_next()
+
     def _on_sam_point_mode(self, positive: bool) -> None:
         self._sam_mode      = "pos_point" if positive else "neg_point"
         self._sam_box_click = None
@@ -4324,6 +4509,8 @@ class MainWindow(QMainWindow):
 
         def _done(p):
             self._yolo_predictor = p
+            from acorn.core import provenance as _prov
+            self._yolo_source_model = _prov.source_model(model_path)
             seg_note = " (seg)" if p.is_seg else ""
             self._yolo_panel.set_model_status(
                 f"Loaded{seg_note}: {model_path}", loaded=True
@@ -4346,16 +4533,22 @@ class MainWindow(QMainWindow):
     def _on_yolo_detect_seg(self) -> None:
         self._run_yolo(segmentation=True)
 
-    def _run_yolo(self, segmentation: bool) -> None:
+    def _run_yolo(self, segmentation: bool, on_complete=None) -> None:
         if self._yolo_busy():
             self._yolo_panel.set_status("YOLO is running — please wait.")
+            if on_complete is not None:
+                on_complete()
             return
         img = self._canvas_widget.canvas.dm4
         if img is None or img.raw is None:
             self._yolo_panel.set_status("No image loaded.")
+            if on_complete is not None:
+                on_complete()
             return
         if self._yolo_predictor is None or not self._yolo_predictor.is_loaded:
             self._yolo_panel.set_status("Load a YOLO model first.")
+            if on_complete is not None:
+                on_complete()
             return
 
         from acorn.core.contrast import apply_contrast
@@ -4387,15 +4580,41 @@ class MainWindow(QMainWindow):
                 self._report_clu("YOLO produced 0 detections — nothing was added. Suggest the "
                                  "user lower the confidence threshold or check the model. Do NOT "
                                  "claim detections were made.")
+            if on_complete is not None:
+                on_complete()
 
         def _err(msg):
             self._yolo_panel.set_status(f"Error: {msg}")
             self._report_clu(f"YOLO detection failed: {msg}")
+            if on_complete is not None:
+                on_complete()
 
         self._yolo_thread = SAMThread(_run, self)
         self._yolo_thread.finished.connect(_done)
         self._yolo_thread.error.connect(_err)
         self._yolo_thread.start()
+
+    def _pred_context(self, origin: str):
+        """Provenance context for a predictor's store.add calls — stamps origin,
+        the cached source_model, the current invocation (direct_gui/clu_nl), and
+        the active batch_id (if a batch of this origin is running)."""
+        from acorn.core import provenance as _prov
+        sm = {
+            "yolo": self._yolo_source_model,
+            "unet": self._unet_source_model,
+            "sam":  self._sam_source_model,
+        }.get(origin)
+        bid = None
+        bp = self._batch_model_proc
+        if bp is not None and bp.get("model") == origin:
+            bid = bp.get("batch_id")
+        return _prov.provenance_context(
+            origin,
+            invocation=self._current_invocation,
+            source_model=sm,
+            batch_id=bid,
+            turn_id=self._current_turn_id,
+        )
 
     def _add_yolo_detections_to_store(
         self, detections: list, use_masks: bool
@@ -4408,19 +4627,20 @@ class MainWindow(QMainWindow):
         canvas._loading = True
         try:
             has_masks = use_masks and any("mask" in d for d in detections)
-            if has_masks:
-                from acorn.core.yolo_predictor import masks_to_roi_annotations
-                n = masks_to_roi_annotations(detections, store, label=label, color=color)
-                for _ in range(n):
-                    self._pending_yolo_anns.append(True)
-            else:
-                from acorn.core.yolo_predictor import boxes_to_roi_annotations
-                n = boxes_to_roi_annotations(
-                    detections, store, label=label, color=color,
-                    as_rectangles=self._yolo_panel.as_rectangles,
-                )
-                for _ in range(n):
-                    self._pending_yolo_anns.append(True)
+            with self._pred_context("yolo"):
+                if has_masks:
+                    from acorn.core.yolo_predictor import masks_to_roi_annotations
+                    n = masks_to_roi_annotations(detections, store, label=label, color=color)
+                    for _ in range(n):
+                        self._pending_yolo_anns.append(True)
+                else:
+                    from acorn.core.yolo_predictor import boxes_to_roi_annotations
+                    n = boxes_to_roi_annotations(
+                        detections, store, label=label, color=color,
+                        as_rectangles=self._yolo_panel.as_rectangles,
+                    )
+                    for _ in range(n):
+                        self._pending_yolo_anns.append(True)
         finally:
             canvas._loading = False
         # Compute real areas for ROIs added with area_nm2=0.0
@@ -4444,6 +4664,245 @@ class MainWindow(QMainWindow):
         self._remove_pending_annotations(self._pending_yolo_anns)
         self._pending_yolo_anns.clear()
         self._yolo_panel.set_status("YOLO detections removed.")
+
+    def _on_yolo_batch(self) -> None:
+        """'Run on ALL Images' button — batch the loaded YOLO model over the dataset."""
+        self._start_batch_model(
+            {"label": self._yolo_panel.label, "segmentation": False,
+             "skip_annotated": True, "queue_after": False},
+            "yolo",
+        )
+
+    def _on_detect_atoms(self, params: dict) -> None:
+        """Detect atomic columns (incl. moire lattices) and overlay them as circles."""
+        img = self._canvas_widget.canvas.dm4
+        if img is None or img.raw is None:
+            self._statusbar.showMessage("Detect atoms: no image loaded.")
+            self._report_clu("detect_atoms could not run — no image is loaded. Tell the user to "
+                             "open an atomic-resolution image first. Do NOT claim atoms were found.")
+            return
+        import numpy as np
+        from acorn.core.contrast import apply_contrast
+        try:
+            from acorn.core.atom_detect import detect_atoms as _detect, estimate_lattice_spacing
+        except Exception as e:
+            self._statusbar.showMessage(f"Detect atoms: {e}")
+            self._report_clu(f"Atom detection unavailable: {e}")
+            return
+        norm = np.clip(np.asarray(apply_contrast(img.raw, self._contrast_panel.params()), float), 0.0, 1.0)
+        spacing = params.get("lattice_spacing_px")
+        thr = float(params.get("threshold", 2.0))
+        bright = bool(params.get("bright_atoms", True))
+        cap = int(params.get("max_annotations", 4000))
+        model_path = params.get("model_path")
+        fill = bool(params.get("fill_gaps", True))   # lattice-guided recovery of dim-region atoms
+        self._statusbar.showMessage("Detecting atomic columns…")
+        try:
+            if model_path:
+                from acorn.core.atom_model import detect_atoms_model
+                md = float(spacing) * 0.6 if spacing else 6.0
+                coords = detect_atoms_model(norm, model_path, min_distance_px=md)
+            else:
+                coords = _detect(norm, lattice_spacing_px=spacing,
+                                 min_distance_px=params.get("min_distance_px"),
+                                 threshold=thr, bright_atoms=bright, fill_gaps=fill)
+        except Exception as e:
+            self._statusbar.showMessage(f"Detect atoms failed: {e}")
+            self._report_clu(f"Atom detection failed: {e}")
+            return
+        n = len(coords)
+        if spacing is None:
+            try:
+                spacing = float(estimate_lattice_spacing(norm))
+            except Exception:
+                spacing = 8.0
+        r = max(2.0, float(spacing) / 4.0)
+        from acorn.core.annotations import CircleAnnotation
+        from acorn.core import provenance as _prov
+        canvas = self._canvas_widget.canvas
+        store = canvas.store
+        canvas._loading = True
+        try:
+            with _prov.batch_transaction(origin="atom_detect",
+                                         invocation=self._current_invocation,
+                                         human_interaction_count=1):
+                for (yy, xx) in coords[:cap]:
+                    store.add(CircleAnnotation(cx=float(xx), cy=float(yy), r=r,
+                                               color="#00E5FF", linewidth=1.0))
+        finally:
+            canvas._loading = False
+        if canvas.renderer is not None:
+            canvas.renderer.render_noblit(canvas.store, canvas)
+        else:
+            canvas.fig.canvas.draw_idle()
+        self._autosave_timer.start()
+        extra = "" if n <= cap else f" (showing {cap}; raise max_annotations to draw all)"
+        self._statusbar.showMessage(f"Detected {n} atomic columns (est. spacing {spacing:.1f} px).{extra}")
+        self._report_clu(f"Atom detection found {n} atomic columns (estimated lattice spacing "
+                         f"{spacing:.1f} px) and added {min(n, cap)} as editable circle annotations."
+                         f"{extra}")
+
+    def _on_atom_statistics(self, params: dict) -> None:
+        """Compute lattice statistics from detected atomic columns and save a CSV."""
+        import numpy as np
+        img = self._canvas_widget.canvas.dm4
+        if img is None or img.raw is None:
+            self._statusbar.showMessage("Atom statistics: no image loaded.")
+            self._report_clu("atom_statistics could not run — no image is loaded.")
+            return
+        try:
+            from acorn.core import atom_stats as _stats
+            from acorn.core.atom_detect import detect_atoms as _detect
+            from acorn.core.annotations import CircleAnnotation
+        except Exception as e:
+            self._report_clu(f"Atom statistics unavailable: {e}")
+            return
+        # gather atoms already detected (origin=atom_detect), else detect now
+        redetect = bool(params.get("redetect", False))
+        coords = None
+        if not redetect:
+            pts = [(a.cy, a.cx) for a in self._canvas_widget.canvas.store
+                   if isinstance(a, CircleAnnotation)
+                   and getattr(getattr(a, "provenance", None), "origin", "") == "atom_detect"]
+            if pts:
+                coords = np.asarray(pts, float)
+        from acorn.core.contrast import apply_contrast
+        norm_img = np.clip(np.asarray(apply_contrast(img.raw, self._contrast_panel.params()), float), 0, 1)
+        if coords is None or len(coords) < 5:
+            coords = _detect(norm_img, threshold=2.0, fill_gaps=True)
+        if len(coords) < 5:
+            self._statusbar.showMessage("Atom statistics: too few atoms.")
+            self._report_clu("Atom statistics: fewer than 5 atoms — nothing to compute. Run detect_atoms first.")
+            return
+
+        px_nm = params.get("pixel_size_nm")
+        if px_nm is None:
+            px_nm = float(getattr(self._engine, "pixel_size", 0.0)) or None
+        self._statusbar.showMessage("Computing atom statistics…")
+        try:
+            summ = _stats.summarize(coords, pixel_size_nm=px_nm, image=norm_img)
+            nn_med, _, d, _ = _stats.nearest_neighbour(coords)
+            psi6 = _stats.bond_orientational_order(coords)
+            cn = _stats.voronoi_coordination(coords)
+            st = _stats.strain_field(coords)
+        except Exception as e:
+            self._statusbar.showMessage(f"Atom statistics failed: {e}")
+            self._report_clu(f"Atom statistics failed: {e}")
+            return
+
+        # save per-atom CSV next to the image
+        saved = ""
+        try:
+            import csv
+            if 0 <= self._img_idx < len(self._image_paths):
+                out = self._image_paths[self._img_idx].with_name(
+                    self._image_paths[self._img_idx].stem + "_atom_stats.csv")
+                with open(out, "w", newline="") as fh:
+                    w = csv.writer(fh)
+                    w.writerow(["x_px", "y_px", "nn_dist_px", "psi6", "coord_num",
+                                "exx", "eyy", "exy", "rotation_deg"])
+                    for i in range(len(coords)):
+                        w.writerow([f"{coords[i,1]:.3f}", f"{coords[i,0]:.3f}",
+                                    f"{d[i,0]:.3f}", f"{psi6[i]:.4f}", cn[i],
+                                    f"{st['exx'][i]:.4f}", f"{st['eyy'][i]:.4f}",
+                                    f"{st['exy'][i]:.4f}", f"{st['rotation_deg'][i]:.3f}"])
+                saved = f" Per-atom CSV saved to {out.name}."
+                # also save the 6-panel statistics maps next to the image
+                try:
+                    figp = self._image_paths[self._img_idx].with_name(
+                        self._image_paths[self._img_idx].stem + "_atom_stats.png")
+                    _stats.save_stats_figure(coords, str(figp), pixel_size_nm=px_nm, image=norm_img)
+                    saved += f" Maps saved to {figp.name}."
+                except Exception:
+                    pass
+        except OSError:
+            pass
+
+        sp_a = summ.get("lattice_spacing_A")
+        sp_txt = f"{sp_a:.2f} A" if sp_a else f"{summ['lattice_spacing_px']:.1f} px"
+        moire = (f", moire period {summ['moire_period_nm']:.1f} nm, twist ~{summ['twist_deg']:.1f}deg"
+                 if summ.get("moire_period_nm") else "")
+        self._statusbar.showMessage(
+            f"{summ['n_atoms']} atoms | spacing {sp_txt} | psi6 {summ['psi6_mean']:.2f}{moire}.")
+        self._report_clu(
+            f"Atom statistics ({summ['n_atoms']} atoms): lattice spacing {sp_txt}; "
+            f"nearest-neighbour {summ.get('nn_distance_A_mean', summ['nn_distance_px_mean']):.2f} "
+            f"{'A' if sp_a else 'px'}; hexagonal order psi6 {summ['psi6_mean']:.2f}; median "
+            f"coordination {summ['coord_number_median']:.0f}{moire}.{saved} "
+            "NOTE: psi6 and nn-distance are reliable; the per-atom strain/coordination magnitudes are "
+            "sensitive to missed atoms in dim regions and should be treated as qualitative.")
+
+    def _on_train_atom_model(self, params: dict) -> None:
+        """Self-label + train a U-Net atom-finder (background thread)."""
+        import numpy as np
+        img = self._canvas_widget.canvas.dm4
+        if img is None or img.raw is None:
+            self._report_clu("train_atom_model: no image loaded. Open a STEM image first.")
+            return
+        from acorn.core.contrast import apply_contrast
+        from acorn.core.annotations import CircleAnnotation
+        norm = np.clip(np.asarray(apply_contrast(img.raw, self._contrast_panel.params()), float), 0, 1)
+        pts = [(a.cy, a.cx) for a in self._canvas_widget.canvas.store
+               if isinstance(a, CircleAnnotation)
+               and getattr(getattr(a, "provenance", None), "origin", "") == "atom_detect"]
+        if len(pts) >= 20:
+            coords = np.asarray(pts, float)
+            src = "corrected atom annotations"
+        else:
+            from acorn.core.atom_detect import detect_atoms as _detect
+            coords = _detect(norm, threshold=2.0)
+            src = "classical detector"
+        if len(coords) < 20:
+            self._report_clu("train_atom_model: too few seed atoms — run detect_atoms first.")
+            return
+        out = params.get("output_path")
+        if not out and 0 <= self._img_idx < len(self._image_paths):
+            p = self._image_paths[self._img_idx]
+            out = str(p.with_name(p.stem + "_atom_unet.pt"))
+        out = out or "/tmp/atom_unet.pt"
+        epochs = int(params.get("epochs", 40))
+        sigma = float(params.get("atom_sigma", 2.0))
+        self._statusbar.showMessage(f"Training atom model on {len(coords)} seed atoms…")
+        self._report_clu(f"Started training a U-Net atom-finder on {len(coords)} seed atoms (from the "
+                         f"{src}, {epochs} epochs). This is a dedicated atom-heatmap trainer (separate "
+                         f"from the UNet Train tab); live epoch/loss progress shows in the status bar at "
+                         f"the bottom of the window (and the UNet panel's status line). Runs in the "
+                         f"background (~1-2 min on GPU); the model saves to {out}. When done, detect with "
+                         f"model_path set to that path.")
+
+        def _run():
+            from acorn.core.atom_model import train_atom_model
+
+            def _log(m):
+                th = getattr(self, "_atom_train_thread", None)
+                if th is not None:
+                    try:
+                        th.status.emit(m)   # cross-thread signal -> status bar (safe)
+                    except Exception:
+                        pass
+
+            return train_atom_model(norm, coords, out, atom_sigma=sigma, epochs=epochs, log=_log)
+
+        def _done(info):
+            self._statusbar.showMessage(f"Atom model trained → {out} (loss {info['final_loss']:.4f})")
+            self._report_clu(f"Atom-finder training finished: saved to {out} (final loss "
+                             f"{info['final_loss']:.5f}, {info['n_tiles']} tiles). Use it via "
+                             f"detect_atoms or analyze_stem_atoms with model_path='{out}'.")
+
+        def _err(msg):
+            self._statusbar.showMessage(f"Atom model training failed: {msg}")
+            self._report_clu(f"Atom model training failed: {msg}")
+
+        self._atom_train_thread = SAMThread(_run, self)
+        # live epoch progress -> status bar (and the YOLO/UNet-style status label if present)
+        self._atom_train_thread.status.connect(lambda m: self._statusbar.showMessage(m))
+        try:
+            self._atom_train_thread.status.connect(self._unet_panel.set_status)
+        except Exception:
+            pass
+        self._atom_train_thread.finished.connect(_done)
+        self._atom_train_thread.error.connect(_err)
+        self._atom_train_thread.start()
 
     # ── UNet handlers ─────────────────────────────────────────────────────────
 
@@ -4472,6 +4931,8 @@ class MainWindow(QMainWindow):
 
         def _done(p):
             self._unet_predictor = p
+            from acorn.core import provenance as _prov
+            self._unet_source_model = _prov.source_model(ckpt_path)
             self._unet_panel.set_model_status(
                 f"Loaded ({arch}/{encoder}, {in_channels}ch, {n_classes} cls)",
                 loaded=True,
@@ -4488,16 +4949,22 @@ class MainWindow(QMainWindow):
         self._unet_thread.error.connect(_err)
         self._unet_thread.start()
 
-    def _on_unet_segment(self) -> None:
+    def _on_unet_segment(self, on_complete=None) -> None:
         if self._unet_busy():
             self._unet_panel.set_status("UNet is running — please wait.")
+            if on_complete is not None:
+                on_complete()
             return
         img = self._canvas_widget.canvas.dm4
         if img is None or img.raw is None:
             self._unet_panel.set_status("No image loaded.")
+            if on_complete is not None:
+                on_complete()
             return
         if self._unet_predictor is None or not self._unet_predictor.is_loaded:
             self._unet_panel.set_status("Load a UNet model first.")
+            if on_complete is not None:
+                on_complete()
             return
 
         from acorn.core.contrast import apply_contrast
@@ -4527,10 +4994,14 @@ class MainWindow(QMainWindow):
             else:
                 self._report_clu("UNet produced 0 masks — nothing was added. Do NOT claim "
                                  "masks were made; suggest adjusting the threshold/min-area.")
+            if on_complete is not None:
+                on_complete()
 
         def _err(msg):
             self._unet_panel.set_status(f"Error: {msg}")
             self._report_clu(f"UNet segmentation failed: {msg}")
+            if on_complete is not None:
+                on_complete()
 
         self._unet_thread = SAMThread(_run, self)
         self._unet_thread.finished.connect(_done)
@@ -4545,23 +5016,31 @@ class MainWindow(QMainWindow):
         self._pending_unet_masks.clear()
         canvas._loading = True
         try:
-            for mask in masks:
-                vertices = self._unet_predictor.mask_to_polygon(mask)
-                if len(vertices) < 3:
-                    continue
-                from acorn.core.annotations import ROIAnnotation
-                roi = ROIAnnotation(
-                    vertices=vertices, area_nm2=0.0, stats={},
-                    color=color, linewidth=1.5, label=label,
-                )
-                store.add(roi)
-                self._pending_unet_masks.append(roi)
+            with self._pred_context("unet"):
+                for mask in masks:
+                    vertices = self._unet_predictor.mask_to_polygon(mask)
+                    if len(vertices) < 3:
+                        continue
+                    from acorn.core.annotations import ROIAnnotation
+                    roi = ROIAnnotation(
+                        vertices=vertices, area_nm2=0.0, stats={},
+                        color=color, linewidth=1.5, label=label,
+                    )
+                    store.add(roi)
+                    self._pending_unet_masks.append(roi)
         finally:
             canvas._loading = False
         if canvas.renderer is not None:
             canvas.renderer.render_noblit(canvas.store, canvas)
         else:
             canvas.fig.canvas.draw_idle()
+
+    def _on_unet_batch(self) -> None:
+        """'Run on ALL Images' button — batch the loaded UNet model over the dataset."""
+        self._start_batch_model(
+            {"label": self._unet_panel.label, "skip_annotated": True, "queue_after": False},
+            "unet",
+        )
 
     def _on_unet_accept(self) -> None:
         self._pending_unet_masks.clear()
@@ -4764,6 +5243,29 @@ class MainWindow(QMainWindow):
     def _on_action_requested(self, action: str, params: dict) -> None:
         print(f"[_on_action_requested] action={action} params={params}", flush=True)
         self._clu_result_pending = action in self._CLU_RESULT_ACTIONS
+        if action == "reload_annotations_from_disk":
+            # A plugin (e.g. CryoBLOB) wrote new sidecars to disk. Evict our in-memory
+            # per-image annotation cache for those images so the next switch reloads the
+            # updated sidecar, and reload the CURRENT image immediately so it shows now.
+            from pathlib import Path      # Path is imported locally elsewhere in this fn
+            raw_paths = params.get("paths") or []
+            wanted = {str(Path(p).expanduser().resolve()) for p in raw_paths} or None
+            for idx, ip in enumerate(self._image_paths):
+                try:
+                    rp = str(Path(ip).expanduser().resolve())
+                except Exception:
+                    continue
+                if wanted is None or rp in wanted:
+                    self._ann_states.pop(idx, None)
+            cur = self._img_idx
+            if 0 <= cur < len(self._image_paths):
+                sidecar = self._autoload_sidecar(cur)
+                if sidecar is not None:
+                    anns = sidecar[0]
+                    self._ann_states[cur] = anns
+                    self._canvas_widget.canvas.store.replace_all(anns)
+                    self._canvas_widget.canvas.force_redraw()
+            return
         if action == "run_sam_auto":
             label = params.get("label", "")
             if label:
@@ -5040,6 +5542,28 @@ class MainWindow(QMainWindow):
 
         elif action == "batch_run_sam":
             self._start_batch_sam(params)
+
+        elif action == "detect_atoms":
+            self._on_detect_atoms(params)
+
+        elif action == "atom_statistics":
+            self._on_atom_statistics(params)
+
+        elif action == "analyze_stem_atoms":
+            if params.get("pixel_size_nm"):
+                self._on_action_requested("set_pixel_size",
+                                          {"pixel_size_nm": params["pixel_size_nm"]})
+            self._on_detect_atoms(params)
+            self._on_atom_statistics(params)
+
+        elif action == "train_atom_model":
+            self._on_train_atom_model(params)
+
+        elif action == "batch_run_yolo":
+            self._start_batch_model(params, "yolo")
+
+        elif action == "batch_run_unet":
+            self._start_batch_model(params, "unet")
 
         elif action == "add_scalebar":
             color = params.get("color", "#FFFFFF")

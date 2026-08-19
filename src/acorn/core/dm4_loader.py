@@ -6,6 +6,8 @@ Supported formats
   .dm4            — Gatan Digital Micrograph (ncempy)
   .tif / .tiff    — TIFF including multi-page (tifffile)
   .mrc / .mrcs    — MRC2014 cryo-EM standard (mrcfile)
+  .emd            — HDF5-based Thermo Fisher / Velox or NCEM EMD
+  .h5 / .hdf5     — Generic HDF5 image datasets
   .png / .jpg /
   .jpeg           — Standard 8/16-bit images (Pillow)
 """
@@ -24,14 +26,19 @@ import numpy as np
 DM4_EXTS   = {".dm4"}
 TIFF_EXTS  = {".tif", ".tiff"}
 MRC_EXTS   = {".mrc", ".mrcs"}
+EMD_EXTS   = {".emd"}
+HDF5_EXTS  = {".h5", ".hdf5"}
 IMAGE_EXTS = {".png", ".jpg", ".jpeg"}
 STAR_EXTS  = {".star"}
+# Fluorescence / multichannel light-microscopy formats — read via bioio
+# (pure-Python plugins: bioio-czi, bioio-nd2, bioio-lif; no Java required).
+FLUO_EXTS  = {".czi", ".nd2", ".lif", ".ims", ".oib", ".oif", ".lsm"}
 
-ALL_EXTS       = DM4_EXTS | TIFF_EXTS | MRC_EXTS | IMAGE_EXTS
+ALL_EXTS       = DM4_EXTS | TIFF_EXTS | MRC_EXTS | EMD_EXTS | HDF5_EXTS | IMAGE_EXTS | FLUO_EXTS
 IMAGE_ONLY_EXTS = ALL_EXTS  # alias — STAR excluded from image scanning
 
 # Formats that are electron-microscopy data — bandpass contrast is the right default
-EM_EXTS = DM4_EXTS | MRC_EXTS   # {".dm4", ".mrc", ".mrcs"}
+EM_EXTS = DM4_EXTS | MRC_EXTS | EMD_EXTS   # {".dm4", ".mrc", ".mrcs", ".emd"}
 DEFAULT_EM_CONTRAST = "bandpass"  # used by _switch_to and contrast-panel init
 
 
@@ -143,6 +150,8 @@ class DM4Image:
             obj._load_tiff(p)
         elif ext in MRC_EXTS:
             obj._load_mrc(p)
+        elif ext in EMD_EXTS | HDF5_EXTS:
+            obj._load_hdf5(p)
         elif ext in IMAGE_EXTS:
             obj._load_image(p)
         else:
@@ -322,6 +331,42 @@ class DM4Image:
             else:
                 self.meta.pixel_size = 1.0
 
+    def _load_hdf5(self, filepath: Path) -> None:
+        try:
+            import h5py
+        except ImportError as exc:
+            raise ImportError(
+                "h5py is required to open EMD/HDF5 files.\n"
+                "Install it with: pip install h5py"
+            ) from exc
+
+        with h5py.File(str(filepath), "r") as h5:
+            candidates = _hdf5_image_candidates(h5)
+            if not candidates:
+                raise ValueError(f"No numeric 2D/stack image dataset found in {filepath}")
+            dataset_path = candidates[0][1]
+            ds = h5[dataset_path]
+            data = ds[()]
+            image, frames = _coerce_hdf5_image(data)
+            self.raw = image
+            self._frames = frames
+            self.meta.shape = self.raw.shape
+            self.meta.filepath = filepath
+            self.meta.filename = filepath.stem
+            self.meta.raw_dtype = str(getattr(data, "dtype", self.raw.dtype))
+            self.meta.all_tags = {
+                "hdf5_dataset": dataset_path,
+                "hdf5_attrs": _hdf5_attrs_to_dict(ds.attrs),
+                "hdf5_root_attrs": _hdf5_attrs_to_dict(h5.attrs),
+            }
+            px_nm = _hdf5_pixel_size_nm(h5, ds)
+            if px_nm is not None and px_nm > 0:
+                self.meta.pixel_size = px_nm
+                self.meta.pixel_size_from_header = True
+            else:
+                self.meta.pixel_size = 1.0
+                self.meta.pixel_size_from_header = False
+
     def _load_image(self, filepath: Path) -> None:
         from PIL import Image as PILImage
         img = PILImage.open(str(filepath))
@@ -375,6 +420,198 @@ class DM4Image:
             "─" * 55,
         ]
         return "\n".join(lines)
+
+
+def _decode_hdf5_value(value):
+    if isinstance(value, bytes):
+        return value.decode("utf-8", errors="replace")
+    if isinstance(value, np.ndarray):
+        if value.shape == ():
+            return _decode_hdf5_value(value.item())
+        return [_decode_hdf5_value(v) for v in value.tolist()]
+    if isinstance(value, np.generic):
+        return value.item()
+    return value
+
+
+def _hdf5_attrs_to_dict(attrs) -> dict:
+    out = {}
+    for key, value in attrs.items():
+        try:
+            out[str(key)] = _decode_hdf5_value(value)
+        except Exception:
+            out[str(key)] = repr(value)
+    return out
+
+
+def _hdf5_image_candidates(h5) -> list[tuple[float, str]]:
+    import h5py
+
+    candidates: list[tuple[float, str]] = []
+
+    def visit(name: str, obj) -> None:
+        if not isinstance(obj, h5py.Dataset):
+            return
+        if obj.dtype.kind not in "uifcb":
+            return
+        if obj.ndim < 2:
+            return
+        shape = tuple(int(s) for s in obj.shape)
+        non_single = [s for s in shape if s > 1]
+        if len(non_single) < 2:
+            return
+        largest = sorted(non_single)[-2:]
+        if min(largest) < 8:
+            return
+        path = "/" + name
+        lower = path.lower()
+        score = float(np.prod(largest))
+        if path.endswith("/Data") or path.endswith("/data"):
+            score += 1_000_000
+        if "image" in lower:
+            score += 750_000
+        if "data/image" in lower or "image/data" in lower:
+            score += 750_000
+        if "spectrum" in lower or "metadata" in lower or "preview" in lower:
+            score -= 500_000
+        if obj.ndim == 2:
+            score += 250_000
+        candidates.append((score, path))
+
+    h5.visititems(visit)
+    return sorted(candidates, key=lambda item: item[0], reverse=True)
+
+
+def _coerce_hdf5_image(data) -> tuple[np.ndarray, Optional[np.ndarray]]:
+    arr = np.asarray(data)
+    if arr.dtype.kind == "c":
+        arr = np.abs(arr)
+    arr = np.squeeze(arr)
+    if arr.ndim < 2:
+        raise ValueError("HDF5 dataset is not image-like after squeezing.")
+    if arr.ndim == 2:
+        return arr.astype(np.float32), None
+    if arr.ndim == 3 and arr.shape[-1] in (3, 4):
+        rgb = arr[..., :3].astype(np.float32)
+        mx = float(rgb.max())
+        return (rgb / mx if mx > 0 else rgb), None
+    if arr.ndim == 3 and arr.shape[0] > 1:
+        frames = arr.astype(np.float32)
+        return frames.mean(axis=0), frames
+
+    # Generic HDF5/Velox fallback: preserve the two largest axes as image Y/X
+    # and average over navigation/channel axes.
+    image_axes = tuple(sorted(np.argsort(arr.shape)[-2:]))
+    nav_axes = tuple(i for i in range(arr.ndim) if i not in image_axes)
+    moved = np.moveaxis(arr, image_axes, (-2, -1))
+    if nav_axes:
+        moved = moved.reshape((-1, moved.shape[-2], moved.shape[-1]))
+        frames = moved.astype(np.float32)
+        return frames.mean(axis=0), frames if frames.shape[0] > 1 else None
+    return moved.astype(np.float32), None
+
+
+def _flatten_hdf5_metadata(h5, ds) -> list[tuple[str, object]]:
+    values: list[tuple[str, object]] = []
+
+    def add_attrs(prefix: str, attrs) -> None:
+        for key, value in attrs.items():
+            values.append((f"{prefix}/{key}".lower(), _decode_hdf5_value(value)))
+
+    add_attrs("root", h5.attrs)
+    add_attrs(ds.name, ds.attrs)
+
+    def visit(name: str, obj) -> None:
+        add_attrs(name, getattr(obj, "attrs", {}))
+        try:
+            if getattr(obj, "shape", None) == () and getattr(obj, "dtype", None) is not None:
+                if obj.dtype.kind in "SUOf":
+                    values.append((name.lower(), _decode_hdf5_value(obj[()])))
+        except Exception:
+            pass
+
+    h5.visititems(visit)
+    return values
+
+
+def _unit_to_nm(unit: str) -> Optional[float]:
+    clean = str(unit).strip().lower().replace("\x00", "").replace(" ", "")
+    if clean in DM4Image.UNIT_TO_NM:
+        return DM4Image.UNIT_TO_NM[clean]
+    if clean in {"meter", "metre"}:
+        return 1e9
+    if clean in {"angstroms", "å"}:
+        return 0.1
+    if clean in {"1/m", "m^-1", "pixels", "pixel", "px"}:
+        return None
+    return None
+
+
+def _numbers_from_value(value) -> list[float]:
+    if isinstance(value, (int, float, np.number)):
+        return [float(value)]
+    if isinstance(value, (list, tuple)):
+        nums = []
+        for item in value:
+            nums.extend(_numbers_from_value(item))
+        return nums
+    if isinstance(value, str):
+        import re
+
+        return [float(x) for x in re.findall(r"[-+]?(?:\d*\.\d+|\d+)(?:[eE][-+]?\d+)?", value)]
+    return []
+
+
+def _hdf5_pixel_size_nm(h5, ds) -> Optional[float]:
+    metadata = _flatten_hdf5_metadata(h5, ds)
+    likely_units = {}
+    for key, value in metadata:
+        if "unit" in key:
+            factor = _unit_to_nm(str(value))
+            if factor is not None:
+                likely_units[key] = factor
+
+    for key, value in metadata:
+        k = key.lower()
+        if not any(token in k for token in ("pixelsize", "pixel_size", "pixel size", "scale", "spacing", "calibration")):
+            continue
+        if any(skip in k for skip in ("offset", "origin", "units", "unit")):
+            continue
+        nums = [n for n in _numbers_from_value(value) if n > 0]
+        if not nums:
+            continue
+        raw = min(nums)
+        unit_factor = None
+        for unit_key, factor in likely_units.items():
+            if unit_key.rsplit("/", 1)[0] == key.rsplit("/", 1)[0]:
+                unit_factor = factor
+                break
+        if unit_factor is None:
+            if raw < 1e-6:
+                unit_factor = 1e9  # meters
+            elif raw < 0.5:
+                unit_factor = 1.0  # often nm in Velox scalar metadata
+            else:
+                unit_factor = 1.0
+        px_nm = raw * unit_factor
+        if 0 < px_nm < 1e6:
+            return float(px_nm)
+    return None
+
+
+def write_hdf5_image(path: str | Path, image: np.ndarray, *, dataset: str = "data", pixel_size_nm: float | None = None) -> Path:
+    """Write an image/stack to a simple HDF5 file Acorn can read back."""
+    import h5py
+
+    out = Path(path)
+    out.parent.mkdir(parents=True, exist_ok=True)
+    with h5py.File(str(out), "w") as h5:
+        ds = h5.create_dataset(dataset, data=np.asarray(image), compression="gzip")
+        if pixel_size_nm is not None and pixel_size_nm > 0:
+            ds.attrs["pixel_size"] = float(pixel_size_nm)
+            ds.attrs["pixel_unit"] = "nm"
+        h5.attrs["creator"] = "ACORN"
+    return out
 
 
 # ── folder scanning ───────────────────────────────────────────────────────────

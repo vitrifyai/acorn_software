@@ -41,6 +41,7 @@ class UNetPanel(QWidget):
     segment_requested    = pyqtSignal()
     accept_all_requested = pyqtSignal()
     reject_all_requested = pyqtSignal()
+    batch_requested      = pyqtSignal()   # run the loaded model over ALL images
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -171,6 +172,16 @@ class UNetPanel(QWidget):
         run_btn.setToolTip("Run UNet segmentation on the current image")
         run_btn.clicked.connect(self.segment_requested)
         infer_layout.addRow("", run_btn)
+
+        batch_btn = QPushButton("Run on ALL Images")
+        batch_btn.setStyleSheet("background:#6a1b9a;color:white;font-weight:bold;")
+        batch_btn.setToolTip(
+            "Run this UNet model on every loaded image (skipping already-annotated ones).\n"
+            "Predictions are added as EDITABLE annotations and saved to each image's sidecar.\n"
+            "They are NOT auto-queued for training — review and correct them first."
+        )
+        batch_btn.clicked.connect(self.batch_requested)
+        infer_layout.addRow("", batch_btn)
 
         layout.addWidget(infer_box)
 

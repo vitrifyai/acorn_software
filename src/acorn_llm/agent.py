@@ -133,6 +133,35 @@ _TOOLS: list[dict] = [
         "needs_confirm": False,
     },
     {
+        "name": "run_cryoblob",
+        "description": (
+            "Run CryoBLOB blob/particle detection using classical JAX/GPU detection "
+            "(LoG / Hessian / ridge). This does NOT use SAM or torch. Use this whenever "
+            "the user asks to run CryoBLOB/cryoblob, or to detect blobs, particles, "
+            "nanoparticles, vesicles, or filaments. Detected blobs are added as ROI "
+            "annotations by default. ALWAYS prefer this over load_sam for any 'cryoblob' request."
+        ),
+        "properties": {
+            "mode": {
+                "type": "string",
+                "enum": ["current", "loaded", "folder"],
+                "description": "Which images to process. current=the open image; loaded=all loaded images (use for 'all'/'those'/'these'); folder=a directory.",
+            },
+            "detection_mode": {
+                "type": "string",
+                "enum": ["log", "log_watershed", "hessian", "ridge", "enhanced"],
+                "description": "log=LoG blobs (default; round particles/nanoparticles); log_watershed=LoG plus a distance-transform watershed that recovers overlapping/clustered particles LoG misses while keeping LoG's high precision (best for clumpy fields); hessian=Hessian blobs; ridge=filaments/ridges; enhanced=Hessian+ridge+watershed (over-splits, low precision).",
+            },
+            "folder": {"type": "string", "description": "Folder path (only when mode=folder)."},
+            "pixel_size_nm": {"type": "number", "description": "Pixel size nm/px; omit to use the image's own calibration."},
+            "min_sigma": {"type": "number", "description": "Minimum blob scale (px). Raise to skip tiny features."},
+            "max_sigma": {"type": "number", "description": "Maximum blob scale (px). Raise for larger blobs."},
+            "max_detections": {"type": "integer", "description": "Cap on number of detections."},
+        },
+        "required": [],
+        "needs_confirm": False,
+    },
+    {
         "name": "set_pixel_size",
         "description": (
             "Set the pixel size calibration for the current image. "
@@ -541,6 +570,322 @@ _TOOLS: list[dict] = [
         "needs_confirm": False,
     },
     {
+        "name": "detect_atoms",
+        "description": (
+            "Detect atomic columns in an atomic-resolution (S)TEM image, including moire-patterned "
+            "lattices where atom brightness varies across the field. Uses a band-pass + local-contrast "
+            "normalization + peak finding that is robust to the moire intensity envelope. Adds each "
+            "detected atom as a small circle annotation and reports the count and estimated lattice "
+            "spacing. Use for 'find the atoms', 'detect atomic columns', 'count atoms', 'moire lattice'."
+        ),
+        "properties": {
+            "lattice_spacing_px": {"type": "number", "description": "Approx nearest-neighbour atom spacing in pixels. Omit to estimate it from the image autocorrelation."},
+            "threshold": {"type": "number", "description": "Peak strength in local-RMS units (default 2.0). Lower finds more (and dimmer) atoms."},
+            "bright_atoms": {"type": "boolean", "description": "True for bright atoms on dark background (HAADF/ADF STEM, default); False for dark atoms on bright background."},
+            "max_annotations": {"type": "integer", "description": "Cap on how many atoms to draw as annotations (default 4000) to keep the canvas responsive; the reported count is the full total."},
+            "model_path": {"type": "string", "description": "Optional path to a trained atom-finder U-Net (.pt from train_atom_model). If given, detection uses the model instead of the classical detector."},
+            "fill_gaps": {"type": "boolean", "description": "Lattice-guided recovery of atoms missed in dim moire regions (default true). Predicts atom sites from the local lattice and adds those with a real local peak — raises recall to ~0.97 at unchanged precision. Set false to see only the first-pass detections."},
+            "min_distance_px": {"type": "number", "description": "Minimum separation between atoms in px. Lower it (e.g. 8) to catch close-packed columns in compressed moire bands; default ~0.45x the lattice spacing."},
+        },
+        "required": [],
+        "needs_confirm": False,
+    },
+    {
+        "name": "analyze_stem_atoms",
+        "description": (
+            "ONE-SHOT STEM atom analysis: detect atomic columns AND compute the full lattice "
+            "statistics (nearest-neighbour distance, spacing, hexagonal order psi6, coordination, "
+            "strain/rotation, moire period + twist), overlay the atoms, and save a per-atom CSV. "
+            "This is the simple 'do everything' command — use it when the user says 'analyze the "
+            "atoms', 'do the atom analysis', 'find the atoms and give me the statistics', 'analyze "
+            "this moire lattice'. Pass model_path to detect with a trained model."
+        ),
+        "properties": {
+            "pixel_size_nm": {"type": "number", "description": "Pixel size in nm — set it so the statistics come out in Angstrom/nm (e.g. 0.015625). If omitted, the image's stored calibration is used."},
+            "lattice_spacing_px": {"type": "number", "description": "Approx atom spacing (px); omit to auto-estimate."},
+            "threshold": {"type": "number", "description": "Detection threshold (default 2.0; lower = more atoms)."},
+            "bright_atoms": {"type": "boolean", "description": "Bright atoms on dark background (default true)."},
+            "model_path": {"type": "string", "description": "Optional trained atom-finder .pt to detect with."},
+            "fill_gaps": {"type": "boolean", "description": "Lattice-guided recovery of dim-region atoms (default true)."},
+            "min_distance_px": {"type": "number", "description": "Minimum separation between atoms in px. Lower it (e.g. 8) to catch close-packed columns in compressed moire bands; default ~0.45x the lattice spacing."},
+        },
+        "required": [],
+        "needs_confirm": False,
+    },
+    {
+        "name": "train_atom_model",
+        "description": (
+            "Train a U-Net atom-finder for STEM images. Self-labels from the current image's detected "
+            "atoms (or the atom annotations the user has corrected), builds Gaussian-heatmap targets, "
+            "and trains a small U-Net (a couple of minutes on GPU). Saves a .pt checkpoint that "
+            "detect_atoms / analyze_stem_atoms can then use via model_path. Use for 'train an atom "
+            "model', 'train a model to find these atoms', 'learn to detect these atoms'. Runs in the "
+            "background."
+        ),
+        "properties": {
+            "output_path": {"type": "string", "description": "Where to save the model .pt (default: next to the image)."},
+            "epochs": {"type": "integer", "description": "Training epochs (default 40)."},
+            "atom_sigma": {"type": "number", "description": "Heatmap blob sigma in px (default 2.0)."},
+        },
+        "required": [],
+        "needs_confirm": False,
+    },
+    {
+        "name": "atom_statistics",
+        "description": (
+            "Compute lattice statistics from detected atomic columns in the current (S)TEM image: "
+            "nearest-neighbour distance, lattice spacing, hexagonal order (psi6), Voronoi coordination, "
+            "per-atom strain/rotation, and moire period + twist angle. Uses atoms already detected "
+            "(atom_detect) if present, else detects them first. Saves a per-atom CSV next to the image "
+            "and reports the summary. Use for 'atom statistics', 'lattice strain', 'moire period', "
+            "'hexagonal order', 'measure the lattice'."
+        ),
+        "properties": {
+            "pixel_size_nm": {"type": "number", "description": "Pixel size in nm (else taken from the image calibration)."},
+            "redetect": {"type": "boolean", "description": "Force re-detection of atoms even if atom annotations exist (default false)."},
+        },
+        "required": [],
+        "needs_confirm": False,
+    },
+    {
+        "name": "batch_run_yolo",
+        "description": (
+            "Run a loaded YOLO model on ALL loaded images sequentially, adding its predictions to each "
+            "image as EDITABLE annotations (auto-saved to each image's sidecar). This is the 'run the "
+            "trained model over the rest of the dataset' step of the active-learning loop: annotate a "
+            "few images, train, then batch-run the model on the remainder and correct the predictions. "
+            "YOLO must be loaded first. Images already annotated are skipped by default. Predictions are "
+            "NOT auto-queued for training — the user should review/correct them first (pass "
+            "queue_after=true only for a trusted model)."
+        ),
+        "properties": {
+            "label": {"type": "string", "description": "Annotation label for detected objects (e.g. 'vesicle', 'particle')."},
+            "segmentation": {"type": "boolean", "description": "Use YOLO-seg polygon masks instead of boxes (needs a -seg model). Default false (boxes)."},
+            "skip_annotated": {"type": "boolean", "description": "Skip images that already have annotations. Default true."},
+            "queue_after": {"type": "boolean", "description": "Auto-queue each processed image for training export. Default false — review predictions first."},
+        },
+        "required": ["label"],
+        "needs_confirm": False,
+    },
+    {
+        "name": "batch_run_unet",
+        "description": (
+            "Run a loaded UNet model on ALL loaded images sequentially, adding its segmentation masks to "
+            "each image as EDITABLE annotations (auto-saved to each image's sidecar). This is the 'run the "
+            "trained model over the rest of the dataset' step of the active-learning loop. UNet must be "
+            "loaded first. Images already annotated are skipped by default. Predictions are NOT "
+            "auto-queued for training — review/correct them first (queue_after=true only for a trusted model)."
+        ),
+        "properties": {
+            "label": {"type": "string", "description": "Annotation label for segmented objects (e.g. 'membrane')."},
+            "skip_annotated": {"type": "boolean", "description": "Skip images that already have annotations. Default true."},
+            "queue_after": {"type": "boolean", "description": "Auto-queue each processed image for training export. Default false — review predictions first."},
+        },
+        "required": ["label"],
+        "needs_confirm": False,
+    },
+    {
+        "name": "generate_fib_simulation",
+        "description": (
+            "Generate focused synthetic FIB-SEM surface images using the FIB simulation plugin. "
+            "Use when the user asks for FIB simulation, FIB-SEM surface simulation, biological or "
+            "materials FIB images, curtaining, lift-out geometry, Pt cap, trenches, needle, charging, "
+            "redeposition, or low-dose detector noise. The simulator order is phantom truth, then "
+            "FIB milling artifacts, then detector noise."
+        ),
+        "properties": {
+            "output_dir": {"type": "string", "description": "Folder to write generated FIB simulation data."},
+            "count": {"type": "integer", "description": "Number of FIB simulation images to generate."},
+            "sample": {"type": "string", "enum": ["bio", "material"], "description": "Biological or materials phantom."},
+            "preset": {
+                "type": "string",
+                "description": "Optional plain-language preset, e.g. 'bio', 'materials', 'low dose', or 'liftout'.",
+            },
+            "width": {"type": "integer", "description": "Image width in pixels."},
+            "height": {"type": "integer", "description": "Image height in pixels."},
+            "pixel_size_nm": {"type": "number", "description": "Pixel size in nm/px."},
+            "seed": {"type": "integer", "description": "Base random seed."},
+            "liftout": {"type": "boolean", "description": "Add lift-out geometry."},
+            "trench": {"type": "boolean", "description": "Add dark milled trenches flanking the lift-out region."},
+            "pt_cap": {"type": "boolean", "description": "Add bright protective Pt cap."},
+            "needle": {"type": "boolean", "description": "Add micromanipulator needle."},
+            "mill_axis": {"type": "string", "enum": ["x", "y"], "description": "FIB milling direction."},
+            "curtain_strength": {"type": "number", "description": "0-1 curtaining strength."},
+            "curtaining": {"type": "number", "description": "Alias for curtain_strength."},
+            "curtain_edge_gain": {"type": "number", "description": "Curtaining amplification downstream of hard edges."},
+            "mill_gradient": {"type": "number", "description": "0-1 slow brightness ramp along mill axis."},
+            "redeposition": {"type": "number", "description": "0-1 sputtered material smear downstream of milling."},
+            "charging": {"type": "number", "description": "0-1 charging bias/halo strength."},
+            "lamella_thickness_nm": {"type": "number", "description": "Lamella thickness metadata in nm."},
+            "electrons_per_pixel": {"type": "number", "description": "Electron counts per pixel; lower means noisier shot noise."},
+            "mtf_sigma_px": {"type": "number", "description": "Beam/detector blur sigma in pixels."},
+            "read_noise_e": {"type": "number", "description": "Read noise in electrons."},
+            "scan_line_jitter": {"type": "number", "description": "Per-line gain wobble percentage."},
+            "open_generated": {"type": "boolean", "description": "Open generated images in Acorn. Default true."},
+            "save_layers": {"type": "boolean", "description": "Save truth, milled, edge, and artifact layers. Default true."},
+        },
+        "required": [],
+        "needs_confirm": False,
+    },
+    {
+        "name": "generate_tem_simulation",
+        "description": (
+            "Generate physics-based cryo-TEM simulated micrographs. Use when the user asks for "
+            "TEM simulation, cryo-TEM simulation, particles in vitreous ice, PLGA, lipid vesicles, "
+            "proteins/PDBs, bacteria/cells, CTF/defocus, Thon rings, dose/noise, Krios/K3, "
+            "Glacios/Falcon, or phase-contrast simulation."
+        ),
+        "properties": {
+            "output_dir": {"type": "string", "description": "Folder to write generated TEM simulation data."},
+            "count": {"type": "integer", "description": "Number of TEM simulation images to generate."},
+            "simulation_path": {
+                "type": "string",
+                "enum": ["fast", "multislice", "custom"],
+                "description": "fast is quick and friendly; multislice uses slice-by-slice electron wave propagation; custom runs a user Python recipe.",
+            },
+            "backend": {"type": "string", "description": "Alias for simulation_path, e.g. fast, multislice, custom."},
+            "custom_script_path": {"type": "string", "description": "Path to a custom Python script for simulation_path=custom."},
+            "script_path": {"type": "string", "description": "Alias for custom_script_path."},
+            "slice_thickness_a": {"type": "number", "description": "Multislice slice thickness in Angstrom."},
+            "preset": {
+                "type": "string",
+                "enum": ["krios-k3", "glacios-falcon4", "talos-ceta", "cs-corrected", "low dose"],
+                "description": "Instrument or plain-language preset.",
+            },
+            "image_size_px": {"type": "integer", "description": "Square image size in pixels."},
+            "pixel_size_a": {"type": "number", "description": "Pixel size in Angstrom per pixel."},
+            "voltage_kv": {"type": "string", "enum": ["300", "200", "120", "100"], "description": "Accelerating voltage."},
+            "cs_mm": {"type": "number", "description": "Spherical aberration in mm."},
+            "amplitude_contrast": {"type": "number", "description": "Amplitude contrast ratio."},
+            "total_dose_e_per_a2": {"type": "number", "description": "Total electron dose in e-/Å²."},
+            "detector_model": {"type": "string", "enum": ["K3", "Falcon4", "K2", "Ceta"], "description": "Detector model."},
+            "defocus_min_um": {"type": "number", "description": "Defocus range start in micrometers."},
+            "defocus_max_um": {"type": "number", "description": "Defocus range end in micrometers."},
+            "phase_plate": {"type": "boolean", "description": "Enable Volta phase plate style contrast."},
+            "seed": {"type": "integer", "description": "Base random seed."},
+            "specimen_kind": {
+                "type": "string",
+                "enum": ["plga", "lipid_single", "lipid_multi", "protein", "pdb", "bacteria"],
+                "description": "What to place in vitreous ice.",
+            },
+            "sample": {"type": "string", "description": "Plain-language specimen request, e.g. PLGA, bacteria, protein from PDB, lipid vesicle."},
+            "kind": {"type": "string", "description": "Alias for specimen_kind."},
+            "n_particles": {"type": "integer", "description": "Number of objects/particles/cells."},
+            "particles": {"type": "integer", "description": "Alias for n_particles."},
+            "diameter_nm_mean": {"type": "number", "description": "Mean object size/diameter in nm."},
+            "diameter_nm": {"type": "number", "description": "Alias for mean object size in nm."},
+            "diameter_nm_sd": {"type": "number", "description": "Object size standard deviation in nm."},
+            "membrane_thickness_nm": {"type": "number", "description": "Membrane thickness for lipid/cell specimens in nm."},
+            "pdb_path": {"type": "string", "description": "Local PDB file path for protein/PDB simulations."},
+            "oligomer_count": {"type": "integer", "description": "Number of cyclic oligomer copies for PDB/protein particles."},
+            "ice_thickness_nm": {"type": "number", "description": "Vitreous ice slab thickness in nm."},
+            "solvent_noise": {"type": "number", "description": "Ice potential noise strength."},
+            "allow_overlap": {"type": "boolean", "description": "Allow particles to overlap."},
+            "open_generated": {"type": "boolean", "description": "Open generated images in Acorn. Default true."},
+            "save_layers": {"type": "boolean", "description": "Save potential, ideal, counts, and label layers. Default true."},
+        },
+        "required": [],
+        "needs_confirm": False,
+    },
+    {
+        "name": "generate_tem_advanced",
+        "description": (
+            "Advanced multislice cryo-TEM with the full physics engine: detector-specific "
+            "DQE/MTF/noise, microscope presets, inelastic (thickness) contrast loss, "
+            "dose-dependent radiation damage, GPU acceleration, and COMPOSABLE SCENES — "
+            "nanoparticles + crystalline-ice contamination + a bacterial cell together. Use when "
+            "the user wants a specific detector or microscope, a named bacterial species, ice "
+            "contamination, thick specimens, energy filtering, or several specimen types in one "
+            "field. No image needs to be loaded."
+        ),
+        "properties": {
+            "output_dir": {"type": "string", "description": "Folder to write generated data."},
+            "count": {"type": "integer", "description": "Number of micrographs."},
+            "microscope": {"type": "string", "enum": ["krios", "krios-cfeg", "glacios", "talos-arctica", "talos-l120c", "cs-corrected"], "description": "Microscope preset (sets kV/Cs/Cc/energy spread)."},
+            "detector_model": {"type": "string", "enum": ["K3", "K2", "Falcon4", "Falcon4i", "Falcon3EC", "Apollo", "DE64", "Ceta", "ideal"], "description": "Detector (sets DQE/MTF/noise)."},
+            "specimen_kind": {"type": "string", "enum": ["plga", "bacteria", "contamination"], "description": "Primary specimen. Combine with add_nanoparticles / add_contamination."},
+            "species": {"type": "string", "enum": ["e_coli", "b_subtilis", "s_aureus", "caulobacter", "p_aeruginosa", "vibrio_cholerae", "streptococcus", "mycoplasma"], "description": "Bacterial species when specimen_kind=bacteria."},
+            "add_nanoparticles": {"type": "boolean", "description": "Also scatter nanoparticles into the scene."},
+            "add_contamination": {"type": "boolean", "description": "Also add crystalline-ice contamination crystals."},
+            "n_particles": {"type": "integer", "description": "Nanoparticle count."},
+            "diameter_nm_mean": {"type": "number", "description": "Mean nanoparticle diameter (nm)."},
+            "diameter_nm_sd": {"type": "number", "description": "Nanoparticle diameter sd (nm)."},
+            "n_contam": {"type": "integer", "description": "Number of contamination crystals."},
+            "contam_thickness_nm": {"type": "number", "description": "Contamination crystal thickness (nm)."},
+            "n_ribosomes": {"type": "integer", "description": "Ribosomes per cell."},
+            "ice_thickness_nm": {"type": "number", "description": "Vitreous ice slab thickness (nm)."},
+            "pixel_size_a": {"type": "number", "description": "Pixel size (Å/px)."},
+            "image_size_px": {"type": "integer", "description": "Square image size (px)."},
+            "voltage_kv": {"type": "string", "enum": ["300", "200", "120", "100"], "description": "Accelerating voltage (usually set by microscope)."},
+            "total_dose_e_per_a2": {"type": "number", "description": "Total dose (e-/Å²)."},
+            "defocus_min_um": {"type": "number", "description": "Defocus range start (µm, negative=underfocus)."},
+            "defocus_max_um": {"type": "number", "description": "Defocus range end (µm)."},
+            "energy_filter_ev": {"type": "number", "description": "Energy-filter slit width (eV); >0 = zero-loss filtering (thick specimens keep contrast but lose dose)."},
+            "slice_thickness_a": {"type": "number", "description": "Multislice slab thickness (Å)."},
+            "seed": {"type": "integer", "description": "Base random seed."},
+            "open_generated": {"type": "boolean", "description": "Open results in Acorn. Default true."},
+            "save_layers": {"type": "boolean", "description": "Save the noiseless ideal layer. Default true."},
+        },
+        "required": [],
+        "needs_confirm": False,
+    },
+    {
+        "name": "generate_4dstem",
+        "description": (
+            "Simulate 4D-STEM: scan a convergent probe over the specimen, record a diffraction "
+            "pattern (CBED) at every position, and produce virtual-detector images — bright field "
+            "(BF), annular/high-angle dark field (ADF/HAADF), differential phase contrast "
+            "(DPC/CoM) and integrated DPC (iDPC). GPU-accelerated. Use for STEM, 4D-STEM, HAADF, "
+            "DPC/iDPC phase imaging, or scanned-probe data on proteins/nanoparticles/cells in ice. "
+            "Saves the raw 4-D datacube for external ptychography tools. No image needs to be loaded."
+        ),
+        "properties": {
+            "output_dir": {"type": "string", "description": "Folder to write detector images + datacube."},
+            "specimen_kind": {"type": "string", "enum": ["plga", "bacteria", "contamination"], "description": "What to scan."},
+            "species": {"type": "string", "description": "Bacterial species when specimen_kind=bacteria."},
+            "microscope": {"type": "string", "enum": ["krios", "krios-cfeg", "glacios", "talos-arctica", "talos-l120c", "cs-corrected"], "description": "Microscope preset."},
+            "conv_mrad": {"type": "number", "description": "Probe convergence semi-angle (mrad). Small (~1-5) for low-dose bio phase contrast; larger (~20-30) for atomic STEM."},
+            "scan_size": {"type": "integer", "description": "Scan grid side (scan_size × scan_size probe positions)."},
+            "defocus_um": {"type": "number", "description": "Probe defocus (µm)."},
+            "total_dose_e_per_a2": {"type": "number", "description": "Total dose (e-/Å²); omit for a noiseless datacube."},
+            "detectors": {"type": "array", "items": {"type": "string", "enum": ["BF", "ADF", "HAADF", "CoM_mag", "iDPC", "DPCx", "DPCy"]}, "description": "Which virtual-detector images to save."},
+            "n_particles": {"type": "integer", "description": "Nanoparticle count."},
+            "diameter_nm_mean": {"type": "number", "description": "Mean nanoparticle diameter (nm)."},
+            "ice_thickness_nm": {"type": "number", "description": "Ice slab thickness (nm)."},
+            "pixel_size_a": {"type": "number", "description": "Detector pixel size (Å/px)."},
+            "image_size_px": {"type": "integer", "description": "CBED / field size (px)."},
+            "gpu": {"type": "boolean", "description": "Use GPU (default auto)."},
+            "seed": {"type": "integer", "description": "Random seed."},
+        },
+        "required": [],
+        "needs_confirm": False,
+    },
+    {
+        "name": "simulate_from_reference",
+        "description": (
+            "Generate MORE simulated images that match a REAL reference micrograph — same "
+            "pixel size, voltage, defocus and dose as the reference, with fresh specimen "
+            "realizations. Use when the user says 'simulate more like this image', 'match this "
+            "micrograph', or 'make a training set that looks like my data'. With calibrate=true "
+            "it measures the reference's CTF/defocus (and FIB curtaining) and reproduces it. "
+            "Give reference_path, or leave it empty to use the image currently open in ACORN."
+        ),
+        "properties": {
+            "reference_path": {"type": "string", "description": "Path to the real reference image (mrc/dm4/tif/png). Empty = use the currently open image."},
+            "modality": {"type": "string", "enum": ["cryoem", "fib"], "description": "Reference type: cryo-TEM or FIB-SEM."},
+            "count": {"type": "integer", "description": "How many matched images to generate."},
+            "calibrate": {"type": "boolean", "description": "Measure the reference (CTF/defocus, curtaining) and match it. Default true."},
+            "specimen_kind": {"type": "string", "description": "What to put in the generated images (plga, bacteria, contamination; or a FIB sample)."},
+            "n_particles": {"type": "integer", "description": "Number of particles/objects."},
+            "diameter_nm_mean": {"type": "number", "description": "Mean object diameter (nm)."},
+            "pixel_size_a": {"type": "number", "description": "Override pixel size (Å/px) if the header lacks it."},
+            "output_dir": {"type": "string", "description": "Where to write generated images."},
+            "seed": {"type": "integer", "description": "Random seed."},
+        },
+        "required": [],
+        "needs_confirm": False,
+    },
+    {
         "name": "add_scalebar",
         "description": (
             "Add a scale bar to the current image at the bottom-left corner. "
@@ -737,9 +1082,12 @@ def build_system_prompt(state: dict) -> str:
     unet_cfg  = f"{state.get('unet_arch','')} / {state.get('unet_encoder','')} / {state.get('unet_ckpt','')}" if state.get("unet_arch") else "not configured"
 
     pending = []
-    if state.get("pending_sam"):  pending.append(f"SAM: {state['pending_sam']}")
-    if state.get("pending_yolo"): pending.append(f"YOLO: {state['pending_yolo']}")
-    if state.get("pending_unet"): pending.append(f"UNet: {state['pending_unet']}")
+    if state.get("pending_sam"):
+        pending.append(f"SAM: {state['pending_sam']}")
+    if state.get("pending_yolo"):
+        pending.append(f"YOLO: {state['pending_yolo']}")
+    if state.get("pending_unet"):
+        pending.append(f"UNet: {state['pending_unet']}")
     pending_info = ", ".join(pending) if pending else "none"
     contrast_info = state.get("contrast_method", "unknown")
     presets_list  = state.get("contrast_presets") or []
@@ -936,10 +1284,18 @@ You are proactive: if a prerequisite is missing (model not loaded, no image open
 - Export dataset dir and train dataset dir must be the same path.
 
 ## Common multi-step workflows
+**"Run CryoBLOB / cryoblob" or "detect blobs/particles/nanoparticles/vesicles/filaments"**: call run_cryoblob directly. This is classical JAX/GPU detection — do NOT call load_sam for CryoBLOB; they are different tools (CryoBLOB needs no SAM model and no ~30s load). Choosing mode: if the user just generated TEM/FIB simulation images and wants CryoBLOB on "them"/"those"/"all", pass mode="folder" with folder=<the images/ subfolder of the generation output dir> (you know it from the generate_* result) — this works even if the images aren't currently loaded. Use mode="loaded" only when images are already open in the app, and mode="current" for just the open image. If run_cryoblob reports no images found, retry with mode="folder" and the correct folder path.
+
 **"Find / segment X"**: load_sam if needed → run_sam_auto(label=X) → accept_annotations → report count
 **"Detect X"**: load_yolo if needed → run_yolo_detect(label=X) → accept_annotations → report count
 **"Measure / analyze X"**: ensure annotations exist (segment first if not) → run_particle_analysis(labels=[X], mode=batch) → export_measurements
 **"Prep for training"**: load_sam if needed → batch_run_sam(label=X, skip_annotated=true) — one call handles all images
+**"Generate FIB simulation / simulated FIB-SEM surface images"**: generate_fib_simulation(...). No image needs to be loaded. Prefer sample="bio" for biological lamella/surface requests and sample="material" for materials/grains/pores/oxide requests. Use liftout=true for lift-out, trench, Pt cap, or needle requests. Use low electrons_per_pixel for low-dose/noisy data. Explain briefly that the simulator uses phantom truth → FIB milling artifacts → detector noise.
+**"Generate TEM simulation / simulated cryo-TEM micrographs"**: generate_tem_simulation(...). No image needs to be loaded. Use simulation_path="fast" by default, "multislice" when the user asks for physics/electron scattering/PDB realism, and "custom" when the user provides a Python recipe. Use specimen_kind for PLGA, lipid vesicles, proteins/PDBs, or bacteria/cells. Explain briefly that fast mode uses specimen → projected potential → CTF → dose/detector, while multislice uses slice-by-slice electron wave propagation before detector noise.
+**"Advanced / realistic TEM, specific detector or microscope, a named bacterial species, ice contamination, thick cells, energy filtering, or several specimen types together"**: generate_tem_advanced(...). This is the full physics engine (detector-specific DQE/MTF/noise, microscope presets, inelastic thickness loss, dose-dependent radiation damage, GPU, composable scenes). Set microscope (krios/glacios/…) and detector_model (K3/Falcon4/…). Use specimen_kind=bacteria with species= for cells, add_contamination=true for crystalline ice, add_nanoparticles=true to mix in particles. Prefer this over generate_tem_simulation whenever the user names a detector/microscope, a species, contamination, thickness/energy-filter, or wants combined specimens.
+Note: generate_tem_simulation and generate_tem_advanced both route through one internal engine-vs-fast selector keyed on the specimen, so either is safe — but prefer generate_tem_advanced when a detector/microscope/species/contamination/energy-filter is named.
+**"Simulate more images like this one / match this real micrograph / make a look-alike training set"**: simulate_from_reference(...). No image needs to be loaded if reference_path is given; otherwise it uses the currently open image. Set modality (cryoem or fib) and calibrate=true to measure and reproduce the reference's defocus/CTF (and FIB curtaining).
+**"4D-STEM / STEM / HAADF / ADF / DPC / iDPC / scanned probe / ptychography data"**: generate_4dstem(...). No image needed. Scans a convergent probe → CBED datacube → virtual detectors (BF/ADF/HAADF/CoM_mag/iDPC). For beam-sensitive proteins in ice use a small conv_mrad (~2-5) and a modest dose; for HAADF/materials use conv_mrad ~20-30. It saves the raw datacube for external ptychography. Note that light-element proteins give little ADF/HAADF signal — DPC/iDPC are the sensitive channels.
 **Full training pipeline**:
   1. Annotate each image: segment → accept_annotations → queue_for_export → next_image → repeat
   2. When all images queued: finalize_dataset(val_frac=0.1, test_frac=0.1) — creates 80/10/10 splits
@@ -980,9 +1336,10 @@ You are proactive: if a prerequisite is missing (model not loaded, no image open
     2. finalize_dataset → configure_training → start_training
   Phase 2 — Scale to full dataset using the trained model:
     3. After training: load_yolo (or load_unet) with the new checkpoint
-    4. Run batch detection on remaining images: for each un-annotated image → go_to_image → run_yolo_detect / run_yolo_segment / run_unet → accept_annotations → queue_for_export
-    5. Re-finalize dataset (adds new images to splits) → optionally re-train for improvement
+    4. Batch-run the model over the remaining images in ONE call: batch_run_yolo(label=X, skip_annotated=true) (or batch_run_unet). This adds the model's predictions to every un-annotated image as EDITABLE annotations saved to each image's sidecar. Prefer this over a go_to_image→run→accept loop.
+    5. Review/correct the predictions (they are ordinary editable annotations), then queue_for_export → re-finalize → optionally re-train for improvement.
   This approach avoids annotating all images by hand — annotate a sample, train, run inference on the rest.
+  IMPORTANT: batch_run_yolo/batch_run_unet do NOT auto-queue predictions for training (queue_after defaults to false) — a fresh model produces false positives, so the user must review before finalizing. Only pass queue_after=true for a trusted model.
 **"Add a scale bar"**: add_scalebar() — auto-sizes to pixel size; set pixel size first if needed
 **"Rename label X to Y"**: rename_label(old_label=X, new_label=Y) — fixes typos or reclassifies annotations on current image
 **"Save this contrast as a preset"**: save_contrast_preset(name=...) — saves current settings to the preset dropdown
@@ -1039,6 +1396,9 @@ To call a tool, output ONLY a JSON object on its own line:
 {{"name": "compress_frames", "method": "dose_weighted", "dose_per_frame": 1.5}}
 {{"name": "batch_run_sam", "label": "vesicle", "skip_annotated": true}}
 {{"name": "batch_run_sam", "label": "particle", "points_per_side": 64, "skip_annotated": false}}
+{{"name": "batch_run_yolo", "label": "particle", "skip_annotated": true}}
+{{"name": "batch_run_yolo", "label": "vesicle", "segmentation": true}}
+{{"name": "batch_run_unet", "label": "membrane", "skip_annotated": true}}
 {{"name": "add_scalebar"}}
 {{"name": "add_scalebar", "color": "#FFFF00"}}
 {{"name": "rename_label", "old_label": "vesicle", "new_label": "liposome"}}
@@ -1149,7 +1509,14 @@ class LLMAgent(QThread):
             self.error.emit("anthropic package not installed. Run: uv pip install anthropic")
             return
 
-        client = anthropic.Anthropic(api_key=self._config.api_key or None)
+        # Read timeout so a stalled stream raises instead of hanging the worker
+        # thread forever (see the OpenAI path for the full failure mode).
+        import httpx
+        client = anthropic.Anthropic(
+            api_key=self._config.api_key or None,
+            timeout=httpx.Timeout(90.0, connect=15.0),
+            max_retries=2,
+        )
         system = build_system_prompt(self._state)
         tools  = _to_anthropic_tools(_TOOLS)
         msgs   = self._build_anthropic_messages()
@@ -1242,7 +1609,12 @@ class LLMAgent(QThread):
         if self._config.base_url:
             kwargs["base_url"] = self._config.base_url
 
-        client = OpenAI(**kwargs)
+        # Read timeout so a stalled stream raises instead of hanging the worker
+        # thread forever. Without it, `for chunk in stream` can block indefinitely
+        # on a network/server stall; run() never returns, isRunning() stays True,
+        # and every new message is refused until the app is restarted.
+        import httpx
+        client = OpenAI(timeout=httpx.Timeout(90.0, connect=15.0), max_retries=2, **kwargs)
         system = build_system_prompt(self._state)
         tools  = _to_openai_tools(_TOOLS)
         msgs: list[dict] = [{"role": "system", "content": system}]
@@ -1265,43 +1637,50 @@ class LLMAgent(QThread):
             if use_api_tools:
                 create_kwargs["tools"] = tools
 
-            try:
-                stream = client.chat.completions.create(**create_kwargs)
-            except BadRequestError as exc:
-                err = str(exc).lower()
-                if "max_tokens" in err and "max_completion_tokens" in err:
-                    tokens_key = "max_completion_tokens"
-                    continue
-                if use_api_tools and "tools" in err:
-                    use_api_tools = False
-                    continue
-                raise
-
             collected_text     = ""
             tool_calls_acc: dict[int, dict] = {}
             finish = None
 
-            for chunk in stream:
-                choice = chunk.choices[0] if chunk.choices else None
-                if choice is None:
-                    continue
-                delta = choice.delta
-                if delta.content:
-                    self.token_emitted.emit(delta.content)
-                    collected_text += delta.content
-                if use_api_tools and delta.tool_calls:
-                    for tc in delta.tool_calls:
-                        idx = tc.index
-                        if idx not in tool_calls_acc:
-                            tool_calls_acc[idx] = {"id": "", "name": "", "arguments": ""}
-                        if tc.id:
-                            tool_calls_acc[idx]["id"] = tc.id
-                        if tc.function:
-                            if tc.function.name:
-                                tool_calls_acc[idx]["name"] = tc.function.name
-                            if tc.function.arguments:
-                                tool_calls_acc[idx]["arguments"] += tc.function.arguments
-                finish = choice.finish_reason
+            # With stream=True, parameter-validation errors (max_tokens vs
+            # max_completion_tokens, unsupported tools) are raised lazily while
+            # iterating the stream — NOT at create() — so the iteration must live
+            # inside the try or the retry never fires. These errors surface before
+            # any content streams, so collected_text is still "" and retrying is
+            # safe (no double-emit).
+            try:
+                stream = client.chat.completions.create(**create_kwargs)
+                for chunk in stream:
+                    choice = chunk.choices[0] if chunk.choices else None
+                    if choice is None:
+                        continue
+                    delta = choice.delta
+                    if delta.content:
+                        self.token_emitted.emit(delta.content)
+                        collected_text += delta.content
+                    if use_api_tools and delta.tool_calls:
+                        for tc in delta.tool_calls:
+                            idx = tc.index
+                            if idx not in tool_calls_acc:
+                                tool_calls_acc[idx] = {"id": "", "name": "", "arguments": ""}
+                            if tc.id:
+                                tool_calls_acc[idx]["id"] = tc.id
+                            if tc.function:
+                                if tc.function.name:
+                                    tool_calls_acc[idx]["name"] = tc.function.name
+                                if tc.function.arguments:
+                                    tool_calls_acc[idx]["arguments"] += tc.function.arguments
+                    finish = choice.finish_reason
+            except BadRequestError as exc:
+                err = str(exc).lower()
+                # Only retry if nothing has streamed yet, to avoid double-emitting.
+                if not collected_text:
+                    if "max_completion_tokens" in err and tokens_key != "max_completion_tokens":
+                        tokens_key = "max_completion_tokens"
+                        continue
+                    if use_api_tools and "tools" in err:
+                        use_api_tools = False
+                        continue
+                raise
 
             if use_api_tools:
                 # Filter malformed / unrecognised tool calls
@@ -1434,17 +1813,19 @@ class LLMAgent(QThread):
         # Check prerequisites before dispatching
         needs_image = name not in (
             "start_training", "finalize_dataset", "configure_training",
-            "load_sam", "load_yolo", "load_unet",
+            "load_sam", "load_yolo", "load_unet", "run_cryoblob",
             "import_star_file", "push_to_hub", "track_particles",
-            "batch_run_sam",
+            "batch_run_sam", "batch_run_yolo", "batch_run_unet",
+            "generate_fib_simulation", "generate_tem_simulation",
+            "generate_tem_advanced", "generate_4dstem", "simulate_from_reference",
         )
         if needs_image and not self._state.get("image_name"):
             return "Error: No image is loaded. Tell the user to open an image first."
         if name in ("run_sam_auto", "batch_run_sam") and not self._state.get("sam_loaded"):
             return "Error: SAM model is not loaded. Call load_sam first, then retry."
-        if name in ("run_yolo_detect", "run_yolo_segment") and not self._state.get("yolo_loaded"):
+        if name in ("run_yolo_detect", "run_yolo_segment", "batch_run_yolo") and not self._state.get("yolo_loaded"):
             return "Error: YOLO model is not loaded. Call load_yolo first, then retry."
-        if name == "run_unet" and not self._state.get("unet_loaded"):
+        if name in ("run_unet", "batch_run_unet") and not self._state.get("unet_loaded"):
             return "Error: UNet model is not loaded. Call load_unet first, then retry."
 
         # Prerequisite checks that prevent silent no-op "successes": refuse the
