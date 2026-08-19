@@ -46,7 +46,8 @@ touched:
 - [ ] Queue images, finalize a dataset, and train a model end to end
 - [ ] Particle measurements and a plot; spatial analysis; tracking
 - [ ] Generate a TEM simulation, a 4D-STEM scan, and a reference match
-- [ ] CryoBLOB, on a folder as well as a single image
+- [ ] CryoBLOB, on a folder as well as a single image, and on inverted-contrast
+      data (Particle contrast → Auto-detect should find blobs either way)
 - [ ] Ask CLU for something from each workspace, including something out of scope
       (it should switch workspaces first rather than pick the wrong tool)
 - [ ] Save a session, quit, reopen it
@@ -111,11 +112,17 @@ uv pip install --python .venv-py312/bin/python -e .
 
 ## Three things that are shared, and will bite you
 
-**1. The CryoBLOB plugin is one directory, installed into both venvs.**
-`/home/vnw/acorn-cryoblob-plugin` is editable-installed into the shared venv and
-this one. Editing it changes both applications at once. Nothing in this
-reorganization touched it, deliberately. After the old tree is gone this stops
-mattering — until then, treat it as live.
+**1. CryoBLOB used to be one directory shared by both installs — it no longer is.**
+`/home/vnw/acorn-cryoblob-plugin` was editable-installed into both venvs, so
+editing it changed both applications at once. This tree now has its own copy at
+`packages/acorn-cryoblob/` and its venv points there; the shared directory is
+untouched and is still what the old install loads.
+
+That means the two copies can now drift. The sandbox copy has a fix the shared
+one does not: CryoBLOB detects density minima, so on inverted data it returned
+zero detections silently — it now detects contrast polarity and flips the image
+when needed. Once the old tree is retired, delete
+`/home/vnw/acorn-cryoblob-plugin` along with it.
 
 **2. CLU's API key is in `$HOME`, not in either tree.**
 `~/.acorn/llm_config.json` is shared by both installs. That is convenient here
