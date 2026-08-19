@@ -119,3 +119,82 @@ def test_cryoblob_run_reaches_the_canvas_from_a_workspace_without_its_tab(window
     assert after > before, (
         "detections reached disk but not the canvas — the reload/redraw path is broken"
     )
+
+
+# ── contrast polarity ─────────────────────────────────────────────────────────
+# CryoBLOB finds density minima, which is right for cryo-EM but returns zero on
+# inverted data with no error and nothing to explain why.
+
+def _planted(polarity: str):
+    """256x256 with five gaussian blobs, dark or light relative to the field."""
+    yy, xx = np.mgrid[0:256, 0:256]
+    img = np.random.RandomState(3).normal(0.5, 0.02, (256, 256)).astype("float32")
+    blob = np.zeros((256, 256), dtype="float32")
+    for cy, cx in [(60, 60), (60, 180), (180, 60), (180, 180), (120, 120)]:
+        blob += 0.4 * np.exp(-(((yy - cy) ** 2 + (xx - cx) ** 2) / (2 * 7.0 ** 2)))
+    return img - blob if polarity == "dark" else img + blob
+
+
+def test_polarity_detection_reads_dark_and_light_fields():
+    from acorn_cryoblob.thread import detect_contrast_polarity
+    assert detect_contrast_polarity(_planted("dark")) == "dark"
+    assert detect_contrast_polarity(_planted("light")) == "light"
+
+
+def test_polarity_detection_defaults_to_dark_on_a_featureless_field():
+    """A symmetric histogram must not be flipped on a coin toss."""
+    from acorn_cryoblob.thread import detect_contrast_polarity
+    flat = np.random.RandomState(0).normal(0.5, 0.02, (256, 256))
+    assert detect_contrast_polarity(flat) == "dark"
+
+
+def test_polarity_detection_survives_nans_and_empty_input():
+    from acorn_cryoblob.thread import detect_contrast_polarity
+    assert detect_contrast_polarity(np.array([])) == "dark"
+    arr = _planted("dark")
+    arr[0, :10] = np.nan
+    assert detect_contrast_polarity(arr) == "dark"
+
+
+def test_inversion_preserves_the_intensity_range():
+    """Sigma and threshold settings have to carry over unchanged."""
+    from acorn_cryoblob.thread import _apply_contrast_polarity
+    src = _planted("light")
+    out, used = _apply_contrast_polarity(src, "light")
+    assert used == "light"
+    assert np.isclose(out.min(), src.min()) and np.isclose(out.max(), src.max())
+
+
+def test_unknown_polarity_falls_back_to_auto():
+    from acorn_cryoblob.thread import _apply_contrast_polarity
+    _out, used = _apply_contrast_polarity(_planted("light"), "nonsense")
+    assert used == "light"       # auto-detected rather than crashing
+
+
+@pytest.mark.parametrize("polarity,expect_detections", [("dark", True), ("light", True)])
+def test_detector_finds_planted_blobs_in_either_polarity(tmp_path, polarity, expect_detections):
+    """The regression: 'light' data used to return zero, silently."""
+    from acorn_cryoblob.thread import _process_single_file
+    f = tmp_path / f"{polarity}.tif"
+    tifffile.imwrite(f, _planted(polarity))
+    recs = _process_single_file(
+        str(f), detection_mode="log", use_watershed=False, contrast_polarity="auto",
+        pixel_size_nm=1.0, run_mode="final", blob_downscale=1.0,
+        min_sigma=3.0, max_sigma=14.0, blob_step=1.0, threshold_rel=0.05,
+        max_detections=100, refine_sizes=True, size_scale=1.0,
+        ridge_threshold=0.006, ridge_scales=20, min_marker_distance=4.0,
+        use_ridge_detection=False, stream_large_files=False,
+        exponential=False, logarizer=False, gblur=2, background=0,
+        apply_filter=0, cache_results=False,
+    )
+    assert bool(recs) is expect_detections
+    assert len(recs) >= 4, f"{polarity}: found {len(recs)} of 5 planted blobs"
+
+
+def test_clu_can_set_the_polarity():
+    """Without the key in _CLU_DEFAULTS the plugin silently drops CLU's override."""
+    from acorn_cryoblob.plugin import _CLU_DEFAULTS
+    assert _CLU_DEFAULTS["contrast_polarity"] == "auto"
+    from acorn_llm.agent import _TOOLS
+    tool = next(t for t in _TOOLS if t["name"] == "run_cryoblob")
+    assert set(tool["properties"]["contrast_polarity"]["enum"]) == {"auto", "dark", "light"}

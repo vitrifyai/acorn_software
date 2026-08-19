@@ -173,3 +173,61 @@ def test_the_workspaces_first_dock_is_the_one_raised(window):
         import pytest
         pytest.skip("plugin not installed")
     assert not first.isHidden()
+
+
+def test_control_panel_width_follows_the_workspace(window):
+    """Explore's two short tabs should not claim Annotate's width."""
+    window.resize(1600, 1000)
+    window.show()
+    from PyQt6.QtWidgets import QApplication
+    widths = {}
+    for ws in WORKSPACES:
+        window.set_workspace(ws.wid)
+        QApplication.processEvents()     # the sizing is deferred one turn
+        QApplication.processEvents()
+        widths[ws.wid] = window._main_splitter.sizes()[1]
+    assert widths["annotate"] > widths["explore"], "Annotate needs more room than Explore"
+    assert widths["simulate"] <= widths["annotate"], (
+        "Simulate gives an edge to the simulator docks; the panel must not also be wide"
+    )
+
+
+def test_the_image_always_keeps_the_larger_share(window):
+    window.resize(1600, 1000)
+    window.show()
+    from PyQt6.QtWidgets import QApplication
+    for ws in WORKSPACES:
+        window.set_workspace(ws.wid)
+        QApplication.processEvents()
+        QApplication.processEvents()
+        canvas, panel = window._main_splitter.sizes()
+        assert canvas > panel, f"{ws.wid}: control panel is wider than the image"
+
+
+def test_no_workspace_makes_the_panel_narrower_than_its_own_controls(window):
+    """
+    A panel narrower than its buttons cuts them off, which reads as a broken
+    window rather than a tight one. Simulate hit this: it gives an edge to the
+    simulator docks, and a 320 px panel on top of that clipped Contrast.
+    """
+    from PyQt6.QtWidgets import QApplication
+    window.resize(1600, 1000)
+    window.show()
+    for ws in WORKSPACES:
+        window.set_workspace(ws.wid)
+        QApplication.processEvents()
+        QApplication.processEvents()
+        panel = window._main_splitter.sizes()[1]
+        assert panel >= window._control_tabs.minimumWidth(), (
+            f"{ws.wid}: panel {panel}px is below the control panel's own minimum"
+        )
+
+
+def test_the_contrast_tab_can_scroll_rather_than_clip(window):
+    """It was the one tab added without a scroll wrapper."""
+    from PyQt6.QtWidgets import QScrollArea
+    window.show_all_panels()
+    tabs = window._control_tabs
+    idx = [tabs.tabText(i) for i in range(tabs.count())].index("Contrast")
+    assert isinstance(tabs.widget(idx), QScrollArea)
+    assert window._contrast_panel.params().method   # still wired through the wrapper

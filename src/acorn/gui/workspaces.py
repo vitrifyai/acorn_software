@@ -33,6 +33,11 @@ class Workspace:
     tabs:     tuple[str, ...]        # core/plugin tab labels to show, in order
     docks:    tuple[str, ...] = ()   # plugin ids to open automatically
     shortcut: str = ""               # e.g. "Ctrl+1"
+    # Starting width of the control panel, in px. Workspaces whose tools live in
+    # docks want a narrow panel so the image keeps the room; workspaces whose
+    # tools are all tabs want a wide one. The user can drag it either way, and
+    # the panel's own 320 px minimum still wins on a narrow window.
+    panel_width: int = 400
 
 
 WORKSPACES: tuple[Workspace, ...] = (
@@ -44,6 +49,7 @@ WORKSPACES: tuple[Workspace, ...] = (
               "measurement. Start here if you are new.",
         tabs=("Contrast", "Measure"),
         shortcut="Ctrl+1",
+        panel_width=320,
     ),
     Workspace(
         wid="annotate",
@@ -53,6 +59,7 @@ WORKSPACES: tuple[Workspace, ...] = (
               "accept the ones you want.",
         tabs=("Annotate", "Segment", "Contrast"),
         shortcut="Ctrl+2",
+        panel_width=420,
     ),
     Workspace(
         wid="dataset",
@@ -62,6 +69,7 @@ WORKSPACES: tuple[Workspace, ...] = (
               "export in the format you need.",
         tabs=("Export", "Train"),
         shortcut="Ctrl+3",
+        panel_width=400,
     ),
     Workspace(
         wid="analyze",
@@ -72,6 +80,7 @@ WORKSPACES: tuple[Workspace, ...] = (
         tabs=("Measure",),
         docks=("acorn_spatial", "acorn_tracking", "acorn_3d"),
         shortcut="Ctrl+4",
+        panel_width=320,
     ),
     Workspace(
         wid="simulate",
@@ -82,6 +91,7 @@ WORKSPACES: tuple[Workspace, ...] = (
         tabs=("Contrast", "Annotate"),
         docks=("acorn_tem_sim", "acorn_fib_sim"),
         shortcut="Ctrl+5",
+        panel_width=320,
     ),
 )
 

@@ -157,6 +157,16 @@ _TOOLS: list[dict] = [
             "min_sigma": {"type": "number", "description": "Minimum blob scale (px). Raise to skip tiny features."},
             "max_sigma": {"type": "number", "description": "Maximum blob scale (px). Raise for larger blobs."},
             "max_detections": {"type": "integer", "description": "Cap on number of detections."},
+            "contrast_polarity": {
+                "type": "string",
+                "enum": ["auto", "dark", "light"],
+                "description": (
+                    "Whether particles are darker or lighter than the surrounding field. "
+                    "CryoBLOB finds density minima, so it needs dark particles; on inverted "
+                    "data use 'light'. Default 'auto' measures the image. If a run returns "
+                    "zero detections on data you expect blobs in, try 'light'."
+                ),
+            },
         },
         "required": [],
         "needs_confirm": False,

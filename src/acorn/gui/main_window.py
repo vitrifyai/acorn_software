@@ -626,7 +626,9 @@ class MainWindow(
 
         # right control panel
         control = QTabWidget()
-        control.setMinimumWidth(320)
+        # 320 was below what any tab actually needs (Contrast ~395, Segment ~477),
+        # so the panel could be dragged narrow enough to cut off its own buttons.
+        control.setMinimumWidth(400)
 
         self._contrast_panel = ContrastPanel()
         self._ann_panel      = AnnotationPanel()
@@ -670,7 +672,7 @@ class MainWindow(
         _export_wrapper  = _make_tab_wrapper(self._export_panel)
         _train_wrapper   = _make_tab_wrapper(self._train_panel)
 
-        control.addTab(self._contrast_panel, "Contrast")
+        control.addTab(_make_tab_wrapper(self._contrast_panel), "Contrast")
         control.addTab(_annotate_wrapper,    "Annotate")
         control.addTab(_segment_wrapper,     "Segment")
         control.addTab(_measure_wrapper,     "Measure")
@@ -747,6 +749,7 @@ class MainWindow(
         splitter.setStretchFactor(0, 1)
         splitter.setStretchFactor(1, 0)
         splitter.setSizes([9999, 400])   # initial: canvas gets all extra, panel starts at 400px
+        self._main_splitter = splitter
 
         # ── workspace switcher ────────────────────────────────────────────────
         # Snapshot every tab now that core tabs and plugin tabs are both in place.
@@ -979,6 +982,7 @@ class MainWindow(
         ], order=ws.tabs)
         self._apply_workspace_docks(ws)
 
+        self._apply_workspace_splitter(ws)
         self._workspace_bar.set_all_shown(False)
         self._workspace_bar.set_active(wid)
         if hasattr(self, "_statusbar"):
@@ -1047,6 +1051,62 @@ class MainWindow(
                 self.tabifyDockWidget(first, dock)
             first.show()
             first.raise_()
+
+    def _apply_workspace_splitter(self, ws) -> None:
+        """
+        Give the control panel the width its workspace actually needs.
+
+        A fixed 400 px split suits Annotate, where the panel holds three model
+        sections. It is wrong at both ends elsewhere: Explore shows two short tabs
+        and wastes the space, while Simulate already gives a whole edge to the
+        simulator docks, so a wide panel on top of that squeezes the image down to
+        a strip. The user can still drag it; this only sets where it starts.
+        """
+        splitter = getattr(self, "_main_splitter", None)
+        if splitter is None or splitter.count() < 2:
+            return
+        # Docks are shown and hidden just before this runs, and Qt re-lays them
+        # out on the next turn of the event loop. Measuring now would size the
+        # panel against the *previous* workspace's dock widths.
+        QTimer.singleShot(0, lambda w=ws.panel_width: self._set_panel_width(w))
+
+    def _visible_panel_width_needed(self) -> int:
+        """Narrowest the shown tabs can get before their own controls clip.
+
+        minimumSizeHint, not sizeHint: sizeHint is what a widget would *like* (a
+        results table asks for 600px), while minimumSizeHint is what it needs
+        before buttons and spin boxes start being cut off.
+        """
+        tabs = getattr(self, "_control_tabs", None)
+        if tabs is None:
+            return 0
+        needed = 0
+        for i in range(tabs.count()):
+            page = tabs.widget(i)
+            if page is None:
+                continue
+            # Ask the page, not the widget inside it. A scrollable tab can shrink
+            # below its content and show a scrollbar; reading through to the inner
+            # widget would report the Measure tab's results table as a hard 600px
+            # floor for a side panel.
+            needed = max(needed, page.minimumSizeHint().width())
+        return min(needed + 18, 520)     # a side panel that wide stops being a side panel
+
+    def _set_panel_width(self, want: int) -> None:
+        splitter = getattr(self, "_main_splitter", None)
+        if splitter is None or splitter.count() < 2:
+            return
+        total = sum(splitter.sizes()) or splitter.width()
+        if total <= 0:
+            return
+        # The workspace says how much room it would like; the tabs it shows say how
+        # much they need. Needing more wins — a panel narrower than its own controls
+        # clips buttons and spinboxes, which reads as a broken window, not a tight one.
+        panel = max(want, self._visible_panel_width_needed())
+        # Only on a genuinely small window do we take it back, and then no further
+        # than half, so the image never disappears entirely.
+        panel = min(panel, max(int(total * 0.5), 240))
+        splitter.setSizes([max(1, total - panel), panel])
 
     def show_all_panels(self, persist: bool = True) -> None:
         """Escape hatch: every tab and every dock at once, ignoring the workspace."""
