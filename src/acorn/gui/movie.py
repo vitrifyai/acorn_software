@@ -8,6 +8,8 @@ contained enough to keep out of the window class.
 """
 from __future__ import annotations
 
+import numpy as np
+
 from PyQt6.QtWidgets import (
     QCheckBox, QComboBox, QDialog, QDoubleSpinBox, QHBoxLayout, QLabel,
     QPushButton, QSpinBox, QVBoxLayout, QWidget,

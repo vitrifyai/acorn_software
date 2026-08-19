@@ -30,7 +30,7 @@ def _atomic_write_text(path: Path, text: str) -> None:
     os.replace(tmp, path)
 
 
-from PyQt6.QtCore import Qt, QThread, QTimer, pyqtSignal
+from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtWidgets import (
     QApplication, QCheckBox, QComboBox, QDialog, QDialogButtonBox, QDockWidget, QFileDialog,
     QDoubleSpinBox, QFormLayout, QGroupBox, QLabel, QLineEdit, QListWidget, QListWidgetItem,
@@ -62,11 +62,10 @@ from acorn.gui.segmentation_panel import SegmentationPanel
 from acorn.gui.train_panel import TrainPanel
 from acorn.gui.detector_controller import DetectorControllerMixin
 from acorn.gui.export_controller import ExportControllerMixin
-from acorn.gui.movie import DoseSeriesDialog, MotionPlotDialog, MovieControllerMixin
+from acorn.gui.movie import DoseSeriesDialog, MovieControllerMixin
 from acorn.gui.sam_controller import SAMControllerMixin
 from acorn.gui.threads import (
-    BatchExportThread, FrameProcessThread, ImageLoadThread, LoadThread,
-    SAMThread, TrainingThread,
+    BatchExportThread, FrameProcessThread, ImageLoadThread, LoadThread, SAMThread,
 )
 from acorn.gui.workspace_bar import WelcomeDialog, WorkspaceBar
 from acorn.gui.workspaces import (

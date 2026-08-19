@@ -10,7 +10,6 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from acorn.core.annotations import ROIAnnotation
 from acorn.gui.threads import SAMThread
 
 class DetectorControllerMixin:

@@ -12,7 +12,6 @@ file instead of scattered through a 6,000-line window class.
 """
 from __future__ import annotations
 
-from typing import Optional
 
 from PyQt6.QtWidgets import QMessageBox
 

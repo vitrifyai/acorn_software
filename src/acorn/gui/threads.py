@@ -10,7 +10,6 @@ training all use despite the name.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Callable, Optional
 
 from PyQt6.QtCore import QThread, pyqtSignal
 
@@ -63,7 +62,7 @@ class TrainingThread(QThread):
 
     def run(self) -> None:
         try:
-            from acorn.export.training_exporter import add_image, TrainingConfig
+            from acorn.export.training_exporter import add_image
             from acorn.core.annotations import AnnotationStore
             # Reconstruct a store from the snapshot
             store = AnnotationStore()
@@ -107,7 +106,6 @@ class BatchExportThread(QThread):
 
     def run(self) -> None:
         from acorn.export.training_exporter import add_image
-        from acorn.core.annotations import AnnotationStore
 
         results: list[dict] = []
         n = len(self._items)
