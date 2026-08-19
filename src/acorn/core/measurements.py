@@ -204,7 +204,7 @@ class MeasurementEngine:
         self,
         vertices: list[tuple[float, float]],
         image: np.ndarray,
-        color: str = "#00AAFF",
+        color: str = "#E8833A",
     ) -> ROIAnnotation:
         """
         Compute area and intensity statistics inside a polygon ROI.

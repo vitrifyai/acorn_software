@@ -8,6 +8,7 @@ from pathlib import Path
 
 from PyQt6.QtCore import pyqtSignal, Qt
 from PyQt6.QtWidgets import (
+    QSizePolicy,
     QComboBox, QDoubleSpinBox, QFormLayout, QGroupBox,
     QHBoxLayout, QInputDialog, QLabel, QMessageBox, QPushButton,
     QScrollArea, QSlider, QStackedWidget, QVBoxLayout, QWidget,
@@ -185,7 +186,16 @@ class ContrastPanel(QWidget):
         self._pages["sigma"]      = self._make_sigma_page()
         self._pages["adaptive"]   = self._make_adaptive_page()
         for page in self._pages.values():
+            # Pack each page's rows to the top. Without this the stack takes the
+            # height of its tallest page and the shorter ones spread their two or
+            # three rows across it, leaving big gaps that look like missing controls.
+            lay = page.layout()
+            if lay is not None:
+                lay.addStretch()
             self._stack.addWidget(page)
+        self._stack.setSizePolicy(
+            QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Maximum
+        )
         idx = self._method_combo.findData("percentile")
         if idx >= 0:
             self._method_combo.blockSignals(True)

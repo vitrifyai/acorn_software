@@ -148,3 +148,28 @@ def test_show_all_panels_restores_everything(window):
 def test_unknown_workspace_falls_back_instead_of_crashing(window):
     window._apply_workspace("no-such-workspace", persist=False)
     assert window.active_workspace == DEFAULT_WORKSPACE
+
+
+def test_multiple_docks_in_one_workspace_are_tabbed_not_stacked(window):
+    """Stacked long panels leave each a sliver and squeeze the canvas."""
+    window.resize(1400, 900)
+    window.show()
+    window.set_workspace("simulate")
+    tem = window._plugin_docks.get("acorn_tem_sim")
+    fib = window._plugin_docks.get("acorn_fib_sim")
+    if tem is None or fib is None:
+        import pytest
+        pytest.skip("simulator plugins not installed")
+    partners = [d.windowTitle() for d in window.tabifiedDockWidgets(tem)]
+    assert fib.windowTitle() in partners
+
+
+def test_the_workspaces_first_dock_is_the_one_raised(window):
+    from acorn.gui.workspaces import by_id
+    window.set_workspace("analyze")
+    ws = by_id("analyze")
+    first = window._plugin_docks.get(ws.docks[0])
+    if first is None:
+        import pytest
+        pytest.skip("plugin not installed")
+    assert not first.isHidden()

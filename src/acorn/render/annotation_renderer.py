@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from acorn.render import palette as _PAL
+
 import math
 from typing import TYPE_CHECKING, Optional
 
@@ -30,9 +32,16 @@ class AnnotationRenderer:
     pixel_size  : nm/px (needed for distance / angle labels)
     """
 
+    # Above this many ROIs sharing one label, per-shape text stops being
+    # information and becomes a screen full of the same word covering the data.
+    # Past the threshold the shapes stay and a legend names them once.
+    LABEL_TEXT_LIMIT = 8
+
     def __init__(self, ax: "Axes", pixel_size: float = 1.0) -> None:
         self.ax = ax
         self.pixel_size = pixel_size
+        self._label_counts: dict[str, int] = {}   # label -> how many ROIs carry it
+        self._legend_artists: list = []
         self._ann_to_artists: dict[int, list] = {}      # id(ann) → artists
         self._id_to_ann: dict[int, "AnyAnnotation"] = {}
         self._selected_id: Optional[int] = None
@@ -53,12 +62,20 @@ class AnnotationRenderer:
                     pass
         self._ann_to_artists.clear()
         self._id_to_ann.clear()
+        for art in self._legend_artists:
+            try:
+                art.remove()
+            except Exception:
+                pass
+        self._legend_artists.clear()
 
     def render(self, store: "AnnotationStore") -> None:
         """Clear and redraw every annotation in *store*."""
         self.clear()
+        self._count_labels(store)
         for ann in store:
             self._draw_and_register(ann)
+        self._draw_legend()
         self.ax.figure.canvas.draw_idle()
 
     def render_noblit(self, store: "AnnotationStore", canvas) -> None:
@@ -82,8 +99,10 @@ class AnnotationRenderer:
         for art in overlays:
             art.set_visible(True)
         # Now draw annotations on top of the saved background
+        self._count_labels(store)
         for ann in store:
             self._draw_and_register(ann)
+        self._draw_legend()
         canvas.blit_annotations()
 
     def add_one(self, ann: "AnyAnnotation", draw: bool = True) -> None:
@@ -265,6 +284,48 @@ class AnnotationRenderer:
         if t == "roi":
             return [(x, y, f"v{i}") for i, (x, y) in enumerate(ann.vertices)]
         return []
+
+    def _count_labels(self, store) -> None:
+        """Tally ROI labels so _roi knows whether its own text would be redundant."""
+        counts: dict[str, int] = {}
+        for ann in store:
+            label = getattr(ann, "label", "") or ""
+            if label and hasattr(ann, "vertices"):
+                counts[label] = counts.get(label, 0) + 1
+        self._label_counts = counts
+
+    def _draw_legend(self) -> None:
+        """
+        Name each label once, in a corner, instead of on every shape.
+
+        Only appears when at least one label was too numerous to print in place —
+        otherwise the shapes already carry their own names and a legend would just
+        be a second copy.
+        """
+        crowded = {k: v for k, v in self._label_counts.items() if v > self.LABEL_TEXT_LIMIT}
+        if not crowded:
+            return
+        lines = sorted(crowded.items(), key=lambda kv: (-kv[1], kv[0]))
+        y = 0.985
+        for label, count in lines:
+            colour = self._label_colour(label)
+            txt = self.ax.text(
+                0.012, y, f"\u25a0  {label}  \u00b7  {count}",
+                transform=self.ax.transAxes,
+                color=colour, fontsize=9, fontweight="bold",
+                ha="left", va="top", zorder=9,
+                bbox=dict(boxstyle="round,pad=0.35", facecolor=_PAL.OVERLAY_BG,
+                          edgecolor="none", alpha=0.72),
+            )
+            self._legend_artists.append(txt)
+            y -= 0.042
+
+    def _label_colour(self, label: str) -> str:
+        """Colour actually used on screen for this label, falling back to the palette."""
+        for ann in self._id_to_ann.values():
+            if getattr(ann, "label", "") == label and getattr(ann, "color", None):
+                return ann.color
+        return _PAL.color_for_label(label)
 
     def _draw_and_register(self, ann: "AnyAnnotation") -> None:
         ann_id = id(ann)
@@ -595,7 +656,7 @@ class AnnotationRenderer:
         xy = np.array(ann.vertices)
         fill = Polygon(
             xy, closed=True,
-            fill=True, facecolor=ann.color, alpha=0.20,
+            fill=True, facecolor=ann.color, alpha=0.16,
             edgecolor="none", zorder=5,
         )
         self.ax.add_patch(fill)
@@ -603,20 +664,24 @@ class AnnotationRenderer:
         outline = Polygon(
             xy, closed=True,
             fill=False, edgecolor=ann.color, alpha=1.0,
-            lw=ann.linewidth, linestyle="--", zorder=5,
+            lw=ann.linewidth, linestyle="-", zorder=5,
         )
         self.ax.add_patch(outline)
         self._staging.append(outline)
         cx, cy = xy[:, 0].mean(), xy[:, 1].mean()
-        if ann.label:
-            centroid_text = ann.label
-        else:
-            centroid_text = ""          # empty label -> clean shape, no text drawn
+        # Print the label only while it still tells you something. Once many
+        # shapes share one name the text is wider than the object it names,
+        # collides with its neighbours, and hides the data underneath; the
+        # legend names it once instead.
+        label = ann.label or ""
+        if not label or self._label_counts.get(label, 0) > self.LABEL_TEXT_LIMIT:
+            return
         txt = self.ax.text(
-            cx, cy, centroid_text,
-            color=ann.color, fontsize=9, fontweight="bold",
+            cx, cy, label,
+            color=ann.color, fontsize=8.5, fontweight="semibold",
             ha="center", va="center",
-            bbox=dict(boxstyle="round,pad=0.2", facecolor="black", alpha=0.55),
+            bbox=dict(boxstyle="round,pad=0.22", facecolor=_PAL.OVERLAY_BG,
+                      edgecolor="none", alpha=0.68),
             zorder=7,
         )
         self._staging.append(txt)

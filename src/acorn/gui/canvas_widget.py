@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from acorn.render import palette as _PAL
+
 import math
 from typing import Optional
 
@@ -408,8 +410,9 @@ class CanvasWidget(QWidget):
         self._mpl_canvas.draw_idle()
 
     # ── spatial-analysis overlay (clusters + hotspot heatmap) ───────────────────
-    _SPATIAL_PALETTE = ["#4878D0", "#EE854A", "#6ACC65", "#D65F5F", "#956CB4",
-                        "#8C613C", "#DC7EC0", "#FFD43B", "#D5BB67", "#82C6E2"]
+    # Shared with annotations so a cluster overlay and the shapes under it
+    # never come from two different colour schemes.
+    _SPATIAL_PALETTE = list(_PAL.ANNOTATION_PALETTE)
 
     def show_spatial_overlay(self, points_px, cluster_labels=None,
                              kde=None, kde_extent=None) -> None:

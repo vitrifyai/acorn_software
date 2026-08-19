@@ -17,6 +17,7 @@ from PyQt6.QtWidgets import QMessageBox
 
 from acorn.core.annotations import ROIAnnotation
 from acorn.gui.threads import SAMThread
+from acorn.render import palette as _PAL
 
 
 def _sample_path(pts: list, spacing: float = 20.0) -> list:
@@ -191,8 +192,10 @@ class SAMControllerMixin:
             return _FIXED[key]
         # Deterministic colour for any custom label — cycle through the same
         # palette used by SAMPanel._user_label_colors
-        _PALETTE = ["#1a5fa8", "#00703C", "#e67e22", "#006e8a", "#363636"]
-        return _PALETTE[hash(key) % len(_PALETTE)]
+        # One palette for everything drawn on an image — see acorn.render.palette.
+        # The old local list used Python's salted str hash, so a label changed
+        # colour every time the application restarted.
+        return _PAL.color_for_label(key)
     def _on_sam_load_model(self, checkpoint: str, model_cfg: str, backend: str) -> None:
         if self._sam_busy():
             return

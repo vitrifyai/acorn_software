@@ -68,6 +68,7 @@ from acorn.gui.threads import (
     BatchExportThread, FrameProcessThread, ImageLoadThread, LoadThread, SAMThread,
 )
 from acorn.gui.workspace_bar import WelcomeDialog, WorkspaceBar
+from acorn.render import palette as _PAL
 from acorn.gui.workspaces import (
     ALWAYS_AVAILABLE_DOCKS, DEFAULT_WORKSPACE, WORKSPACES,
     by_id as workspace_by_id,
@@ -1024,13 +1025,28 @@ class MainWindow(
     def _apply_workspace_docks(self, ws) -> None:
         """Open the docks this workspace owns; put other workspaces' docks away."""
         owned_by_any = {d for w in WORKSPACES for d in w.docks}
+        opened = []
         for plugin_id, dock in getattr(self, "_plugin_docks", {}).items():
             if plugin_id in ALWAYS_AVAILABLE_DOCKS:
                 continue                       # e.g. the assistant — user's choice stands
             if plugin_id in ws.docks:
                 dock.show()
+                opened.append((plugin_id, dock))
             elif plugin_id in owned_by_any:
                 dock.hide()
+
+        # Two or more tool panels stacked in one edge leave each of them a sliver —
+        # the simulators in particular are long forms, and the lower one ends up
+        # cut off with the canvas squeezed to nothing. Tab them instead, and raise
+        # the workspace's first-listed dock.
+        if len(opened) > 1:
+            order = {pid: i for i, pid in enumerate(ws.docks)}
+            opened.sort(key=lambda item: order.get(item[0], len(order)))
+            first = opened[0][1]
+            for _pid, dock in opened[1:]:
+                self.tabifyDockWidget(first, dock)
+            first.show()
+            first.raise_()
 
     def show_all_panels(self, persist: bool = True) -> None:
         """Escape hatch: every tab and every dock at once, ignoring the workspace."""
@@ -1682,13 +1698,13 @@ class MainWindow(
         manually_set = self._img_idx in self._px_overrides
         if from_header:
             text  = f"{px_nm:.4f} nm/px  (header)"
-            color = "#4dbb78"
+            color = _PAL.ACCEPTED          # read from the file header — trustworthy
         elif manually_set:
             text  = f"{px_nm:.4f} nm/px  (manual)"
-            color = "#4d8ec4"
+            color = _PAL.PENDING           # you supplied this, the file did not
         else:
             text  = "px: not set  (click to enter)"
-            color = "#ff6b6b"
+            color = "#E05252"              # measurements are wrong until this is set
         self._px_btn.setText(text)
         self._px_btn.setStyleSheet(
             f"QPushButton {{ color: {color}; font-size: 11px; padding: 0 6px; border: none; }}"

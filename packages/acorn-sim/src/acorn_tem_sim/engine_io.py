@@ -24,6 +24,14 @@ from acorn_tem_sim.engine.stem import stem_4d, virtual_detectors
 from acorn_tem_sim.io import uint8_image
 
 
+def _annotation_color(label: str) -> str:
+    """Same colour a hand-drawn annotation of this label would get in ACORN."""
+    try:
+        from acorn.render.palette import color_for_label
+        return color_for_label(label)
+    except Exception:      # acorn core unavailable (engine used standalone)
+        return "#E8833A"
+
 def _write_acorn_sidecar(image_path: Path, footprints, pixel_size_nm: float, shape):
     """Write the ACORN .<stem>.acorn.json sidecar: perfect ground-truth ROI
     polygons (for YOLO/UNet training) + pixel-size calibration."""
@@ -35,7 +43,7 @@ def _write_acorn_sidecar(image_path: Path, footprints, pixel_size_nm: float, sha
             continue                                    # object entirely off-frame
         vv = [[float(min(max(x, 0), w - 1)), float(min(max(y, 0), h - 1))] for x, y in verts]
         anns.append({"type": "roi", "vertices": vv, "area_nm2": 0.0, "stats": {},
-                     "color": "#00AAFF", "linewidth": 1.5, "label": label})
+                     "color": _annotation_color(label), "linewidth": 1.5, "label": label})
     side = Path(image_path).parent / f".{Path(image_path).stem}.acorn.json"
     side.write_text(json.dumps({"version": 3, "annotations": anns,
                                 "pixel_size_nm": float(pixel_size_nm),

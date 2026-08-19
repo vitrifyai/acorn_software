@@ -125,7 +125,7 @@ class ROIAnnotation:
     vertices: list = field(default_factory=list)    # list of (x, y) in image px
     area_nm2: float = 0.0
     stats: dict = field(default_factory=dict)       # mean, std, min, max
-    color: str = "#00AAFF"
+    color: str = "#E8833A"
     linewidth: float = 1.5
     label: str = ""                                 # user-assigned region label
     provenance: Provenance = field(default_factory=_prov)
