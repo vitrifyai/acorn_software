@@ -1,0 +1,22 @@
+[build-system]
+requires = ["hatchling>=1.21"]
+build-backend = "hatchling.build"
+
+[project]
+name = "acorn-3d"
+version = "0.3.0"
+description = "Volume viewer for ACORN"
+requires-python = ">=3.10"
+authors = [{ name = "CNMS Low-Dose CryoEM Lab" }]
+dependencies = [
+    "acorn>=0.3",
+    "numpy>=1.24",
+    "mrcfile>=1.4",
+    "tifffile>=2023.1",
+]
+
+[project.entry-points."acorn.plugins"]
+acorn_3d = "acorn_3d.plugin:VolumePlugin"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/acorn_3d"]

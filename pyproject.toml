@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "acorn"
-version = "0.2.0"
+version = "0.3.0"
 description = "Annotate, Curate, Observe, Review, Navigate — microscopy image analysis and annotation suite"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -17,6 +17,9 @@ classifiers = [
     "Topic :: Scientific/Engineering :: Visualization",
 ]
 
+# Reading images, annotating them, measuring them and exporting them. Nothing
+# here pulls a GPU stack, so a broken CUDA driver can never stop you opening a
+# micrograph. Everything heavier is an extra or a separate package.
 dependencies = [
     "numpy>=1.24",
     "scipy>=1.10",
@@ -27,50 +30,61 @@ dependencies = [
     "Pillow>=10.0",
     "h5py>=3.8",
     "roifile>=2023.5",    # ImageJ ROI import
-    "mrcfile>=1.4",       # TEM-sim engine: MRC header probe / export + reference-matching
-    "pyyaml>=6.0",        # TEM-sim engine: setup/config serialization
 ]
 
+# ── install profiles ──────────────────────────────────────────────────────────
+# The first four match the workspaces in the application, so you can install the
+# jobs you actually do:
+#
+#   pip install "acorn[viewer]"     open, contrast, navigate, measure
+#   pip install "acorn[annotate]"   the above + SAM / YOLO / UNet
+#   pip install "acorn[lab]"        the above + measurements, stats, plots, 3D
+#   pip install "acorn[sim]"        the above + TEM / FIB / 4D-STEM simulation
+#
 [project.optional-dependencies]
-gui = [
-    "PyQt6>=6.5",
-    "PyQt6-Qt6>=6.5",
-]
-mrc = [
-    "mrcfile>=1.4",
-]
-hub = [
-    "datasets>=2.18",
-    "huggingface_hub>=0.22",
-]
-sam = [
-    "sam3>=0.1",          # SAM 3 (recommended)
-    "micro-sam>=1.7",     # micro-SAM for biomedical checkpoints
-]
-usam = [
-    "micro-sam>=1.7",     # micro-SAM standalone extra
-]
-sam2 = [
-    "sam2>=1.0",          # SAM 2 fallback if sam3 not available
-]
-yolo = [
-    "ultralytics>=8.0",
-]
-unet = [
-    "segmentation-models-pytorch>=0.3",
+# — the Explore workspace —
+viewer = ["PyQt6>=6.5", "PyQt6-Qt6>=6.5", "mrcfile>=1.4"]
+
+# — the Annotate workspace: this is the heavy one (torch, CUDA) —
+annotate = [
+    "acorn[viewer]",
+    "sam3>=0.1",                              # SAM 3 (recommended)
+    "micro-sam>=1.7",                         # checkpoints tuned for microscopy
+    "ultralytics>=8.0",                       # YOLO 11 / v8 / v9 / v10
+    "segmentation-models-pytorch>=0.3",       # UNet family
     "torch>=2.0",
 ]
-dev = [
-    "pytest>=8.0",
-    "pytest-cov",
-    "ruff",
+
+# — the Analyze and Dataset workspaces —
+lab = [
+    "acorn[viewer]",
+    "acorn-analysis",
+    "acorn-plotting",
+    "acorn-spatial",
+    "acorn-tracking",
+    "acorn-3d",
 ]
-gpu      = ["cupy-cuda12x>=13"]   # GPU multislice/4D-STEM (CUDA 12.x); engine falls back to CPU without it
-llm      = ["anthropic>=0.52", "openai>=1.0"]
-analysis = ["opencv-python>=4.8", "pandas>=1.5"]
-tracking = ["pandas>=1.5", "scipy>=1.10"]
-volume   = ["mrcfile>=1.4", "tifffile>=2023.1"]
-full = ["acorn[gui,mrc,sam,yolo,unet,hub,analysis,tracking,volume]"]
+
+# — the Simulate workspace —
+sim = ["acorn[viewer]", "acorn-sim"]
+
+# — CLU, the assistant —
+clu = ["acorn-clu"]
+
+# — publishing datasets —
+hub = ["datasets>=2.18", "huggingface_hub>=0.22"]
+
+# — narrower pieces, for people who want exactly one thing —
+gui   = ["PyQt6>=6.5", "PyQt6-Qt6>=6.5"]
+mrc   = ["mrcfile>=1.4"]
+sam   = ["sam3>=0.1", "micro-sam>=1.7"]
+sam2  = ["sam2>=1.0"]                         # fallback if sam3 is unavailable
+usam  = ["micro-sam>=1.7"]
+yolo  = ["ultralytics>=8.0"]
+unet  = ["segmentation-models-pytorch>=0.3", "torch>=2.0"]
+
+dev  = ["pytest>=8.0", "pytest-cov", "ruff"]
+full = ["acorn[viewer,annotate,lab,sim,clu,hub]"]
 all  = ["acorn[full,dev]"]
 
 [project.scripts]
@@ -79,34 +93,16 @@ acorn = "acorn.cli.main:main"
 [project.gui-scripts]
 acorn-gui = "acorn.gui.main_window:launch"
 
-[project.entry-points."acorn.plugins"]
-acorn_analysis  = "acorn_analysis.plugin:AnalysisPlugin"
-acorn_tracking  = "acorn_tracking.plugin:TrackingPlugin"
-acorn_3d        = "acorn_3d.plugin:VolumePlugin"
-acorn_llm       = "acorn_llm.plugin:LLMPlugin"
-acorn_plotting  = "acorn_plotting.clu_integration:PlottingPlugin"
-acorn_spatial   = "acorn_spatial.plugin:SpatialPlugin"
-acorn_fib_sim   = "acorn_fib_sim.plugin:FibSimulationPlugin"
-acorn_tem_sim   = "acorn_tem_sim.plugin:TemSimulationPlugin"
+# Plugins register themselves through the "acorn.plugins" entry point from their
+# own distribution — see packages/*/pyproject.toml. The core declares none.
 
 [tool.hatch.build.targets.wheel]
-packages = [
-    "src/acorn",
-    "src/acorn_analysis",
-    "src/acorn_tracking",
-    "src/acorn_3d",
-    "src/acorn_llm",
-    "src/acorn_plotting",
-    "src/acorn_spatial",
-    "src/acorn_fib_sim",
-    "src/acorn_tem_sim",
-]
-
+packages = ["src/acorn"]
 
 [tool.ruff]
 line-length = 100
 target-version = "py310"
-src = ["src"]
+src = ["src", "packages"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

@@ -1,0 +1,30 @@
+[build-system]
+requires = ["hatchling>=1.21"]
+build-backend = "hatchling.build"
+
+[project]
+name = "acorn-sim"
+version = "0.3.0"
+description = "Cryo-TEM, FIB-SEM and 4D-STEM image simulation for ACORN"
+requires-python = ">=3.10"
+authors = [{ name = "CNMS Low-Dose CryoEM Lab" }]
+dependencies = [
+    "acorn>=0.3",
+    "numpy>=1.24",
+    "scipy>=1.10",
+    "scikit-image>=0.21",
+    "mrcfile>=1.4",
+    "pyyaml>=6.0",
+    "tifffile>=2023.1",
+]
+
+[project.optional-dependencies]
+# CUDA 12.x multislice and 4D-STEM. The engine falls back to CPU without it.
+gpu = ["cupy-cuda12x>=13"]
+
+[project.entry-points."acorn.plugins"]
+acorn_fib_sim = "acorn_fib_sim.plugin:FibSimulationPlugin"
+acorn_tem_sim = "acorn_tem_sim.plugin:TemSimulationPlugin"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/acorn_tem_sim", "src/acorn_fib_sim"]

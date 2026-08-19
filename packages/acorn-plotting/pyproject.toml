@@ -1,0 +1,23 @@
+[build-system]
+requires = ["hatchling>=1.21"]
+build-backend = "hatchling.build"
+
+[project]
+name = "acorn-plotting"
+version = "0.3.0"
+description = "Publication figures and statistics for ACORN"
+requires-python = ">=3.10"
+authors = [{ name = "CNMS Low-Dose CryoEM Lab" }]
+dependencies = [
+    "acorn>=0.3",
+    "numpy>=1.24",
+    "scipy>=1.10",
+    "pandas>=1.5",
+    "matplotlib>=3.7",
+]
+
+[project.entry-points."acorn.plugins"]
+acorn_plotting = "acorn_plotting.clu_integration:PlottingPlugin"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/acorn_plotting"]
