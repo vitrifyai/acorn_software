@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+from acorn.gui import path_field
+
+from acorn.gui import buttons
+
 from pathlib import Path
 
 from PyQt6.QtCore import pyqtSignal, Qt
@@ -47,6 +51,7 @@ class ExportPanel(QWidget):
         dir_row = QHBoxLayout()
         dir_row.setSpacing(4)
         self._dir = QLineEdit()
+        path_field.attach(self._dir)
         browse_btn = QPushButton("Browse…")
         browse_btn.setFixedWidth(80)
         browse_btn.clicked.connect(self._browse)
@@ -80,7 +85,7 @@ class ExportPanel(QWidget):
         # ── standard save buttons ─────────────────────────────────────────────
         btn_row = QHBoxLayout()
         save_btn = QPushButton("Save Image")
-        save_btn.setStyleSheet("background:#00703C;color:white;font-weight:bold;")
+        buttons.primary(save_btn)
         save_btn.clicked.connect(self._on_save)
         raw_btn = QPushButton("Save Raw TIFF")
         raw_btn.clicked.connect(self._on_save_raw)
@@ -98,7 +103,7 @@ class ExportPanel(QWidget):
         layout.addWidget(display_btn)
 
         mask_btn = QPushButton("Export ROI Masks")
-        mask_btn.setStyleSheet("background:#1a5fa8;color:white;font-weight:bold;")
+        buttons.secondary(mask_btn)
         mask_btn.setToolTip("Save labelled mask PNG + labels.json for segmentation")
         mask_btn.clicked.connect(self._on_save_masks)
         layout.addWidget(mask_btn)
@@ -136,6 +141,7 @@ class ExportPanel(QWidget):
         ds_row.setSpacing(4)
         ds_row.addWidget(QLabel("Dataset dir:"))
         self._dataset_dir = QLineEdit()
+        path_field.attach(self._dataset_dir)
         self._dataset_dir.setPlaceholderText("Select output folder…")
         ds_browse = QPushButton("Browse…")
         ds_browse.setFixedWidth(80)
@@ -181,7 +187,7 @@ class ExportPanel(QWidget):
         add_row = QHBoxLayout()
         add_row.setSpacing(4)
         queue_btn = QPushButton("Queue Image")
-        queue_btn.setStyleSheet("background:#1a5fa8;color:white;font-weight:bold;")
+        buttons.secondary(queue_btn)
         queue_btn.setToolTip(
             "Snapshot this image's annotations into the export queue.\n"
             "Unannotated images are queued as pure negative examples.\n"
@@ -235,7 +241,7 @@ class ExportPanel(QWidget):
         batch_row = QHBoxLayout()
         batch_row.setSpacing(4)
         self._batch_btn = QPushButton("Export All Queued (0)")
-        self._batch_btn.setStyleSheet("background:#00703C;color:white;font-weight:bold;")
+        buttons.primary(self._batch_btn)
         self._batch_btn.setToolTip("Export all queued images to the dataset in one pass.")
         self._batch_btn.setEnabled(False)
         self._batch_btn.clicked.connect(self._on_batch_export)
@@ -243,7 +249,7 @@ class ExportPanel(QWidget):
         clear_btn.setToolTip("Remove all images from the queue without exporting.")
         clear_btn.clicked.connect(self._on_clear_queue)
         self._cancel_export_btn = QPushButton("Cancel Export")
-        self._cancel_export_btn.setStyleSheet("background:#c0392b;color:white;font-weight:bold;")
+        buttons.danger(self._cancel_export_btn)
         self._cancel_export_btn.setToolTip("Stop the running export at the next image/tile boundary.")
         self._cancel_export_btn.clicked.connect(self._on_cancel_export)
         self._cancel_export_btn.setVisible(False)
@@ -303,7 +309,7 @@ class ExportPanel(QWidget):
         train_layout.addLayout(fin_form)
 
         fin_btn = QPushButton("Finalize Dataset (Create Splits + Stats)")
-        fin_btn.setStyleSheet("background:#c0392b;color:white;font-weight:bold;")
+        buttons.danger(fin_btn)
         fin_btn.setToolTip(
             "Session-aware train/val/test split.\n"
             "All tiles from the same source image stay in the same split.\n"
@@ -330,7 +336,7 @@ class ExportPanel(QWidget):
         train_layout.addLayout(hub_form)
 
         hub_btn = QPushButton("Push Dataset to HuggingFace Hub")
-        hub_btn.setStyleSheet("background:#1a5fa8;color:white;font-weight:bold;")
+        buttons.secondary(hub_btn)
         hub_btn.setToolTip(
             "Upload the training dataset to HuggingFace Hub.\n"
             "Requires: pip install datasets huggingface_hub"

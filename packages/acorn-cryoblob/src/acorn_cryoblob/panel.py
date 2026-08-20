@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from acorn.gui import path_field
+
 from pathlib import Path
 
 from PyQt6.QtCore import Qt, pyqtSignal
@@ -215,6 +217,7 @@ class CryoBlobPanel(QWidget):
         row = QHBoxLayout(self._folder_widget)
         row.setContentsMargins(0, 0, 0, 0)
         self._folder_edit = QLineEdit()
+        path_field.attach(self._folder_edit)
         self._folder_edit.setPlaceholderText("Folder containing MRC, TIFF, PNG, or JPG files")
         browse = QPushButton("Browse")
         browse.clicked.connect(self._browse_folder)
@@ -438,6 +441,7 @@ class CryoBlobPanel(QWidget):
         box = QGroupBox("Output")
         row = QHBoxLayout(box)
         self._output_edit = QLineEdit()
+        path_field.attach(self._output_edit)
         self._output_edit.setPlaceholderText("Default: next to the image or inside the chosen folder")
         browse = QPushButton("Browse")
         browse.clicked.connect(self._browse_output)

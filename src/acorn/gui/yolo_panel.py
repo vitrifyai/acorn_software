@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from acorn.gui import buttons
+
 import os
 from pathlib import Path
 
@@ -133,7 +135,7 @@ class YOLOPanel(QWidget):
         model_layout.addRow("Model:", model_row)
 
         load_btn = QPushButton("Load Model")
-        load_btn.setStyleSheet("background:#1a5fa8;color:white;font-weight:bold;")
+        buttons.secondary(load_btn)
         load_btn.setToolTip(
             "Load a YOLO model.  Provide a local .pt path, or a model name "
             "(e.g. yolo11n.pt, yolo11n-seg.pt) to download automatically."
@@ -192,13 +194,13 @@ class YOLOPanel(QWidget):
         run_layout = QVBoxLayout(run_box)
 
         detect_btn = QPushButton("Run Detection")
-        detect_btn.setStyleSheet("background:#1a5fa8;color:white;font-weight:bold;")
+        buttons.secondary(detect_btn)
         detect_btn.setToolTip("Run YOLO detection — adds bounding boxes as annotations")
         detect_btn.clicked.connect(self.detect_requested)
         run_layout.addWidget(detect_btn)
 
         seg_btn = QPushButton("Detect + Segment (YOLO-seg)")
-        seg_btn.setStyleSheet("background:#1a5fa8;color:white;")
+        buttons.secondary(seg_btn)
         seg_btn.setToolTip(
             "Run YOLO segmentation (requires a YOLO-seg .pt model).\n"
             "Each detected object gets a precise polygon mask."
@@ -225,12 +227,12 @@ class YOLOPanel(QWidget):
 
         ar_row = QHBoxLayout()
         self._accept_btn = QPushButton("Accept All")
-        self._accept_btn.setStyleSheet("background:#00703C;color:white;font-weight:bold;")
+        buttons.primary(self._accept_btn)
         self._accept_btn.setToolTip("Keep all pending YOLO annotations as permanent ROIs")
         self._accept_btn.clicked.connect(self.accept_all_requested)
 
         self._reject_btn = QPushButton("Reject All")
-        self._reject_btn.setStyleSheet("background:#c0392b;color:white;")
+        buttons.danger(self._reject_btn)
         self._reject_btn.setToolTip("Remove all pending YOLO annotations")
         self._reject_btn.clicked.connect(self.reject_all_requested)
 

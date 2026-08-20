@@ -1,6 +1,8 @@
 """Analysis panel — surface area estimation and population statistics."""
 from __future__ import annotations
 
+from acorn.gui import path_field
+
 import json
 import os
 from pathlib import Path
@@ -102,6 +104,7 @@ class AnalysisPanel(QWidget):
 
         picker_row = QHBoxLayout()
         self._folder_edit = QLineEdit()
+        path_field.attach(self._folder_edit)
         self._folder_edit.setPlaceholderText("Select folder containing annotated images...")
         browse_btn = QPushButton("Browse")
         browse_btn.setFixedWidth(70)

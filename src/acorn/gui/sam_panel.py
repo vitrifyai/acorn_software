@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from acorn.gui import buttons
+
 import re
 
 import importlib.util
@@ -244,7 +246,7 @@ class SAMPanel(QWidget):
         model_layout.addRow("Checkpoint:", ckpt_row)
 
         load_btn = QPushButton("Load Model")
-        load_btn.setStyleSheet("background:#1a5fa8;color:white;font-weight:bold;")
+        buttons.secondary(load_btn)
         if _SAM3_AVAILABLE:
             load_btn.setToolTip(
                 "Load SAM 3.  If no checkpoint is set, downloads from "
@@ -288,25 +290,25 @@ class SAMPanel(QWidget):
 
         self._mode_pos_btn = QPushButton("+ Positive Point")
         self._mode_pos_btn.setCheckable(True)
-        self._mode_pos_btn.setStyleSheet("background:#00703C;color:white;")
+        buttons.primary(self._mode_pos_btn)
         self._mode_pos_btn.setToolTip("Click on canvas to add a positive (foreground) point")
         self._mode_pos_btn.clicked.connect(self._on_pos_clicked)
 
         self._mode_neg_btn = QPushButton("- Negative Point")
         self._mode_neg_btn.setCheckable(True)
-        self._mode_neg_btn.setStyleSheet("background:#c0392b;color:white;")
+        buttons.danger(self._mode_neg_btn)
         self._mode_neg_btn.setToolTip("Click on canvas to add a negative (background) point")
         self._mode_neg_btn.clicked.connect(self._on_neg_clicked)
 
         self._mode_box_btn = QPushButton("Box")
         self._mode_box_btn.setCheckable(True)
-        self._mode_box_btn.setStyleSheet("background:#00703C;color:white;")
+        buttons.primary(self._mode_box_btn)
         self._mode_box_btn.setToolTip("Click two corners to define a bounding box prompt")
         self._mode_box_btn.clicked.connect(self._on_box_clicked)
 
         self._mode_scribble_btn = QPushButton("+ Scribble")
         self._mode_scribble_btn.setCheckable(True)
-        self._mode_scribble_btn.setStyleSheet("background:#00703C;color:white;")
+        buttons.primary(self._mode_scribble_btn)
         self._mode_scribble_btn.setToolTip(
             "Draw a freehand stroke along a feature.\n"
             "Points sampled along the stroke become positive SAM prompts."
@@ -315,7 +317,7 @@ class SAMPanel(QWidget):
 
         self._mode_neg_scribble_btn = QPushButton("- Scribble")
         self._mode_neg_scribble_btn.setCheckable(True)
-        self._mode_neg_scribble_btn.setStyleSheet("background:#c0392b;color:white;")
+        buttons.danger(self._mode_neg_scribble_btn)
         self._mode_neg_scribble_btn.setToolTip(
             "Draw a freehand stroke over background areas.\n"
             "Points sampled along the stroke become negative SAM prompts\n"
@@ -325,7 +327,7 @@ class SAMPanel(QWidget):
 
         self._mode_neg_box_btn = QPushButton("- Box")
         self._mode_neg_box_btn.setCheckable(True)
-        self._mode_neg_box_btn.setStyleSheet("background:#c0392b;color:white;")
+        buttons.danger(self._mode_neg_box_btn)
         self._mode_neg_box_btn.setToolTip(
             "Drag a box over a background region.\n"
             "SAM will treat the centre of this box as a negative prompt\n"
@@ -426,7 +428,7 @@ class SAMPanel(QWidget):
         excl_row = QHBoxLayout()
         self._exclude_btn = QPushButton("Draw Exclude Zone")
         self._exclude_btn.setCheckable(True)
-        self._exclude_btn.setStyleSheet("background:#c0392b;color:white;")
+        buttons.danger(self._exclude_btn)
         self._exclude_btn.setToolTip("Drag on canvas to mark a region SAM will ignore")
         self._exclude_btn.clicked.connect(self._on_exclude_clicked)
         excl_clear_btn = QPushButton("Clear")
@@ -440,7 +442,7 @@ class SAMPanel(QWidget):
         crop_row = QHBoxLayout()
         self._crop_btn = QPushButton("Draw Crop Region")
         self._crop_btn.setCheckable(True)
-        self._crop_btn.setStyleSheet("background:#1a5fa8;color:white;")
+        buttons.secondary(self._crop_btn)
         self._crop_btn.setToolTip("Drag on canvas to restrict SAM to this sub-region")
         self._crop_btn.clicked.connect(self._on_crop_clicked)
         crop_clear_btn = QPushButton("Clear")
@@ -499,7 +501,7 @@ class SAMPanel(QWidget):
         auto_layout.addRow("Label:", self._label_combo)
 
         auto_btn = QPushButton("Run Auto-Segment")
-        auto_btn.setStyleSheet("background:#1a5fa8;color:white;font-weight:bold;")
+        buttons.secondary(auto_btn)
         auto_btn.setToolTip(
             "Run SAM automatic mask generation on the full image.\n"
             "All predicted masks are added as ROI annotations."
@@ -516,12 +518,12 @@ class SAMPanel(QWidget):
 
         ar_row = QHBoxLayout()
         self._accept_btn = QPushButton("Accept All")
-        self._accept_btn.setStyleSheet("background:#00703C;color:white;font-weight:bold;")
+        buttons.primary(self._accept_btn)
         self._accept_btn.setToolTip("Keep all predicted masks as permanent ROI annotations")
         self._accept_btn.clicked.connect(self.accept_all_requested)
 
         self._reject_btn = QPushButton("Reject All")
-        self._reject_btn.setStyleSheet("background:#c0392b;color:white;")
+        buttons.danger(self._reject_btn)
         self._reject_btn.setToolTip("Remove all pending SAM mask annotations")
         self._reject_btn.clicked.connect(self.reject_all_requested)
 
@@ -530,7 +532,7 @@ class SAMPanel(QWidget):
         layout.addLayout(ar_row)
 
         self._accept_queue_btn = QPushButton("Accept & Queue for Export")
-        self._accept_queue_btn.setStyleSheet("background:#00703C;color:white;font-weight:bold;")
+        buttons.primary(self._accept_queue_btn)
         self._accept_queue_btn.setToolTip(
             "Accept all SAM masks and immediately add this image to the export queue.\n"
             "Saves a tab switch — continue to the next image straight away."

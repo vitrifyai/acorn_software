@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from acorn.gui import buttons
+
 from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtWidgets import (
     QHBoxLayout, QLabel, QPushButton, QSizePolicy,
@@ -83,10 +85,10 @@ class SegmentationPanel(QWidget):
 
         ar_row = QHBoxLayout()
         accept_btn = QPushButton("Accept All")
-        accept_btn.setStyleSheet("background:#00703C;color:white;font-weight:bold;")
+        buttons.primary(accept_btn)
         accept_btn.clicked.connect(self._on_accept)
         reject_btn = QPushButton("Reject All")
-        reject_btn.setStyleSheet("background:#c0392b;color:white;")
+        buttons.danger(reject_btn)
         reject_btn.clicked.connect(self._on_reject)
         ar_row.addWidget(accept_btn)
         ar_row.addWidget(reject_btn)

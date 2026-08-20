@@ -1,5 +1,7 @@
 """AI Assistant panel — chat UI with streaming, tool status, and confirm dialogs."""
 from __future__ import annotations
+
+from acorn.gui import buttons
 from typing import Optional, TYPE_CHECKING
 
 from PyQt6.QtCore import Qt, QTimer, pyqtSlot
@@ -88,7 +90,7 @@ class AssistantPanel(QWidget):
         sf.addRow(self._url_label, self._url_edit)
 
         save_btn = QPushButton("Save settings")
-        save_btn.setStyleSheet("background:#00703C;color:white;font-weight:bold;")
+        buttons.primary(save_btn)
         save_btn.clicked.connect(self._save_settings)
         sf.addRow("", save_btn)
 
@@ -138,10 +140,10 @@ class AssistantPanel(QWidget):
 
         btn_row = QHBoxLayout()
         self._send_btn = QPushButton("Send")
-        self._send_btn.setStyleSheet("background:#00703C;color:white;font-weight:bold;")
+        buttons.primary(self._send_btn)
         self._send_btn.clicked.connect(self._send)
         self._stop_btn = QPushButton("Stop")
-        self._stop_btn.setStyleSheet("background:#c0392b;color:white;font-weight:bold;")
+        buttons.danger(self._stop_btn)
         self._stop_btn.setToolTip("Interrupt the assistant after the current step.")
         self._stop_btn.clicked.connect(self._stop)
         self._stop_btn.setEnabled(False)

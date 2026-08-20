@@ -8,6 +8,8 @@ contained enough to keep out of the window class.
 """
 from __future__ import annotations
 
+from acorn.gui import buttons
+
 import numpy as np
 
 from PyQt6.QtWidgets import (
@@ -186,7 +188,7 @@ class DoseSeriesDialog(QDialog):
         ctrl.addStretch()
 
         update_btn = QPushButton("Update")
-        update_btn.setStyleSheet("background:#00703C;color:white;font-weight:bold;")
+        buttons.primary(update_btn)
         update_btn.setFixedWidth(70)
         update_btn.clicked.connect(self._update_figure)
         ctrl.addWidget(update_btn)
@@ -369,7 +371,7 @@ class MovieControllerMixin:
 
         apply_btn = QPushButton("Apply")
         apply_btn.setFixedWidth(56)
-        apply_btn.setStyleSheet("background:#00703C;color:white;font-weight:bold;")
+        buttons.primary(apply_btn)
         apply_btn.clicked.connect(self._on_movie_apply_clicked)
         row.addWidget(apply_btn)
 

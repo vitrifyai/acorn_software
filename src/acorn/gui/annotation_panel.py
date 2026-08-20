@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from acorn.gui import buttons
+
 from PyQt6.QtCore import pyqtSignal, Qt
 from PyQt6.QtGui import QColor
 from PyQt6.QtWidgets import (
@@ -146,7 +148,7 @@ class AnnotationPanel(QWidget):
         sel_layout.addLayout(label_row)
 
         del_sel_btn = QPushButton("Delete Selected")
-        del_sel_btn.setStyleSheet("background:#c0392b;color:white;")
+        buttons.danger(del_sel_btn)
         del_sel_btn.clicked.connect(self.delete_selected_requested)
         sel_layout.addWidget(del_sel_btn)
 
@@ -155,15 +157,15 @@ class AnnotationPanel(QWidget):
         # ── actions ───────────────────────────────────────────────────────────
         btn_row = QHBoxLayout()
         undo_btn = QPushButton("Undo Last")
-        undo_btn.setStyleSheet("background:#c0392b;color:white;")
+        buttons.danger(undo_btn)
         clear_btn = QPushButton("Clear All")
-        clear_btn.setStyleSheet("background:#c0392b;color:white;")
+        buttons.danger(clear_btn)
         btn_row.addWidget(undo_btn)
         btn_row.addWidget(clear_btn)
         layout.addLayout(btn_row)
 
         clear_prof_btn = QPushButton("Clear Profiles")
-        clear_prof_btn.setStyleSheet("background:#1a5fa8;color:white;")
+        buttons.secondary(clear_prof_btn)
         clear_prof_btn.setToolTip("Remove all line profile overlays from the canvas")
         layout.addWidget(clear_prof_btn)
         layout.addStretch()

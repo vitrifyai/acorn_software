@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from acorn.gui import buttons
+
 import os
 # Must be set before any matplotlib import (canvas.py imports pyplot at module level)
 os.environ.setdefault("MPLBACKEND", "QtAgg")
@@ -238,7 +240,7 @@ class _PngMaskMapDialog(QDialog):
 
         btns = QHBoxLayout()
         ok_btn = QPushButton("Import")
-        ok_btn.setStyleSheet("background:#00703C;color:white;font-weight:bold;")
+        buttons.primary(ok_btn)
         ok_btn.clicked.connect(self.accept)
         cancel_btn = QPushButton("Cancel")
         cancel_btn.clicked.connect(self.reject)

@@ -3,6 +3,8 @@ cross-label association of detected features."""
 
 from __future__ import annotations
 
+from acorn.gui import buttons
+
 import csv
 import itertools
 from pathlib import Path
@@ -115,7 +117,7 @@ class SpatialPanel(QWidget):
         layout.addWidget(param_box)
 
         run_btn = QPushButton("Run Spatial Analysis")
-        run_btn.setStyleSheet("background:#1a5fa8;color:white;font-weight:bold;")
+        buttons.secondary(run_btn)
         run_btn.clicked.connect(self._run)
         layout.addWidget(run_btn)
 

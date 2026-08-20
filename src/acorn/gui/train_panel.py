@@ -17,6 +17,8 @@ load_unet_requested(str)  — emitted after training to auto-load into UNet tab.
 
 from __future__ import annotations
 
+from acorn.gui import path_field
+
 import json
 import os
 from pathlib import Path
@@ -172,6 +174,7 @@ class TrainPanel(QWidget):
 
         dir_row = QHBoxLayout()
         self._dir_edit = QLineEdit()
+        path_field.attach(self._dir_edit)
         self._dir_edit.setPlaceholderText("Path to exported dataset directory…")
         self._dir_edit.editingFinished.connect(self._on_dir_typed)
         browse_btn = QPushButton("Browse")

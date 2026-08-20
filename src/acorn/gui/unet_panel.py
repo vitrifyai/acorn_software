@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from acorn.gui import buttons
+
 from PyQt6.QtCore import pyqtSignal
 from PyQt6.QtWidgets import (
     QComboBox, QDoubleSpinBox, QFileDialog, QFormLayout,
@@ -102,7 +104,7 @@ class UNetPanel(QWidget):
         ckpt_layout.addRow("Checkpoint:", ckpt_row)
 
         load_btn = QPushButton("Load Model")
-        load_btn.setStyleSheet("background:#1a5fa8;color:white;font-weight:bold;")
+        buttons.secondary(load_btn)
         load_btn.setToolTip(
             "Load the model weights from the selected checkpoint.\n"
             "The architecture and encoder must match the checkpoint."
@@ -168,7 +170,7 @@ class UNetPanel(QWidget):
         infer_layout.addRow("Label:", self._label_combo)
 
         run_btn = QPushButton("Run Segmentation")
-        run_btn.setStyleSheet("background:#1a5fa8;color:white;font-weight:bold;")
+        buttons.secondary(run_btn)
         run_btn.setToolTip("Run UNet segmentation on the current image")
         run_btn.clicked.connect(self.segment_requested)
         infer_layout.addRow("", run_btn)
@@ -192,12 +194,12 @@ class UNetPanel(QWidget):
 
         ar_row = QHBoxLayout()
         self._accept_btn = QPushButton("Accept All")
-        self._accept_btn.setStyleSheet("background:#00703C;color:white;font-weight:bold;")
+        buttons.primary(self._accept_btn)
         self._accept_btn.setToolTip("Keep all pending UNet masks as permanent ROI annotations")
         self._accept_btn.clicked.connect(self.accept_all_requested)
 
         self._reject_btn = QPushButton("Reject All")
-        self._reject_btn.setStyleSheet("background:#c0392b;color:white;")
+        buttons.danger(self._reject_btn)
         self._reject_btn.setToolTip("Remove all pending UNet mask annotations")
         self._reject_btn.clicked.connect(self.reject_all_requested)
 
