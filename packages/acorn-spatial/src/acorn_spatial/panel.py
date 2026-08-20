@@ -44,12 +44,30 @@ class SpatialPanel(QWidget):
         self._scope.addItem("All images (per-image + compare conditions)", "all")
         scope_form.addRow("Analyze:", self._scope)
         from PyQt6.QtWidgets import QLineEdit
+
+        # This was a bare text box pre-filled with a regex, which reads as a fixed
+        # formula rather than a setting: most people will not recognise
+        # ^\d+_([A-Za-z0-9]+) as something they are allowed to change. The common
+        # cases are now named, and the pattern only appears when you ask for it.
+        self._group_mode = QComboBox()
+        self._group_mode.addItem("All images together", "")
+        self._group_mode.addItem("By condition in the filename", r"^\d+_([A-Za-z0-9]+)")
+        self._group_mode.addItem("By text before the first underscore", r"^([^_]+)")
+        self._group_mode.addItem("By folder name", "__folder__")
+        self._group_mode.addItem("Custom pattern…", "__custom__")
+        self._group_mode.setCurrentIndex(1)
+        self._group_mode.setToolTip(
+            "How to split the loaded images into groups for comparison.\n"
+            "'By condition' reads the strain token, e.g. 10A5 from 0001_10A5_009.png.")
+        scope_form.addRow("Compare groups:", self._group_mode)
+
         self._group_re = QLineEdit(r"^\d+_([A-Za-z0-9]+)")
         self._group_re.setToolTip(
-            "Regex applied to each filename; capture group 1 = the condition/group.\n"
-            "Default captures the strain token, e.g. '10A5' from '0001_10A5_009_….png'.\n"
-            "Leave blank to treat all images as one group.")
-        scope_form.addRow("Group by (regex):", self._group_re)
+            "Regex applied to each filename; capture group 1 is the group name.")
+        self._group_re_label = QLabel("Pattern:")
+        scope_form.addRow(self._group_re_label, self._group_re)
+        self._group_mode.currentIndexChanged.connect(self._on_group_mode_changed)
+        self._on_group_mode_changed()
         layout.addWidget(scope_box)
 
         # labels
@@ -160,6 +178,21 @@ class SpatialPanel(QWidget):
         self._refresh_labels()
 
     # ── label discovery ──────────────────────────────────────────────────────────
+
+    def _on_group_mode_changed(self) -> None:
+        """Show the raw pattern only when the user asks to write one."""
+        custom = self._group_mode.currentData() == "__custom__"
+        self._group_re.setVisible(custom)
+        self._group_re_label.setVisible(custom)
+
+    def _grouping_pattern(self) -> str:
+        """The regex the chosen grouping means, or '' for one single group."""
+        data = self._group_mode.currentData()
+        if data == "__custom__":
+            return self._group_re.text().strip()
+        if data == "__folder__":
+            return "__folder__"
+        return data or ""
 
     def _all_annotations(self):
         scope = self._scope.currentData()
@@ -373,12 +406,19 @@ class SpatialPanel(QWidget):
                 or "Spatial analysis produced no result.")
 
     def _condition_for(self, name: str) -> str:
-        pat = self._group_re.text().strip()
+        pat = self._grouping_pattern()
         if not pat:
             return "all"
+        if pat == "__folder__":
+            # Not a regex — the group is the directory the image came from.
+            parent = Path(name).parent.name
+            return parent or "all"
         import re
+        # Match the filename, not the whole path: every pattern here is anchored
+        # with ^, which never matches when a directory prefix is in the way.
+        stem = Path(name).name
         try:
-            m = re.search(pat, name)
+            m = re.search(pat, stem)
         except re.error:
             return "all"
         if not m:

@@ -818,6 +818,13 @@ class MainWindow(
                     "Plugin %s menu setup failed: %s", plugin.PLUGIN_ID, _plugin_exc
                 )
 
+        # Scrolling the panel must not change a combo box it passes over, and a
+        # nested list must not swallow the wheel halfway down.
+        from acorn.gui import wheel_guard
+        self._wheel_guard = wheel_guard.install(control)
+        for _pid, _dock in getattr(self, "_plugin_docks", {}).items():
+            wheel_guard.install(_dock, self._wheel_guard)
+
         # Apply the saved workspace now that tabs, docks and menus all exist.
         self._apply_workspace(self._active_workspace, persist=False)
         if self._workspace_prefs.show_all:
@@ -1080,17 +1087,25 @@ class MainWindow(
         tabs = getattr(self, "_control_tabs", None)
         if tabs is None:
             return 0
+        from PyQt6.QtWidgets import QScrollArea
+
         needed = 0
         for i in range(tabs.count()):
             page = tabs.widget(i)
             if page is None:
                 continue
-            # Ask the page, not the widget inside it. A scrollable tab can shrink
-            # below its content and show a scrollbar; reading through to the inner
-            # widget would report the Measure tab's results table as a hard 600px
-            # floor for a side panel.
-            needed = max(needed, page.minimumSizeHint().width())
-        return min(needed + 18, 520)     # a side panel that wide stops being a side panel
+            # What the content asks for, not what it can be squeezed to. Reading
+            # the minimum gave every scrollable tab the same tiny number, so the
+            # panel stayed at a hard-coded width and clipped on any machine whose
+            # fonts are larger than the one it was tuned on.
+            inner = page.widget() if isinstance(page, QScrollArea) else page
+            if inner is not None:
+                needed = max(needed, inner.sizeHint().width())
+        # Floor keeps narrow tabs from shrinking the panel; ceiling stops one wide
+        # outlier — the Measure tab's results table asks for ~600px — from setting
+        # the width for every workspace that happens to include it. Anything past
+        # the ceiling scrolls horizontally instead of being cut off.
+        return max(400, min(needed + 22, 480))
 
     def _set_panel_width(self, want: int) -> None:
         splitter = getattr(self, "_main_splitter", None)
@@ -1103,9 +1118,9 @@ class MainWindow(
         # much they need. Needing more wins — a panel narrower than its own controls
         # clips buttons and spinboxes, which reads as a broken window, not a tight one.
         panel = max(want, self._visible_panel_width_needed())
-        # Only on a genuinely small window do we take it back, and then no further
-        # than half, so the image never disappears entirely.
-        panel = min(panel, max(int(total * 0.5), 240))
+        # On a small window the panel gives way, and never takes more than 45% —
+        # the image is the thing being looked at and should keep the larger share.
+        panel = min(panel, max(int(total * 0.45), 240))
         splitter.setSizes([max(1, total - panel), panel])
 
     def show_all_panels(self, persist: bool = True) -> None:
@@ -1124,23 +1139,34 @@ class MainWindow(
 
     def _show_welcome_again(self) -> None:
         """View ▸ Welcome Screen — reopen the chooser on demand."""
-        dlg = WelcomeDialog(self)
-        if dlg.exec():
-            self._apply_workspace(dlg.chosen_workspace, persist=True)
+        self._run_welcome_dialog()
 
     def _maybe_show_welcome(self) -> None:
-        """First launch only: name the five workspaces instead of hiding them."""
-        if self._workspace_prefs.welcome_seen:
+        """Offer the workspace chooser at startup unless the user turned it off."""
+        if not self._workspace_prefs.show_welcome:
             return
+        self._run_welcome_dialog()
+
+    def _run_welcome_dialog(self) -> None:
+        """Show the chooser and act on every answer it gives back."""
         dlg = WelcomeDialog(self)
         accepted = dlg.exec()
-        # Shown once, whether or not a workspace was picked — closing it is an
-        # answer too, and View ▸ Welcome Screen brings it back on demand.
-        self._workspace_prefs.welcome_seen = True
+        self._workspace_prefs.show_welcome = dlg.show_at_startup
         if accepted:
             self._apply_workspace(dlg.chosen_workspace, persist=True)
-        else:
-            save_workspace_prefs(self._workspace_prefs)
+        if dlg.wants_assistant:
+            self._open_assistant()
+        save_workspace_prefs(self._workspace_prefs)
+
+    def _open_assistant(self) -> None:
+        """Raise CLU's dock, if the assistant plugin is installed."""
+        dock = getattr(self, "_plugin_docks", {}).get("acorn_llm")
+        if dock is None:
+            self._statusbar.showMessage(
+                "CLU is not installed in this environment", 5000)
+            return
+        dock.show()
+        dock.raise_()
 
     def _build_menus(self) -> None:
         mb = self.menuBar()

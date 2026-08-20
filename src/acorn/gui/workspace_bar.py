@@ -12,7 +12,7 @@ from typing import Optional
 from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtGui import QKeySequence, QShortcut
 from PyQt6.QtWidgets import (
-    QButtonGroup, QDialog, QDialogButtonBox, QFrame, QHBoxLayout,
+    QButtonGroup, QCheckBox, QDialog, QDialogButtonBox, QFrame, QHBoxLayout,
     QLabel, QPushButton, QSizePolicy, QVBoxLayout, QWidget,
 )
 
@@ -175,10 +175,8 @@ class WelcomeDialog(QDialog):
 
         lede = QLabel(
             "ACORN opens in one workspace at a time so you only see the tools for the "
-            "job in front of you. Switch any time from the bar at the top of the window — "
-            "your image and annotations stay loaded.\n\n"
-            "This screen only appears on first launch. You can reopen it from "
-            "View \u25b8 Welcome Screen."
+            "job in front of you. You can switch at any time from the bar at the top of "
+            "the window, and your image and annotations stay loaded."
         )
         lede.setObjectName("welcomeLede")
         lede.setWordWrap(True)
@@ -186,6 +184,18 @@ class WelcomeDialog(QDialog):
 
         for ws in WORKSPACES:
             outer.addWidget(self._make_card(ws))
+
+        self._want_clu = QCheckBox("Open CLU, the assistant, alongside my workspace")
+        self._want_clu.setToolTip(
+            "CLU can drive any part of ACORN from a chat panel: run a detector, "
+            "queue images, start training, generate a simulation. It needs a model "
+            "configured under Provider Settings."
+        )
+        outer.addWidget(self._want_clu)
+
+        self._show_at_startup = QCheckBox("Show this when ACORN starts")
+        self._show_at_startup.setChecked(True)
+        outer.addWidget(self._show_at_startup)
 
         buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
         buttons.rejected.connect(self.reject)
@@ -223,5 +233,15 @@ class WelcomeDialog(QDialog):
     @property
     def chosen_workspace(self) -> str:
         return self._chosen
+
+    @property
+    def show_at_startup(self) -> bool:
+        """Whether to show this screen again next launch."""
+        return self._show_at_startup.isChecked()
+
+    @property
+    def wants_assistant(self) -> bool:
+        """Whether to open the CLU dock alongside the chosen workspace."""
+        return self._want_clu.isChecked()
 
 

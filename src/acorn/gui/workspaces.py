@@ -129,7 +129,11 @@ def _config_path() -> Path:
 @dataclass
 class WorkspacePrefs:
     last_workspace: str = DEFAULT_WORKSPACE
-    welcome_seen:   bool = False
+    # The welcome screen shows on every launch until the user turns it off there.
+    # It used to hide itself after being seen once, which meant reopening ACORN
+    # silently dropped you into a workspace with no way back to the chooser
+    # except a menu you had to know about.
+    show_welcome:   bool = True
     show_all:       bool = False   # user pinned every panel open
     extra:          dict = field(default_factory=dict)
 
@@ -153,7 +157,7 @@ def save_prefs(prefs: WorkspacePrefs) -> None:
         tmp = path.with_suffix(".json.tmp")
         tmp.write_text(json.dumps({
             "last_workspace": prefs.last_workspace,
-            "welcome_seen":   prefs.welcome_seen,
+            "show_welcome":   prefs.show_welcome,
             "show_all":       prefs.show_all,
             "extra":          prefs.extra,
         }, indent=2))

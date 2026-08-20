@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import re
+
 import importlib.util
 from pathlib import Path
 
@@ -16,45 +18,118 @@ _SAM3_AVAILABLE = importlib.util.find_spec("sam3") is not None
 _USAM_AVAILABLE = importlib.util.find_spec("micro_sam") is not None
 
 
-def _find_local_checkpoints() -> list[tuple[str, str]]:
-    """Scan common locations for SAM checkpoints.
-
-    Returns list of (display_name, absolute_path) tuples.
+def _checkpoint_roots() -> list[Path]:
     """
+    Every place a SAM checkpoint might live, most specific first.
+
+    Environment first so a site can point ACORN at its own store, then the shared
+    locations a workstation uses for all users, then this user's caches. The
+    shared HuggingFace cache matters most: on a multi-user machine the models are
+    downloaded once into /opt and every user was previously blind to them.
+    """
+    import os
+
+    roots: list[Path] = []
+
+    def add(value) -> None:
+        if not value:
+            return
+        path = Path(value).expanduser()
+        if path.exists() and path not in roots:
+            roots.append(path)
+
+    for env in ("ACORN_MODELS_DIR", "ACORN_SAM_CHECKPOINTS", "MICROSAM_CACHEDIR",
+                "HUGGINGFACE_HUB_CACHE", "HF_HOME"):
+        add(os.environ.get(env))
+
+    for shared in ("/opt/models/huggingface/hub", "/opt/models/acorn/models",
+                   "/opt/acorn/models", "/opt/models"):
+        add(shared)
+
     home = Path.home()
+    for local in (home / ".cache" / "huggingface" / "hub",
+                  home / ".cache" / "micro_sam",
+                  home / ".cache" / "torch" / "hub" / "checkpoints"):
+        add(local)
+
+    # Source checkouts people keep in their home directory. Globbed rather than
+    # named, because the folder is 'sam2', 'sam2-main', 'sam2.1', … depending on
+    # whether it came from a clone or a zip.
+    for pattern in ("sam[0-9]*", "segment-anything*", "micro?sam*", "micro_sam*"):
+        for candidate in sorted(home.glob(pattern)):
+            if candidate.is_dir():
+                add(candidate)
+    return roots
+
+
+# Checkpoints are .pt for SAM 2/3 and micro-SAM, .pth for the original SAM, and
+# .safetensors for some Hub mirrors. Only .pt was matched before, so a perfectly
+# good sam_vit_h_*.pth sitting next to them stayed invisible.
+_CKPT_SUFFIXES = (".pt", ".pth", ".safetensors")
+
+# Filenames that are checkpoints for something else entirely.
+_CKPT_EXCLUDE = re.compile(r"(yolo|unet|atom|optimizer|scheduler|\bema\b)", re.I)
+
+
+def _describe_checkpoint(path: Path, root: Path) -> str:
+    """A label that says which model this is and where it came from."""
+    name = path.stem
+    lowered = name.lower()
+    if "sam3" in lowered or "sam-3" in lowered:
+        family = "SAM 3"
+    elif "sam2" in lowered or "sam-2" in lowered or "hiera" in lowered:
+        family = "SAM 2"
+    elif "vit_" in lowered or lowered.startswith("sam_"):
+        family = "SAM 1"
+    elif "vit_" in lowered or "micro" in lowered or "_em_" in lowered or "_lm_" in lowered:
+        family = "micro-SAM"
+    else:
+        family = "SAM"
+
+    text = str(path)
+    if text.startswith("/opt"):
+        where = "shared"
+    elif ".cache" in text:
+        where = "cached"
+    else:
+        where = "local"
+    return f"{family} — {name} ({where})"
+
+
+def _find_local_checkpoints() -> list[tuple[str, str]]:
+    """
+    Scan every known location for SAM checkpoints.
+
+    Returns a list of (display_name, absolute_path), de-duplicated by resolved
+    path and sorted so shared and cached copies of the same file collapse to one
+    entry rather than appearing twice.
+    """
     found: list[tuple[str, str]] = []
+    seen: set[str] = set()
 
-    # SAM3: HuggingFace cache
-    sam3_cache = home / ".cache" / "huggingface" / "hub" / "models--facebook--sam3"
-    if sam3_cache.exists():
-        for p in sorted(sam3_cache.glob("snapshots/*/sam3.pt")):
-            found.append(("SAM 3 (cached)", str(p)))
+    for root in _checkpoint_roots():
+        try:
+            candidates = sorted(
+                p for p in root.rglob("*")
+                if p.suffix.lower() in _CKPT_SUFFIXES and p.is_file()
+            )
+        except (OSError, PermissionError):
+            continue
+        for path in candidates:
+            if _CKPT_EXCLUDE.search(path.name):
+                continue
+            try:
+                key = str(path.resolve())
+            except OSError:
+                key = str(path)
+            if key in seen:
+                continue
+            seen.add(key)
+            found.append((_describe_checkpoint(path, root), str(path)))
 
-    # SAM2: local source checkout
-    for sam2_dir in [home / "sam2" / "checkpoints", home / "sam2_checkpoints"]:
-        if sam2_dir.exists():
-            for p in sorted(sam2_dir.glob("*.pt")):
-                found.append((f"SAM 2 — {p.stem}", str(p)))
-
-    # SAM2: HuggingFace cache
-    sam2_cache = home / ".cache" / "huggingface" / "hub"
-    if sam2_cache.exists():
-        for p in sorted(sam2_cache.glob("models--facebook--sam2*/snapshots/**/*.pt")):
-            found.append((f"SAM 2 — {p.stem} (cached)", str(p)))
-
-    # micro-SAM: local user checkpoint cache
-    usam_cache = home / ".cache" / "micro_sam"
-    if usam_cache.exists():
-        for p in sorted(usam_cache.glob("*/*.pt")):
-            found.append((f"micro-SAM — {p.parent.name} (cached)", str(p)))
-
-    # micro-SAM: shared system-wide models (all users)
-    usam_shared = Path("/opt/acorn/models/micro_sam")
-    if usam_shared.exists():
-        for p in sorted(usam_shared.glob("*/*.pt")):
-            if str(p) not in {f for _, f in found}:  # skip if already listed above
-                found.append((f"micro-SAM — {p.parent.name} (shared)", str(p)))
-
+    # SAM 3 first, then SAM 2, then the rest — the order people want to pick in.
+    order = {"SAM 3": 0, "SAM 2": 1, "micro-SAM": 2, "SAM 1": 3}
+    found.sort(key=lambda item: (order.get(item[0].split(" — ")[0], 9), item[0]))
     return found
 
 

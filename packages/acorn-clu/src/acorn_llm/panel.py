@@ -408,4 +408,45 @@ def _tool_label(name: str, params: dict) -> str:
         "start_training":     f"Start training — {p.get('summary','')}",
         "finalize_dataset":   f"Finalize dataset — {p.get('summary','')}",
     }
-    return m.get(name, f"{name}")
+    return m.get(name) or _humanise_tool(name, p)
+
+
+# Words that must keep their own capitalisation when a tool name is unpacked.
+_TOOL_WORDS = {
+    "sam": "SAM", "yolo": "YOLO", "unet": "UNet", "clu": "CLU",
+    "cryoblob": "CryoBLOB", "tem": "TEM", "fib": "FIB", "stem": "STEM",
+    "4dstem": "4D-STEM", "ctf": "CTF", "roi": "ROI", "csv": "CSV",
+    "nexus": "NEXUS", "star": "STAR", "hdf5": "HDF5", "png": "PNG",
+    "hub": "Hub", "id": "ID", "px": "px", "2d": "2D", "3d": "3D",
+}
+
+
+def _humanise_tool(name: str, params: dict) -> str:
+    """
+    Turn a tool id into something worth reading in the chat.
+
+    Only a handful of tools had hand-written labels; every other one fell through
+    to its raw identifier, so the transcript was full of run_cryoblob and
+    set_pixel_size. This unpacks the underscores and restores the capitalisation
+    of names that are not ordinary words.
+    """
+    words = [w for w in str(name).split("_") if w]
+    if not words:
+        return str(name)
+    out = []
+    for i, word in enumerate(words):
+        fixed = _TOOL_WORDS.get(word.lower())
+        if fixed is not None:
+            out.append(fixed)
+        elif i == 0:
+            out.append(word.capitalize())
+        else:
+            out.append(word.lower())
+    label = " ".join(out)
+
+    # A couple of details that make the line actually useful at a glance.
+    for key in ("label", "workspace", "mode", "preset", "name"):
+        value = params.get(key)
+        if value:
+            return f"{label}  {key}={value}"
+    return label

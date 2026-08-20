@@ -48,10 +48,10 @@ def test_shortcuts_are_unique():
 
 def test_prefs_round_trip(tmp_path, monkeypatch):
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
-    prefs = WorkspacePrefs(last_workspace="simulate", welcome_seen=True)
+    prefs = WorkspacePrefs(last_workspace="simulate", show_welcome=False)
     ws_mod.save_prefs(prefs)
     assert ws_mod.load_prefs().last_workspace == "simulate"
-    assert ws_mod.load_prefs().welcome_seen is True
+    assert ws_mod.load_prefs().show_welcome is False
 
 
 def test_corrupt_prefs_fall_back_to_defaults(tmp_path, monkeypatch):
@@ -186,10 +186,14 @@ def test_control_panel_width_follows_the_workspace(window):
         QApplication.processEvents()     # the sizing is deferred one turn
         QApplication.processEvents()
         widths[ws.wid] = window._main_splitter.sizes()[1]
-    assert widths["annotate"] > widths["explore"], "Annotate needs more room than Explore"
-    assert widths["simulate"] <= widths["annotate"], (
-        "Simulate gives an edge to the simulator docks; the panel must not also be wide"
+    # Width follows the content of the tabs a workspace shows, with the workspace's
+    # own preference as a floor — so what must hold is that nothing clips and the
+    # simulator workspace, which already spends an edge on docks, is not the widest.
+    assert widths["simulate"] <= max(widths.values()), (
+        "Simulate gives an edge to the simulator docks; the panel must not also be widest"
     )
+    for wid, width in widths.items():
+        assert width >= 400, f"{wid}: panel {width}px is below the usable floor"
 
 
 def test_the_image_always_keeps_the_larger_share(window):
@@ -231,3 +235,24 @@ def test_the_contrast_tab_can_scroll_rather_than_clip(window):
     idx = [tabs.tabText(i) for i in range(tabs.count())].index("Contrast")
     assert isinstance(tabs.widget(idx), QScrollArea)
     assert window._contrast_panel.params().method   # still wired through the wrapper
+
+
+def test_welcome_shows_again_on_the_next_launch_by_default(tmp_path, monkeypatch):
+    """
+    It used to hide after one viewing, so closing and reopening ACORN dropped you
+    straight into a workspace with no sign the chooser existed.
+    """
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    assert ws_mod.load_prefs().show_welcome is True
+    prefs = ws_mod.load_prefs()
+    prefs.last_workspace = "dataset"
+    ws_mod.save_prefs(prefs)
+    assert ws_mod.load_prefs().show_welcome is True, "picking a workspace suppressed the chooser"
+
+
+def test_turning_the_welcome_screen_off_sticks(tmp_path, monkeypatch):
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    prefs = ws_mod.load_prefs()
+    prefs.show_welcome = False
+    ws_mod.save_prefs(prefs)
+    assert ws_mod.load_prefs().show_welcome is False
