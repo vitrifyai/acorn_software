@@ -295,3 +295,28 @@ def test_dock_contents_scroll_rather_than_dictate_the_window_size(window):
         assert dock.minimumSizeHint().height() < 300, (
             f"{plugin_id} still demands {dock.minimumSizeHint().height()}px of height"
         )
+
+
+def test_dock_panels_are_reachable_past_the_scroll_wrapper(window):
+    """
+    Wrapping dock contents in a scroll area made dock.widget() return the wrapper,
+    which silently broke CLU's spatial_analysis: it looked for run_from_clu on the
+    wrapper, did not find it, and did nothing at all — no error, no output.
+    """
+    for plugin_id in window._plugin_docks:
+        panel = window._dock_panel(plugin_id)
+        assert panel is not None, f"{plugin_id}: no panel behind the scroll wrapper"
+        assert "ScrollArea" not in type(panel).__name__, (
+            f"{plugin_id}: _dock_panel returned the wrapper, not the panel"
+        )
+    assert window._dock_panel("no-such-plugin") is None
+
+
+def test_clu_can_still_reach_the_spatial_panel(window):
+    """The specific method the spatial_analysis action calls."""
+    panel = window._dock_panel("acorn_spatial")
+    if panel is None:
+        import pytest
+        pytest.skip("spatial plugin not installed")
+    assert hasattr(panel, "run_from_clu")
+    assert hasattr(panel, "clu_result_text")

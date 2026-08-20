@@ -1150,6 +1150,24 @@ class MainWindow(
         panel = min(panel, max(int(total * 0.45), 240))
         splitter.setSizes([max(1, total - panel), panel])
 
+    def _dock_panel(self, plugin_id: str):
+        """
+        The plugin's own panel for a dock, seeing past the scroll wrapper.
+
+        Dock contents are wrapped in a QScrollArea so a tall form cannot grow the
+        window, which means dock.widget() is the wrapper rather than the panel.
+        Anything reaching for a panel's methods has to come through here.
+        """
+        from PyQt6.QtWidgets import QScrollArea
+
+        dock = getattr(self, "_plugin_docks", {}).get(plugin_id)
+        if dock is None:
+            return None
+        widget = dock.widget()
+        if isinstance(widget, QScrollArea):
+            return widget.widget()
+        return widget
+
     @staticmethod
     def _scrollable(widget):
         """Wrap a panel so its height is a suggestion, not a demand on the window."""
@@ -3425,7 +3443,7 @@ class MainWindow(
             dock = getattr(self, "_plugin_docks", {}).get("acorn_spatial")
             if dock is not None:
                 dock.show(); dock.raise_()
-                panel = dock.widget()
+                panel = self._dock_panel("acorn_spatial")
                 if panel is not None and hasattr(panel, "run_from_clu"):
                     panel.run_from_clu(params.get("labels"))
                     self._report_clu("Spatial analysis complete (also shown in the "
