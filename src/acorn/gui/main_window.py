@@ -626,9 +626,11 @@ class MainWindow(
 
         # right control panel
         control = QTabWidget()
-        # 320 was below what any tab actually needs (Contrast ~395, Segment ~477),
-        # so the panel could be dragged narrow enough to cut off its own buttons.
-        control.setMinimumWidth(400)
+        # A floor low enough that a small window can still give the image the
+        # larger share. The width people actually get is a preference computed
+        # from the visible tabs (see _visible_panel_width_needed); this is only
+        # the point past which the panel refuses to shrink further and scrolls.
+        control.setMinimumWidth(280)
 
         self._contrast_panel = ContrastPanel()
         self._ann_panel      = AnnotationPanel()
@@ -930,18 +932,28 @@ class MainWindow(
             "bottom": Qt.DockWidgetArea.BottomDockWidgetArea,
         }
         self._plugin_docks = {}
+        self._dock_pref_width: dict[str, int] = {}
         for plugin, panel in getattr(self, "_floating_plugins", []):
             try:
                 title = plugin.FLOATING_TITLE or plugin.TAB_LABEL or plugin.PLUGIN_ID
                 d = QDockWidget(title, self)
-                d.setWidget(panel)
+                # Put every dock's contents behind a scroll area. A long form -
+                # the FIB simulator's is 1043px tall - otherwise makes the dock
+                # demand that height, which Qt satisfies by growing the whole
+                # window past the screen. Opening Analyze or Simulate would leave
+                # only the top of ACORN visible.
+                d.setWidget(self._scrollable(panel))
                 d.setFeatures(
                     QDockWidget.DockWidgetFeature.DockWidgetMovable
                     | QDockWidget.DockWidgetFeature.DockWidgetFloatable
                     | QDockWidget.DockWidgetFeature.DockWidgetClosable,
                 )
-                if plugin.FLOATING_MIN_WIDTH:
-                    d.setMinimumWidth(plugin.FLOATING_MIN_WIDTH)
+                # FLOATING_MIN_WIDTH is treated as the width a dock would LIKE, not
+                # one the window must grow to provide. As a hard minimum it pushed
+                # the window's own minimum width past 1100px in Analyze and
+                # Simulate; the content scrolls now, so it can be a preference.
+                self._dock_pref_width[plugin.PLUGIN_ID] = plugin.FLOATING_MIN_WIDTH or 340
+                d.setMinimumWidth(240)
                 area = _areas.get(plugin.FLOATING_AREA or "right",
                                   Qt.DockWidgetArea.RightDockWidgetArea)
                 self.addDockWidget(area, d)
@@ -1059,6 +1071,15 @@ class MainWindow(
             first.show()
             first.raise_()
 
+        if opened:
+            # Ask for the preferred width now that the docks are up; Qt honours it
+            # where there is room and ignores it where there is not, instead of
+            # growing the window to obey a minimum.
+            docks = [d for _pid, d in opened]
+            widths = [self._dock_pref_width.get(pid, 340) for pid, _d in opened]
+            QTimer.singleShot(0, lambda dk=docks, wd=widths: self.resizeDocks(
+                dk, wd, Qt.Orientation.Horizontal))
+
     def _apply_workspace_splitter(self, ws) -> None:
         """
         Give the control panel the width its workspace actually needs.
@@ -1075,6 +1096,10 @@ class MainWindow(
         # Docks are shown and hidden just before this runs, and Qt re-lays them
         # out on the next turn of the event loop. Measuring now would size the
         # panel against the *previous* workspace's dock widths.
+        # Fit the window to the display first: sizing the panel against a geometry
+        # that is about to shrink leaves it holding a width the window cannot
+        # afford, and the image ends up with the smaller half.
+        QTimer.singleShot(0, self._keep_window_on_screen)
         QTimer.singleShot(0, lambda w=ws.panel_width: self._set_panel_width(w))
 
     def _visible_panel_width_needed(self) -> int:
@@ -1120,8 +1145,47 @@ class MainWindow(
         panel = max(want, self._visible_panel_width_needed())
         # On a small window the panel gives way, and never takes more than 45% —
         # the image is the thing being looked at and should keep the larger share.
+        # This wins over the content-width floor: past this point the panel
+        # scrolls, which is better than squeezing the image into a strip.
         panel = min(panel, max(int(total * 0.45), 240))
         splitter.setSizes([max(1, total - panel), panel])
+
+    @staticmethod
+    def _scrollable(widget):
+        """Wrap a panel so its height is a suggestion, not a demand on the window."""
+        from PyQt6.QtWidgets import QScrollArea
+
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QScrollArea.Shape.NoFrame)
+        scroll.setWidget(widget)
+        # A dock can now be dragged to any size; the content scrolls inside it.
+        scroll.setMinimumWidth(0)
+        scroll.setMinimumHeight(0)
+        return scroll
+
+    def _keep_window_on_screen(self) -> None:
+        """
+        Shrink back onto the display if showing docks pushed us off it.
+
+        Qt grows a window to satisfy the minimum size of whatever is docked. The
+        scroll wrappers above stop that happening, and this catches anything that
+        still manages it - a plugin with a hard minimum, or a smaller screen than
+        the window was last saved at.
+        """
+        screen = self.screen() or QApplication.primaryScreen()
+        if screen is None:
+            return
+        avail = screen.availableGeometry()
+        width = min(self.width(), avail.width())
+        height = min(self.height(), avail.height())
+        if width != self.width() or height != self.height():
+            self.resize(width, height)
+        frame = self.frameGeometry()
+        if not avail.contains(frame):
+            frame.moveTo(max(avail.left(), min(frame.left(), avail.right() - frame.width())),
+                         max(avail.top(), min(frame.top(), avail.bottom() - frame.height())))
+            self.move(frame.topLeft())
 
     def show_all_panels(self, persist: bool = True) -> None:
         """Escape hatch: every tab and every dock at once, ignoring the workspace."""
