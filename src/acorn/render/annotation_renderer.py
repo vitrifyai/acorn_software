@@ -295,6 +295,25 @@ class AnnotationRenderer:
             return [(x, y, f"v{i}") for i, (x, y) in enumerate(ann.vertices)]
         return []
 
+    def set_visible(self, visible: bool) -> None:
+        """
+        Hide or show every annotation without discarding it.
+
+        Wanted constantly while annotating: you need to see what is actually under
+        the shapes before deciding whether a pick is right.
+        """
+        for artists in self._ann_to_artists.values():
+            for art in artists:
+                try:
+                    art.set_visible(visible)
+                except Exception:
+                    pass
+        for art in self._legend_artists + self._selection_artists:
+            try:
+                art.set_visible(visible)
+            except Exception:
+                pass
+
     def _count_labels(self, store) -> None:
         """Tally ROI labels so _roi knows whether its own text would be redundant."""
         counts: dict[str, int] = {}

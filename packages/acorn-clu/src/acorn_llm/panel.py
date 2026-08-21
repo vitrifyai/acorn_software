@@ -369,7 +369,7 @@ def _render_item(kind: str, text: str, cursor: str = "") -> str:
         return (
             f'<div style="background:{_BG_ASST};border-radius:6px;'
             f'padding:6px 8px;margin:4px 0;">'
-            f'<span style="color:#4d8ec4;font-weight:bold;">CLU</span><br>'
+            f'<span style="color:#4dbb78;font-weight:bold;">CLU</span><br>'
             f'{e.replace(chr(10), "<br>")}{cursor}'
             f'</div>'
         )

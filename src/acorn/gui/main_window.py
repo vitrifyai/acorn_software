@@ -33,6 +33,7 @@ def _atomic_write_text(path: Path, text: str) -> None:
 
 
 from PyQt6.QtCore import Qt, QTimer
+from PyQt6.QtGui import QColor
 from PyQt6.QtWidgets import (
     QApplication, QCheckBox, QComboBox, QDialog, QDialogButtonBox, QDockWidget, QFileDialog,
     QDoubleSpinBox, QFormLayout, QGroupBox, QLabel, QLineEdit, QListWidget, QListWidgetItem,
@@ -822,6 +823,10 @@ class MainWindow(
                     "Plugin %s menu setup failed: %s", plugin.PLUGIN_ID, _plugin_exc
                 )
 
+        # The actions people repeat hundreds of times a day get keys.
+        from acorn.gui import shortcuts as _shortcuts
+        self._shortcuts = _shortcuts.install(self)
+
         # Scrolling the panel must not change a combo box it passes over, and a
         # nested list must not swallow the wheel halfway down.
         from acorn.gui import wheel_guard
@@ -1152,6 +1157,55 @@ class MainWindow(
         panel = min(panel, max(int(total * 0.45), 240))
         splitter.setSizes([max(1, total - panel), panel])
 
+    # ── actions the keyboard shortcuts drive ──────────────────────────────────
+
+    def accept_pending(self) -> None:
+        """Accept whatever is pending, whichever model produced it."""
+        for count, handler in (
+            (len(getattr(self, "_pending_sam_masks", [])),  self._on_sam_accept),
+            (len(getattr(self, "_pending_yolo_anns", [])),  self._on_yolo_accept),
+            (len(getattr(self, "_pending_unet_masks", [])), self._on_unet_accept),
+        ):
+            if count:
+                handler()
+                return
+        self._statusbar.showMessage("Nothing pending to accept", 3000)
+
+    def reject_pending(self) -> None:
+        """Reject whatever is pending, whichever model produced it."""
+        for count, handler in (
+            (len(getattr(self, "_pending_sam_masks", [])),  self._on_sam_reject),
+            (len(getattr(self, "_pending_yolo_anns", [])),  self._on_yolo_reject),
+            (len(getattr(self, "_pending_unet_masks", [])), self._on_unet_reject),
+        ):
+            if count:
+                handler()
+                return
+        self._statusbar.showMessage("Nothing pending to reject", 3000)
+
+    def toggle_annotations(self) -> None:
+        """Hide the shapes so you can see the image under them, and back again."""
+        self._annotations_hidden = not getattr(self, "_annotations_hidden", False)
+        renderer = getattr(self._canvas_widget.canvas, "renderer", None)
+        if renderer is None or not hasattr(renderer, "set_visible"):
+            return
+        renderer.set_visible(not self._annotations_hidden)
+        self._canvas_widget.force_redraw()
+        self._statusbar.showMessage(
+            "Annotations hidden (Ctrl+H to show)" if self._annotations_hidden
+            else "Annotations shown", 2500)
+
+    def reset_view(self) -> None:
+        """Back to the whole image, undoing any zoom or pan."""
+        toolbar = getattr(self._canvas_widget, "_toolbar", None)
+        if toolbar is not None:
+            toolbar.home()
+
+    def show_shortcuts(self) -> None:
+        """Help ▸ Keyboard Shortcuts, and F1."""
+        from acorn.gui.shortcuts import ShortcutHelp
+        ShortcutHelp(self).exec()
+
     def _dock_panel(self, plugin_id: str):
         """
         The plugin's own panel for a dock, seeing past the scroll wrapper.
@@ -1323,6 +1377,10 @@ class MainWindow(
 
         # Help
         help_menu = mb.addMenu("Help")
+        keys_a = help_menu.addAction("Keyboard Shortcuts")
+        keys_a.setShortcut("F1")
+        keys_a.triggered.connect(lambda _c=False: self.show_shortcuts())
+        help_menu.addSeparator()
         about_a = help_menu.addAction("About ACORN")
         about_a.triggered.connect(self._show_about)
 
@@ -1436,6 +1494,7 @@ class MainWindow(
             return
         anns = list(self._canvas_widget.canvas.store)
         self._ann_states[idx] = anns
+        self._refresh_image_list_row(idx)
         try:
             ez = self._sam_exclude_zones.get(idx)
             cr = self._sam_crop_regions_saved.get(idx)
@@ -1999,11 +2058,58 @@ class MainWindow(
     # ── image list ────────────────────────────────────────────────────────────
 
     def _populate_image_list(self) -> None:
-        """Fill the image list dock with filenames."""
+        """Fill the image list dock with filenames and their annotation counts."""
         self._image_list.blockSignals(True)
         self._image_list.clear()
-        for p in self._image_paths:
-            self._image_list.addItem(QListWidgetItem(p.name))
+        for idx, p in enumerate(self._image_paths):
+            self._image_list.addItem(self._image_list_item(idx, p))
+        self._image_list.blockSignals(False)
+
+    def _annotation_count(self, idx: int) -> int:
+        """Annotations on image *idx*, from memory or its sidecar, without loading it."""
+        if idx == self._img_idx:
+            return len(self._canvas_widget.canvas.store)
+        cached = self._ann_states.get(idx)
+        if cached is not None:
+            return len(cached)
+        path = self._autosave_path(idx)
+        if path is None or not path.exists():
+            return 0
+        try:
+            import json
+            data = json.loads(path.read_text())
+            return len(data.get("annotations", []) if isinstance(data, dict) else data)
+        except Exception:
+            return 0
+
+    def _image_list_item(self, idx: int, path) -> QListWidgetItem:
+        """
+        One row: the filename, and how many annotations it already carries.
+
+        Working through a folder of two hundred micrographs, the thing you need
+        from this list is which ones you have already done. Without it every row
+        looks identical and the only way to find your place is to click through
+        them.
+        """
+        count = self._annotation_count(idx)
+        item = QListWidgetItem(f"{path.name}    {count}" if count else path.name)
+        if count:
+            item.setToolTip(f"{path.name}\n{count} annotation" + ("s" if count != 1 else ""))
+        else:
+            item.setToolTip(f"{path.name}\nnot annotated yet")
+            item.setForeground(QColor("#8a8a8a"))
+        return item
+
+    def _refresh_image_list_row(self, idx: int) -> None:
+        """Update one row's count after its annotations change."""
+        if not (0 <= idx < self._image_list.count()):
+            return
+        path = self._image_paths[idx]
+        self._image_list.blockSignals(True)
+        current = self._image_list.currentRow()
+        self._image_list.takeItem(idx)
+        self._image_list.insertItem(idx, self._image_list_item(idx, path))
+        self._image_list.setCurrentRow(current)
         self._image_list.blockSignals(False)
 
     def _sync_image_list(self, idx: int) -> None:
@@ -3982,7 +4088,7 @@ def launch(files: list[str] | None = None) -> None:
         import os as _os
         _icon_path = _os.path.join(_os.path.dirname(__file__), "acorn.png")
         if _os.path.exists(_icon_path):
-            from PyQt6.QtGui import QIcon
+            from PyQt6.QtGui import QColor, QIcon
             app.setWindowIcon(QIcon(_icon_path))
     finally:
         os.dup2(_saved_stderr, _stderr_fd)
