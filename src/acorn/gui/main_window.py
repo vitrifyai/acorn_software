@@ -823,6 +823,11 @@ class MainWindow(
                     "Plugin %s menu setup failed: %s", plugin.PLUGIN_ID, _plugin_exc
                 )
 
+        # Fold the control panels. Fully expanded, Annotate is 2181px and Export
+        # 1516px against a viewport of roughly 700px, and most of what you scroll
+        # past belongs to a tool you are not using at that moment.
+        self._install_collapsible_groups()
+
         # The actions people repeat hundreds of times a day get keys.
         from acorn.gui import shortcuts as _shortcuts
         self._shortcuts = _shortcuts.install(self)
@@ -1209,6 +1214,61 @@ class MainWindow(
         """Help ▸ Keyboard Shortcuts, and F1."""
         from acorn.gui.shortcuts import ShortcutHelp
         ShortcutHelp(self).exec()
+
+    # The one thing a panel is for never folds away.
+    _NEVER_FOLDED = {"Method", "Style", "Destination", "Run"}
+
+    # Folded on a fresh profile: real, but not what you reach for first.
+    # Folded on a fresh profile: real settings, but not what you reach for first.
+    # Chosen from the actual group titles in each panel rather than guessed.
+    _FOLDED_BY_DEFAULT = {
+        # Contrast
+        "Presets", "Post-processing",
+        # Annotate — the drawing tools stay, the rest folds
+        "Context", "Selected Annotation", "Blob Detection", "Workflow",
+        "Source", "Mode Details", "Image Prep",
+        # Segment — model plumbing folds, the run controls stay
+        # Prompting and automatic segmentation are alternatives, not a sequence
+        "Architecture", "Checkpoint", "Region Controls", "Automatic Segmentation",
+        # Measure — the specialist analyses fold
+        "Annotation Labels", "Detector Geometry", "Shape-from-Shading",
+        "U-Net Residual Correction (optional)", "Labels / Annotation Types",
+        "Input Source", "Output Folder", "Labels to Analyze",
+        # Dataset — saving one image and building a training set are different
+        # jobs that happen to share a tab
+        "Dataset Stats", "Hardware", "AI Training Export",
+    }
+
+    def _install_collapsible_groups(self) -> None:
+        """Make every group box in the control panels and docks foldable."""
+        from acorn.gui import collapsible
+
+        remembered = self._workspace_prefs.extra.get("folded_groups")
+        folded = set(remembered) if remembered is not None else set(self._FOLDED_BY_DEFAULT)
+        self._folded_groups = folded
+
+        def remember(title: str, is_folded: bool) -> None:
+            if is_folded:
+                self._folded_groups.add(title)
+            else:
+                self._folded_groups.discard(title)
+            self._workspace_prefs.extra["folded_groups"] = sorted(self._folded_groups)
+            save_workspace_prefs(self._workspace_prefs)
+
+        targets = [w for _label, w in self._all_tabs]
+        targets += [d.widget() for d in getattr(self, "_plugin_docks", {}).values()]
+        for target in targets:
+            if target is None:
+                continue
+            try:
+                collapsible.apply_to_panel(
+                    target, folded_titles=folded, on_toggle=remember,
+                    skip=self._NEVER_FOLDED,
+                )
+            except Exception:
+                import logging
+                logging.getLogger(__name__).warning(
+                    "could not make a panel collapsible", exc_info=True)
 
     def _dock_panel(self, plugin_id: str):
         """
