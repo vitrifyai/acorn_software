@@ -26,16 +26,40 @@ from acorn.render.scalebar import nice_scalebar_nm
 _DISPLAY_MAX_DIM = 1024
 
 
-def _make_display_array(norm: np.ndarray) -> np.ndarray:
-    """Stride-downsample *norm* so neither dimension exceeds _DISPLAY_MAX_DIM.
+def _make_display_array(norm: np.ndarray, view: tuple | None = None):
+    """
+    Stride-downsample *norm* so neither dimension exceeds _DISPLAY_MAX_DIM.
 
-    The result is float32 (halves bandwidth vs float64).  set_extent() keeps
-    the data-coordinate axes in full-image pixels, so annotations are unaffected.
+    The result is float32 (halves bandwidth vs float64). set_extent() keeps the
+    data-coordinate axes in full-image pixels, so annotations are unaffected.
+
+    *view*, when given, is the visible (x0, x1, y0, y1) in full-image pixels: only
+    that part is decimated, so the step is chosen for what is on screen rather
+    than for the whole frame. Zoomed into a 4092x5760 micrograph this is the
+    difference between seeing every sixth pixel and seeing every one — without it
+    the view was decimated once on load and merely magnified thereafter, so
+    native detail was unreachable however far you zoomed.
+
+    Returns (array, extent) where extent is the data-coordinate box the array
+    covers, for set_extent.
     """
     h, w = norm.shape[:2]
-    step = max(1, (max(h, w) + _DISPLAY_MAX_DIM - 1) // _DISPLAY_MAX_DIM)
-    out = norm[::step, ::step]
-    return out.astype(np.float32, copy=False)
+    x0, x1, y0, y1 = 0, w, 0, h
+    if view is not None:
+        vx0, vx1, vy0, vy1 = view
+        x0 = max(0, int(np.floor(min(vx0, vx1))))
+        x1 = min(w, int(np.ceil(max(vx0, vx1))) + 1)
+        y0 = max(0, int(np.floor(min(vy0, vy1))))
+        y1 = min(h, int(np.ceil(max(vy0, vy1))) + 1)
+        if x1 - x0 < 2 or y1 - y0 < 2:      # degenerate view, fall back to the whole image
+            x0, x1, y0, y1 = 0, w, 0, h
+
+    sub = norm[y0:y1, x0:x1]
+    sh, sw = sub.shape[:2]
+    step = max(1, (max(sh, sw) + _DISPLAY_MAX_DIM - 1) // _DISPLAY_MAX_DIM)
+    out = sub[::step, ::step].astype(np.float32, copy=False)
+    # Half-pixel edges so the array lines up with full-image coordinates.
+    return out, (x0 - 0.5, x1 - 0.5, y1 - 0.5, y0 - 0.5)
 
 if TYPE_CHECKING:
     from acorn.core.dm4_loader import DM4Image
@@ -83,6 +107,12 @@ class CryoCanvas:
         self.fig.canvas.mpl_connect(
             "resize_event", lambda _e: setattr(self, "_bg_cache", None)
         )
+        # Re-decimate when the view changes so zooming reveals real detail
+        # rather than magnifying the version made when the image loaded.
+        self._source_for_display = None
+        self._redisplaying = False
+        self.ax.callbacks.connect("xlim_changed", self._on_view_changed)
+        self.ax.callbacks.connect("ylim_changed", self._on_view_changed)
 
         self._show_splash()
 
@@ -122,6 +152,48 @@ class CryoCanvas:
             params = ContrastParams()
         self.update_contrast(params, precomputed_norm=precomputed_norm)
 
+    def _current_view(self) -> tuple | None:
+        """Visible (x0, x1, y0, y1) in image pixels, or None when fully zoomed out."""
+        if self._source_for_display is None:
+            return None
+        h, w = self._source_for_display.shape[:2]
+        try:
+            x0, x1 = self.ax.get_xlim()
+            y1, y0 = self.ax.get_ylim()          # inverted y axis
+        except Exception:
+            return None
+        # Only worth re-rendering once the view is a real subset of the frame.
+        if (x1 - x0) >= w * 0.98 and (y1 - y0) >= h * 0.98:
+            return None
+        return (x0, x1, y0, y1)
+
+    def _set_display(self, source) -> None:
+        """Push *source* to the image artist at the detail the current view needs."""
+        self._source_for_display = source
+        arr, extent = _make_display_array(source, self._current_view())
+        self._img_artist.set_data(arr)
+        self._img_artist.set_extent(extent)
+
+    def _on_view_changed(self, _ax=None) -> None:
+        """
+        Re-decimate for the new view after a zoom or pan.
+
+        Guarded against recursion: set_extent inside _set_display changes the
+        limits, which would call straight back into here.
+        """
+        if getattr(self, "_redisplaying", False):
+            return
+        if getattr(self, "_source_for_display", None) is None:
+            return
+        self._redisplaying = True
+        try:
+            arr, extent = _make_display_array(self._source_for_display, self._current_view())
+            self._img_artist.set_data(arr)
+            self._img_artist.set_extent(extent)
+            self._bg_cache = None
+        finally:
+            self._redisplaying = False
+
     def update_contrast(self, params: ContrastParams, precomputed_norm=None) -> None:
         """Re-apply contrast and colormap, then redraw annotations.
 
@@ -136,7 +208,7 @@ class CryoCanvas:
             # Color (H, W, 3) image — display as-is; derive grayscale luminance for _norm
             rgb = np.clip(self._dm4.raw, 0.0, 1.0)
             self._norm = (rgb[..., 0] * 0.2126 + rgb[..., 1] * 0.7152 + rgb[..., 2] * 0.0722)
-            self._img_artist.set_data(_make_display_array(rgb))
+            self._set_display(rgb)
         else:
             if precomputed_norm is not None:
                 self._norm = precomputed_norm
@@ -157,7 +229,7 @@ class CryoCanvas:
                         fbp_lp_px=params.fbp_lp_px * step,
                     )
                 self._norm = apply_contrast(self._dm4.raw, params)
-            self._img_artist.set_data(_make_display_array(self._norm))
+            self._set_display(self._norm)
             self._img_artist.set_clim(0, 1)
             self._img_artist.set_cmap(params.colormap)
         self._bg_cache = None          # image changed — invalidate blit cache

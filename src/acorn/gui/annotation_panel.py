@@ -41,6 +41,8 @@ class AnnotationPanel(QWidget):
     clear_profiles_requested  = pyqtSignal()
     delete_selected_requested = pyqtSignal()
     relabel_requested         = pyqtSignal(str)   # new label for selected annotation
+    crop_region_mode_set      = pyqtSignal()      # drag on the canvas to set a work region
+    crop_region_cleared       = pyqtSignal()      # work on the whole image again
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -125,6 +127,37 @@ class AnnotationPanel(QWidget):
         self._hint.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._hint.setStyleSheet("color: #888888; font-size: 11px;")
         layout.addWidget(self._hint)
+
+        # ── work region ───────────────────────────────────────────────────────
+        # A crop belongs here rather than only in the SAM panel: on a 24-megapixel
+        # micrograph every tool is working on a reduced view, and choosing a region
+        # is the one thing that restores full detail. It restricts the detectors and
+        # focuses the display on the same rectangle.
+        self._crop_box = QGroupBox("Work region")
+        crop_layout = QVBoxLayout(self._crop_box)
+        crop_layout.setSpacing(4)
+
+        crop_row = QHBoxLayout()
+        self._crop_btn = QPushButton("Draw Region")
+        self._crop_btn.setCheckable(True)
+        buttons.secondary(self._crop_btn)
+        self._crop_btn.setToolTip(
+            "Drag a rectangle on the image. Detectors then run on that region at "
+            "full resolution instead of on a reduced view of the whole frame."
+        )
+        self._crop_btn.clicked.connect(self._on_crop_clicked)
+        crop_clear_btn = QPushButton("Whole image")
+        crop_clear_btn.setToolTip("Clear the region and work on the entire image again")
+        crop_clear_btn.clicked.connect(self.crop_region_cleared)
+        crop_row.addWidget(self._crop_btn, 1)
+        crop_row.addWidget(crop_clear_btn)
+        crop_layout.addLayout(crop_row)
+
+        self._crop_status = QLabel("Whole image")
+        self._crop_status.setStyleSheet("font-size: 11px; color: #8a8a8a;")
+        self._crop_status.setWordWrap(True)
+        crop_layout.addWidget(self._crop_status)
+        layout.addWidget(self._crop_box)
 
         # ── selected annotation ───────────────────────────────────────────────
         self._selected_box = QGroupBox("Selected Annotation")
@@ -251,6 +284,23 @@ class AnnotationPanel(QWidget):
 
     def set_scalebar_nm(self, nm: float) -> None:
         self._sb_nm.setValue(nm)
+
+    def _on_crop_clicked(self) -> None:
+        if self._crop_btn.isChecked():
+            self.crop_region_mode_set.emit()
+        else:
+            self.crop_region_cleared.emit()
+
+    def set_crop_region(self, region) -> None:
+        """Show the active work region, or that there is none."""
+        if region is None:
+            self._crop_btn.setChecked(False)
+            self._crop_status.setText("Whole image")
+            return
+        x0, y0, x1, y1 = region
+        w, h = int(abs(x1 - x0)), int(abs(y1 - y0))
+        self._crop_btn.setChecked(False)
+        self._crop_status.setText(f"Region {w} × {h} px — detectors see it at full detail")
 
     def set_hint(self, text: str) -> None:
         self._hint.setText(text)

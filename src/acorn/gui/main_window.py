@@ -897,6 +897,10 @@ class MainWindow(
         self._sam_panel.exclude_zone_cleared.connect(self._on_sam_exclude_clear)
         self._sam_panel.crop_region_mode_set.connect(self._on_sam_crop_mode)
         self._sam_panel.crop_region_cleared.connect(self._on_sam_crop_clear)
+        # The Annotate tab drives the same region, so the two panels cannot disagree
+        # about what part of the image is being worked on.
+        self._ann_panel.crop_region_mode_set.connect(self._on_sam_crop_mode)
+        self._ann_panel.crop_region_cleared.connect(self._on_sam_crop_clear)
 
         # YOLO panel signals
         self._yolo_panel.load_model_requested.connect(self._on_yolo_load_model)

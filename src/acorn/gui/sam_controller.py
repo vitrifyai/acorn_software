@@ -321,6 +321,7 @@ class SAMControllerMixin:
             self._sam_crop_regions_saved.pop(self._img_idx, None)
             self._autosave_timer.start()
         self._sam_panel.reset_region_btns()
+        self._ann_panel.set_crop_region(None)
         if self._sam_mode == "crop_region":
             self._sam_mode = None
         self._statusbar.showMessage("SAM crop region cleared — SAM will use the full image.")
@@ -877,6 +878,7 @@ class SAMControllerMixin:
         if self._sam_mode == "crop_region":
             self._sam_crop_region = (min(x0, x1), min(y0, y1), max(x0, x1), max(y0, y1))
             self._canvas_widget.set_crop_region(*self._sam_crop_region)
+            self._ann_panel.set_crop_region(self._sam_crop_region)
             if self._img_idx >= 0:
                 self._sam_crop_regions_saved[self._img_idx] = self._sam_crop_region
                 self._autosave_timer.start()
