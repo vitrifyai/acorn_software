@@ -161,11 +161,23 @@ def _panel_height(win, app, tab_name):
 @pytest.mark.parametrize("tab,was", [
     ("Annotate", 2181), ("Export", 1516), ("Measure", 923), ("Contrast", 615),
 ])
-def test_the_crowded_panels_now_fit_a_screen(window, tab, was):
+def test_every_crowded_panel_can_be_made_to_fit(window, tab, was):
+    """
+    Folding is now opt-in rather than aggressive: the default leaves controls
+    visible, and folding is what makes a panel fit. An earlier version folded
+    twenty-four groups so that every panel fitted out of the box, and the result
+    was panels that looked empty.
+    """
     win, app = window
+    win.set_all_sections_folded(True)
+    for _ in range(6):
+        app.processEvents()
     height = _panel_height(win, app, tab)
-    assert height < was, f"{tab} did not get shorter"
-    assert height < 900, f"{tab} is still {height}px — more than a screen"
+    assert height < was, f"{tab} did not get shorter when collapsed"
+    assert height < 900, f"{tab} is still {height}px collapsed"
+    win.set_all_sections_folded(False)
+    for _ in range(6):
+        app.processEvents()
 
 
 def test_every_group_can_be_folded(window):
@@ -215,8 +227,80 @@ def test_which_groups_are_folded_is_remembered(window):
     page = dict(win._all_tabs)["Contrast"]
     g = next(x for x in page.findChildren(_G)
              if C._title_without_arrow(x.title()) == "Presets")
-    # Presets folds by default, so start from open or the toggle is a no-op
+    # Presets folds by default, so start from open or the toggle is a no-op.
+    # State is keyed by panel as well as title, since titles repeat across panels.
+    key = "Contrast::Presets"
     g.setChecked(True)             # unfold
-    assert "Presets" not in win._workspace_prefs.extra.get("folded_groups", [])
+    assert key not in win._workspace_prefs.extra.get("folded_groups", [])
     g.setChecked(False)            # fold it
-    assert "Presets" in win._workspace_prefs.extra.get("folded_groups", [])
+    assert key in win._workspace_prefs.extra.get("folded_groups", [])
+
+
+# ── the state a user actually got stuck in ────────────────────────────────────
+
+def test_there_is_a_way_back_from_everything_being_folded(window):
+    """
+    A real report: spatial analysis, tracking and the 3D viewer had "gone". They
+    had not — every group inside them was folded, so each panel was a short
+    column of headings against an empty space, which reads as a tool that failed
+    to load. There was no way to undo it except clicking each one.
+    """
+    win, app = window
+    from PyQt6.QtWidgets import QGroupBox as _G
+
+    win.set_all_sections_folded(True)
+    for _ in range(6):
+        app.processEvents()
+    panel = win._dock_panel("acorn_spatial")
+    if panel is None:
+        pytest.skip("spatial plugin not installed")
+    groups = [g for g in panel.findChildren(_G) if g.isCheckable()]
+    assert groups and all(not g.isChecked() for g in groups)
+
+    win.set_all_sections_folded(False)
+    for _ in range(6):
+        app.processEvents()
+    assert all(g.isChecked() for g in groups), "Expand All did not reopen the sections"
+
+
+def test_the_default_leaves_every_panel_with_something_open(window):
+    """
+    An earlier version folded twenty-four groups by default, so opening a panel
+    showed collapsed headings and empty space.
+    """
+    win, app = window
+    from PyQt6.QtWidgets import QGroupBox as _G
+    assert len(win._FOLDED_BY_DEFAULT) <= 8, "too much is folded out of the box"
+
+    for label, page in win._all_tabs:
+        groups = [g for g in page.findChildren(_G) if g.isCheckable()]
+        if len(groups) < 2:
+            continue
+        assert any(g.isChecked() for g in groups), f"{label} opens fully collapsed"
+
+
+def test_folding_one_panel_does_not_fold_a_namesake_elsewhere(window):
+    """
+    Titles repeat — Model, Parameters, Output and Source all appear in more than
+    one panel — so keying the remembered state on the title alone folded every
+    namesake at the next launch.
+    """
+    win, _app = window
+    from acorn.gui import collapsible as _C
+    from PyQt6.QtWidgets import QGroupBox as _G
+
+    seen: dict[str, int] = {}
+    for _label, page in win._all_tabs:
+        for g in page.findChildren(_G):
+            t = _C._title_without_arrow(g.title())
+            if t:
+                seen[t] = seen.get(t, 0) + 1
+    repeated = {t for t, n in seen.items() if n > 1}
+    if not repeated:
+        pytest.skip("no repeated titles in this build")
+    # the remembered keys must distinguish them
+    win._folded_groups = set()
+    win.set_all_sections_folded(True)
+    keys = win._workspace_prefs.extra.get("folded_groups", [])
+    assert any("::" in k for k in keys), (
+        f"state is keyed by bare title; {sorted(repeated)[:3]} would collide")

@@ -1243,25 +1243,17 @@ class MainWindow(
     # move. Folding is one click to undo and the state is remembered.
     _NEVER_FOLDED: set[str] = set()
 
-    # Folded on a fresh profile: real, but not what you reach for first.
-    # Folded on a fresh profile: real settings, but not what you reach for first.
-    # Chosen from the actual group titles in each panel rather than guessed.
+    # Folded on a fresh profile. Deliberately short: an earlier version folded
+    # twenty-four groups, which meant opening a panel showed a stack of collapsed
+    # headings and an empty space, and looked like the tool had failed to load.
+    # Only sections that are genuinely a second thought start closed, and never
+    # so many that a panel has nothing open in it.
     _FOLDED_BY_DEFAULT = {
-        # Contrast
-        "Presets", "Post-processing",
-        # Annotate — the drawing tools stay, the rest folds
-        "Context", "Selected Annotation", "Blob Detection", "Workflow",
-        "Source", "Mode Details", "Image Prep",
-        # Segment — model plumbing folds, the run controls stay
-        # Prompting and automatic segmentation are alternatives, not a sequence
-        "Architecture", "Checkpoint", "Region Controls", "Automatic Segmentation",
-        # Measure — the specialist analyses fold
-        "Annotation Labels", "Detector Geometry", "Shape-from-Shading",
-        "U-Net Residual Correction (optional)", "Labels / Annotation Types",
-        "Input Source", "Output Folder", "Labels to Analyze",
-        # Dataset — saving one image and building a training set are different
-        # jobs that happen to share a tab
-        "Dataset Stats", "Hardware", "AI Training Export",
+        "Presets",                              # Contrast — most people never save one
+        "Dataset Stats",                        # Export — a report, not a control
+        "U-Net Residual Correction (optional)", # Measure — says optional in its name
+        "Shape-from-Shading",                   # Measure — a specialist analysis
+        "AI Training Export",                   # Export — a different job to saving an image
     }
 
     def _install_collapsible_groups(self) -> None:
@@ -1280,15 +1272,16 @@ class MainWindow(
             self._workspace_prefs.extra["folded_groups"] = sorted(self._folded_groups)
             save_workspace_prefs(self._workspace_prefs)
 
-        targets = [w for _label, w in self._all_tabs]
-        targets += [d.widget() for d in getattr(self, "_plugin_docks", {}).values()]
-        for target in targets:
+        targets = [(label, w) for label, w in self._all_tabs]
+        targets += [(pid, d.widget())
+                    for pid, d in getattr(self, "_plugin_docks", {}).items()]
+        for key, target in targets:
             if target is None:
                 continue
             try:
                 collapsible.apply_to_panel(
                     target, folded_titles=folded, on_toggle=remember,
-                    skip=self._NEVER_FOLDED,
+                    skip=self._NEVER_FOLDED, panel_key=key,
                 )
             except Exception:
                 import logging
@@ -1317,6 +1310,31 @@ class MainWindow(
         self._save_popout_state()
         self._statusbar.showMessage(
             f"{title} is now its own window — close it to put the tab back", 6000)
+
+    def set_all_sections_folded(self, folded: bool) -> None:
+        """
+        Fold or unfold every section in every panel.
+
+        The way out of a panel that has been collapsed into a column of headings.
+        Without it the only route back is clicking each one, and a dock whose
+        every group is shut looks like a tool that failed to load rather than one
+        that is merely tidy.
+        """
+        from PyQt6.QtWidgets import QGroupBox
+
+        targets = [w for _label, w in self._all_tabs]
+        targets += [d.widget() for d in getattr(self, "_plugin_docks", {}).values()]
+        targets += [p.widget() for p in getattr(self, "_popped_out", {}).values()]
+        touched = 0
+        for target in targets:
+            if target is None:
+                continue
+            for group in target.findChildren(QGroupBox):
+                if group.isCheckable():
+                    group.setChecked(not folded)
+                    touched += 1
+        self._statusbar.showMessage(
+            f"{'Collapsed' if folded else 'Expanded'} {touched} sections", 4000)
 
     def _forget_popout(self, title: str) -> None:
         """A popped-out window closed — stop reopening it next launch."""
@@ -1543,6 +1561,16 @@ class MainWindow(
             if _ws.shortcut:
                 _a.setShortcut(_ws.shortcut)
             _a.triggered.connect(lambda _c=False, w=_ws.wid: self.set_workspace(w))
+        view_menu.addSeparator()
+
+        expand_a = view_menu.addAction("Expand All Sections")
+        expand_a.setShortcut("Ctrl+Shift+X")
+        expand_a.setStatusTip("Open every collapsed section in every panel")
+        expand_a.triggered.connect(lambda _c=False: self.set_all_sections_folded(False))
+
+        collapse_a = view_menu.addAction("Collapse All Sections")
+        collapse_a.setStatusTip("Close every section, leaving just the headings")
+        collapse_a.triggered.connect(lambda _c=False: self.set_all_sections_folded(True))
         view_menu.addSeparator()
 
         pop_a = view_menu.addAction("Pop Out Current Tab")

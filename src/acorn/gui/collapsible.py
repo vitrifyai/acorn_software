@@ -123,6 +123,7 @@ def apply_to_panel(
     folded_titles: "set[str] | None" = None,
     on_toggle=None,
     skip: "set[str] | None" = None,
+    panel_key: str = "",
 ) -> list[QGroupBox]:
     """
     Make every group box in *panel* foldable.
@@ -135,6 +136,11 @@ def apply_to_panel(
     tab wraps its own groups in one of its own, and the Measure tab is ten of
     twelve groups deep — excluding them left the most crowded panel in the
     application with nothing to fold.
+
+    `panel_key` scopes the remembered state. Titles repeat across panels —
+    "Model", "Parameters", "Output", "Source" all appear more than once — so
+    keying on the title alone meant folding one folded every namesake in the
+    application at the next launch.
     """
     folded_titles = folded_titles or set()
     skip = skip or set()
@@ -144,6 +150,11 @@ def apply_to_panel(
         title = _title_without_arrow(group.title())
         if not title or title in skip:
             continue
-        make_collapsible(group, folded=title in folded_titles, on_toggle=on_toggle)
+        key = f"{panel_key}::{title}" if panel_key else title
+        make_collapsible(
+            group,
+            folded=key in folded_titles or title in folded_titles,
+            on_toggle=(lambda _t, f, k=key: on_toggle(k, f)) if on_toggle else None,
+        )
         done.append(group)
     return done
