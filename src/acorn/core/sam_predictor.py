@@ -422,6 +422,80 @@ class SAMPredictor:
         result.sort(key=lambda m: int(m.sum()), reverse=True)
         return result
 
+    # ── text prompting (SAM 3 only) ───────────────────────────────────────────
+
+    @staticmethod
+    def image_polarity(img8: "np.ndarray") -> str:
+        """
+        Whether the features are darker or lighter than the field.
+
+        Decides which phrasing to use: the same object is dark on bright ice in
+        cryo-TEM and bright on a dark field in HAADF-STEM, and a prompt written
+        for one finds nothing in the other. Compares how far the bright tail runs
+        above the median against the dark tail below it.
+        """
+        flat = np.asarray(img8, dtype=np.float64).ravel()
+        flat = flat[np.isfinite(flat)]
+        if flat.size == 0:
+            return "dark"
+        lo, mid, hi = np.percentile(flat, [2.0, 50.0, 98.0])
+        return "light" if (hi - mid) > (mid - lo) * 1.25 else "dark"
+
+    def supports_text_prompts(self) -> bool:
+        """True when this backend can be steered by a word."""
+        from acorn.core import vocabulary
+        return vocabulary.backend_uses_text(self._active_backend or self._backend)
+
+    def predict_text(
+        self,
+        img8: "np.ndarray",
+        word: str,
+        confidence: float = 0.5,
+        polarity: Optional[str] = None,
+        max_phrases: int = 3,
+    ) -> tuple[list["np.ndarray"], str]:
+        """
+        Segment everything matching *word*, using SAM 3's text prompt.
+
+        Returns (masks, phrase_used). The word is translated through
+        acorn.core.vocabulary first: SAM 3 responds to everyday visual language,
+        not to discipline terms — "nanoparticle" returns nothing while "dark round
+        blob" finds almost every particle. Phrases are tried best-first and the
+        first one that finds anything wins, so a term whose usual phrasing does
+        not suit this image still has alternatives.
+
+        Raises RuntimeError on a backend that has no text input, naming what to
+        use instead rather than silently returning nothing.
+        """
+        from acorn.core import vocabulary
+
+        self._ensure_loaded()
+        backend = self._active_backend or self._backend
+        if not vocabulary.backend_uses_text(backend):
+            raise RuntimeError(vocabulary.backend_note(backend))
+
+        if polarity is None:
+            polarity = self.image_polarity(img8)
+        phrases = vocabulary.prompts_for(word, polarity)[:max_phrases]
+        if not phrases:
+            return [], ""
+
+        rgb = self._to_rgb(img8)
+        state = self._sam3_processor.set_image(self._to_pil(rgb))
+        self._sam3_processor.set_confidence_threshold(confidence)
+
+        for phrase in phrases:
+            out = self._sam3_processor.set_text_prompt(phrase, state)
+            masks = out.get("masks")
+            if masks is None or int(masks.shape[0]) == 0:
+                continue
+            found = [
+                np.asarray(m.squeeze().float().cpu().numpy() > 0.5, dtype=bool)
+                for m in masks
+            ]
+            return found, phrase
+        return [], phrases[0]
+
     def predict_points(
         self,
         img8: np.ndarray,
