@@ -135,3 +135,82 @@ def test_there_is_a_visible_way_to_do_it(window):
     assert corner is not None and corner.toolTip()
     texts = [a.text() for a in win.findChildren(type(win.menuBar().actions()[0]))]
     assert any("Pop Out" in t for t in texts)
+
+
+# ── remembered between sessions ───────────────────────────────────────────────
+
+def _restart(tmp_path, app):
+    from acorn.gui.main_window import MainWindow
+    win = MainWindow()
+    win.resize(1400, 900)
+    win.show()
+    _settle(app, 10)
+    return win
+
+
+def test_a_floating_window_reopens_next_launch(window, tmp_path):
+    """Popping the same tab out every session is exactly the tedium to avoid."""
+    from acorn.gui.workspaces import load_prefs
+    win, app = window
+    win.set_workspace("analyze")
+    _settle(app)
+    win.pop_out_current_tab()
+    _settle(app)
+    assert "Measure" in (load_prefs().extra.get("popped_out") or {})
+    win.close()
+    _settle(app)
+
+    again = _restart(tmp_path, app)
+    try:
+        assert "Measure" in again._popped_out, "the floating window did not come back"
+        panel = again._popped_out["Measure"]
+        assert panel.isFloating() and panel.widget() is not None
+    finally:
+        again.close()
+        _settle(app)
+
+
+def test_where_the_window_was_is_remembered_too(window, tmp_path):
+    """Reopening in the middle of the screen is barely better than not at all."""
+    from acorn.gui.workspaces import load_prefs
+    win, app = window
+    win.set_workspace("analyze")
+    _settle(app)
+    win.pop_out_current_tab()
+    _settle(app)
+    panel = win._popped_out["Measure"]
+    panel.move(300, 200)
+    panel.resize(500, 600)
+    _settle(app)
+    win._save_popout_state()
+    geom = load_prefs().extra["popped_out"]["Measure"]
+    assert geom[2] > 400 and geom[3] > 500, f"geometry not recorded: {geom}"
+    win.close()
+    _settle(app)
+
+
+def test_closing_a_window_stops_it_reopening(window, tmp_path):
+    """
+    QDockWidget.close() hides rather than destroys, so `destroyed` never fires
+    and a closed window kept coming back every launch.
+    """
+    from acorn.gui.workspaces import load_prefs
+    win, app = window
+    win.set_workspace("analyze")
+    _settle(app)
+    win.pop_out_current_tab()
+    _settle(app)
+    win._popped_out["Measure"].close()
+    _settle(app)
+    assert not (load_prefs().extra.get("popped_out") or {}), \
+        "a closed window is still recorded and would reopen"
+    assert _tabs(win) == ["Measure"]
+
+
+def test_a_saved_window_for_a_tab_that_no_longer_exists_is_ignored(window, tmp_path):
+    """A plugin can be uninstalled between sessions."""
+    win, app = window
+    win._workspace_prefs.extra["popped_out"] = {"No Such Tab": [10, 10, 300, 300]}
+    win._restore_popped_out()
+    _settle(app)
+    assert "No Such Tab" not in win._popped_out

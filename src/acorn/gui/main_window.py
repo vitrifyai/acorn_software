@@ -854,6 +854,9 @@ class MainWindow(
 
         # Apply the saved workspace now that tabs, docks and menus all exist.
         self._apply_workspace(self._active_workspace, persist=False)
+        # Reopen anything that was floating when ACORN last closed, before the
+        # show-all check so an empty tab bar is handled once.
+        self._restore_popped_out()
         if self._workspace_prefs.show_all:
             # The user pinned every panel open last session — honour that rather
             # than quietly dropping them back into a workspace.
@@ -1305,13 +1308,81 @@ class MainWindow(
         if panel is None:
             return
         self._popped_out[title] = panel
-        panel.destroyed.connect(lambda *_a, t=title: self._popped_out.pop(t, None))
+        panel.closed.connect(self._forget_popout)
+        panel.destroyed.connect(lambda *_a, t=title: self._forget_popout(t))
         # An empty tab bar is dead space; give the room to the image instead.
         tabs.setVisible(tabs.count() > 0)
         panel.visibilityChanged.connect(
             lambda _v, t=tabs: t.setVisible(t.count() > 0))
+        self._save_popout_state()
         self._statusbar.showMessage(
             f"{title} is now its own window — close it to put the tab back", 6000)
+
+    def _forget_popout(self, title: str) -> None:
+        """A popped-out window closed — stop reopening it next launch."""
+        self._popped_out.pop(title, None)
+        self._save_popout_state()
+
+    def _save_popout_state(self) -> None:
+        """
+        Remember which tabs are floating, and where.
+
+        Geometry is stored with them: reopening a window in the middle of the
+        screen every session is barely better than not reopening it, since the
+        first thing anyone does is move it back.
+        """
+        state = {}
+        for title, panel in self._popped_out.items():
+            try:
+                g = panel.frameGeometry()
+                state[title] = [g.x(), g.y(), g.width(), g.height()]
+            except Exception:
+                state[title] = None
+        self._workspace_prefs.extra["popped_out"] = state
+        save_workspace_prefs(self._workspace_prefs)
+
+    def _restore_popped_out(self) -> None:
+        """
+        Reopen the windows that were floating when ACORN last closed.
+
+        Done regardless of the active workspace, matching what a popped-out tab
+        already does while the application runs: it stays on screen when you
+        switch workspace, because that is the reason for detaching it.
+        """
+        from acorn.gui import popout
+
+        saved = self._workspace_prefs.extra.get("popped_out") or {}
+        if not isinstance(saved, dict):
+            return
+        tabs = self._control_tabs
+        for title, geom in saved.items():
+            labels = [tabs.tabText(i) for i in range(tabs.count())]
+            if title not in labels:
+                # Not in this workspace's tab bar; put it there briefly so the
+                # same code path detaches it, then let the rebuild leave it out.
+                widget = dict(self._all_tabs).get(title)
+                if widget is None:
+                    continue
+                tabs.addTab(widget, title)
+                labels = [tabs.tabText(i) for i in range(tabs.count())]
+            index = labels.index(title)
+            panel = popout.pop_out(tabs, index, self)
+            if panel is None:
+                continue
+            self._popped_out[title] = panel
+            panel.closed.connect(self._forget_popout)
+            panel.destroyed.connect(lambda *_a, t=title: self._forget_popout(t))
+            panel.visibilityChanged.connect(
+                lambda _v, t=tabs: t.setVisible(t.count() > 0))
+            if isinstance(geom, (list, tuple)) and len(geom) == 4:
+                try:
+                    panel.move(int(geom[0]), int(geom[1]))
+                    panel.resize(int(geom[2]), int(geom[3]))
+                except Exception:
+                    pass
+        if saved:
+            tabs.setVisible(tabs.count() > 0)
+            self._keep_window_on_screen()
 
     def pop_out_dock(self, plugin_id: str) -> None:
         """Float a tool dock free of the window edge."""
@@ -4047,6 +4118,11 @@ class MainWindow(
     # ── application quit ──────────────────────────────────────────────────────
 
     def closeEvent(self, event) -> None:
+        # Windows still floating at quit keep their positions for next time.
+        try:
+            self._save_popout_state()
+        except Exception:
+            pass
         """Stop background threads, then tear down plugins on quit.
 
         Destroying a running QThread aborts the process ("QThread: Destroyed

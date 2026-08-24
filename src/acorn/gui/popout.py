@@ -16,12 +16,16 @@ across untouched.
 """
 from __future__ import annotations
 
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtWidgets import QDockWidget, QMainWindow, QTabWidget, QWidget
 
 
 class PoppedOutPanel(QDockWidget):
     """A control tab living in its own floating window."""
+
+    # close() hides a QDockWidget rather than destroying it, so `destroyed` is
+    # not a reliable "the user is done with this" signal.
+    closed = pyqtSignal(str)
 
     def __init__(self, title: str, widget: QWidget, tabs: QTabWidget,
                  index: int, parent: QMainWindow) -> None:
@@ -42,6 +46,7 @@ class PoppedOutPanel(QDockWidget):
     def closeEvent(self, event) -> None:      # noqa: N802 - Qt name
         """Put the tab back where it came from."""
         self.return_to_tabs()
+        self.closed.emit(self._title)
         event.accept()
 
     def return_to_tabs(self) -> None:
