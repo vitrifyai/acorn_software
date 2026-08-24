@@ -99,6 +99,19 @@ class SAMPredictor:
             except ImportError:
                 if self._backend == "sam3":
                     raise
+            except (FileNotFoundError, OSError) as exc:
+                # The sam3 wheel ships without the CLIP vocabulary its text encoder
+                # reads, and that encoder is built whether or not a typed prompt is
+                # used — so a stock install fails here with a bare errno naming a
+                # path inside site-packages. Say what is actually wrong.
+                from acorn.core import sam3_assets
+                if not sam3_assets.looks_like_missing_vocab(exc):
+                    raise
+                if self._backend == "sam3":
+                    raise RuntimeError(sam3_assets.missing_message()) from exc
+                import logging
+                logging.getLogger(__name__).warning(
+                    "Falling back to SAM 2. %s", sam3_assets.missing_message())
 
         self._load_sam2(device)
         self._active_backend = "sam2"
@@ -106,6 +119,15 @@ class SAMPredictor:
     def _load_sam3(self, device: str) -> None:
         from sam3 import build_sam3_image_model
         from sam3.model.sam3_image_processor import Sam3Processor
+
+        from acorn.core import sam3_assets
+
+        # The sam3 wheel omits the assets/ directory holding the CLIP vocabulary
+        # its text encoder reads, so a stock install raises FileNotFoundError deep
+        # inside the model builder the first time anyone types a prompt. Put a copy
+        # where it looks, if one can be found; loading continues either way,
+        # because box and point prompts do not need it.
+        self._text_prompts_available = sam3_assets.ensure_vocab() is not None
 
         if self._checkpoint is not None and self._checkpoint.exists():
             model = build_sam3_image_model(
@@ -123,6 +145,7 @@ class SAMPredictor:
 
         self._sam3_model     = model
         self._sam3_processor = Sam3Processor(model, device=device)
+
 
     def _load_sam2(self, device: str) -> None:
         from sam2.sam2_image_predictor import SAM2ImagePredictor
@@ -151,6 +174,25 @@ class SAMPredictor:
         if self._active_backend == "sam3":
             return self._sam3_model is not None
         return self._predictor is not None
+
+    @property
+    def text_prompts_available(self) -> bool:
+        """
+        True when a typed prompt such as "vesicles" will work.
+
+        False means the sam3 wheel's missing CLIP vocabulary was not found; box,
+        point and scribble prompts are unaffected.
+        """
+        if not getattr(self, "_text_prompts_available", False):
+            from acorn.core import sam3_assets
+            self._text_prompts_available = sam3_assets.is_available()
+        return bool(self._text_prompts_available)
+
+    @staticmethod
+    def text_prompt_help() -> str:
+        """What to tell the user when text prompts are unavailable."""
+        from acorn.core import sam3_assets
+        return sam3_assets.missing_message()
 
     @property
     def backend(self) -> Optional[str]:

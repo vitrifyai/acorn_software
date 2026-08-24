@@ -110,7 +110,7 @@ uv pip install --python .venv-py312/bin/python -e .
 
 ---
 
-## Three things that are shared, and will bite you
+## Four things that will bite you
 
 **1. CryoBLOB used to be one directory shared by both installs — it no longer is.**
 `/home/vnw/acorn-cryoblob-plugin` was editable-installed into both venvs, so
@@ -124,12 +124,20 @@ zero detections silently — it now detects contrast polarity and flips the imag
 when needed. Once the old tree is retired, delete
 `/home/vnw/acorn-cryoblob-plugin` along with it.
 
-**2. CLU's API key is in `$HOME`, not in either tree.**
+**2. SAM 3 needs a file its own wheel does not ship.**
+`bpe_simple_vocab_16e6.txt.gz` (the CLIP vocabulary) is missing from the sam3
+release, and sam3 builds its text encoder unconditionally, so SAM 3 will not load
+at all without it. A copy now lives in `/opt/models/acorn/models/sam3_assets/`,
+which ACORN finds automatically and which survives venv rebuilds. If you rebuild
+the venv on another machine, either copy that directory across or set
+`ACORN_SAM3_VOCAB`. ACORN reports the problem in full if it cannot find it.
+
+**3. CLU's API key is in `$HOME`, not in either tree.**
 `~/.acorn/llm_config.json` is shared by both installs. That is convenient here
 (no reconfiguration after cutover) but it means a provider change in one shows up
 in the other.
 
-**3. This tree redirects its caches and config; the shared one does not.**
+**4. This tree redirects its caches and config; the shared one does not.**
 `acorn_sim_playground.sh` sets `XDG_CACHE_HOME`, `XDG_CONFIG_HOME` and
 `ACORN_EMBEDDING_CACHE` into `.runtime/`, which is what kept the two installs
 from interfering. After cutover that isolation is no longer needed and costs
