@@ -27,7 +27,7 @@ WORKSPACE_TOOLS: dict[str, frozenset[str]] = {
         "export_display_image", "import_star_file",
     }),
     "annotate": frozenset({
-        "load_sam", "run_sam_auto", "batch_run_sam",
+        "load_sam", "run_sam_auto", "run_sam_text", "batch_run_sam",
         "load_yolo", "run_yolo_detect", "run_yolo_segment", "batch_run_yolo",
         "load_unet", "run_unet", "batch_run_unet",
         "run_cryoblob", "detect_atoms",

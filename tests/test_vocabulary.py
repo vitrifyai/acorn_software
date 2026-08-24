@@ -147,3 +147,35 @@ def test_text_prompt_on_a_backend_without_one_says_what_to_use_instead():
     p._predictor = object()          # bypass the load check
     with pytest.raises(RuntimeError, match="SAM 3|point, box"):
         p.predict_text(np.zeros((16, 16), "uint8"), "vesicles")
+
+
+# ── the text-to-training path ─────────────────────────────────────────────────
+# The achievable route to "YOLO knows biology words": SAM 3 finds them from a
+# description, the annotations are accepted and exported, and a YOLO trained on
+# them knows the class by name. YOLO-World, the open-vocabulary alternative, was
+# measured on cryo-TEM and FIB-SEM simulations and found 0-1 of 30 particles at
+# confidence 0.05, so it is deliberately not offered.
+
+def test_clu_can_ask_for_a_word_directly():
+    from acorn_llm.agent import _TOOLS, _KNOWN_TOOLS
+    from acorn_llm.tool_scope import scope_tools
+    assert "run_sam_text" in _KNOWN_TOOLS
+    tool = next(t for t in _TOOLS if t["name"] == "run_sam_text")
+    assert "label" in tool["properties"] and tool["required"] == ["label"]
+    # it belongs to Annotate, and nowhere else
+    assert "run_sam_text" in {t["name"] for t in scope_tools(_TOOLS, "annotate")}
+    assert "run_sam_text" not in {t["name"] for t in scope_tools(_TOOLS, "simulate")}
+
+
+def test_the_tool_description_says_which_backends_can_do_this():
+    from acorn_llm.agent import _TOOLS
+    tool = next(t for t in _TOOLS if t["name"] == "run_sam_text")
+    text = tool["description"].lower()
+    assert "sam 3" in text
+    for cannot in ("sam 2", "yolo", "unet"):
+        assert cannot in text, f"the description never says {cannot} cannot do this"
+
+
+def test_the_window_exposes_the_action():
+    from acorn.gui.main_window import MainWindow
+    assert callable(getattr(MainWindow, "run_sam_text", None))

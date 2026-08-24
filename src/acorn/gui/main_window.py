@@ -3478,6 +3478,11 @@ class MainWindow(
                     # CryoBLOB detections only appeared after switching images.
                     self._canvas_widget.force_redraw()
             return
+        if action == "run_sam_text":
+            # SAM 3 can be steered by a word; run_sam_auto's point grid cannot.
+            self.run_sam_text(str(params.get("label", "")).strip(),
+                              float(params.get("confidence", 0.5)))
+            return
         if action == "run_sam_auto":
             label = params.get("label", "")
             if label:

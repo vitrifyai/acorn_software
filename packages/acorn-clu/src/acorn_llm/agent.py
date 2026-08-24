@@ -14,6 +14,26 @@ from acorn_llm.config import LLMConfig
 
 _TOOLS: list[dict] = [
     {
+        "name": "run_sam_text",
+        "description": (
+            "Find everything matching a WORD using SAM 3's text prompt, e.g. vesicles, "
+            "nanoparticles, filaments, grains, pores. Prefer this over run_sam_auto when "
+            "the user names what they are looking for. Requires the SAM 3 backend; SAM 2, "
+            "SAM 1, micro-SAM, YOLO and UNet cannot be steered by a word. ACORN translates "
+            "the term into the visual description SAM 3 responds to and matches the image's "
+            "contrast, so pass the user's own word."
+        ),
+        "properties": {
+            "label": {"type": "string",
+                      "description": "What to look for, in the user's words, e.g. 'vesicles'."},
+            "confidence": {"type": "number",
+                           "description": "0-1, default 0.5. Lower finds more and is less certain."},
+        },
+        "required": ["label"],
+        "needs_confirm": False,
+        "needs_image": True,
+    },
+    {
         "name": "run_sam_auto",
         "description": (
             "Run SAM automatic segmentation to find all objects on the current image. "

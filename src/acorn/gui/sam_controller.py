@@ -613,6 +613,66 @@ class SAMControllerMixin:
         self._sam_prompt_labels.clear()
         self._clear_sam_point_artists()
         self._sam_panel.set_sam_status("Points cleared. Click to start a new prompt.")
+    def run_sam_text(self, word: str, confidence: float = 0.5) -> None:
+        """
+        Segment everything matching *word*, using SAM 3's text prompt.
+
+        This is what turns a description into training data: accept the result and
+        it becomes annotations, which export and train a YOLO or UNet that then
+        knows the class by name. SAM 3 is the only backend that can be steered by
+        a word — see acorn.core.vocabulary for what the others do instead.
+        """
+        from acorn.core import vocabulary
+
+        if self._sam_busy():
+            self._sam_panel.set_sam_status("SAM is busy — please wait.")
+            return
+        if self._sam_predictor is None or not self._sam_predictor.is_loaded:
+            self._sam_panel.set_sam_status("Load the SAM model first.")
+            return
+
+        backend = self._sam_predictor.backend or ""
+        if not vocabulary.backend_uses_text(backend):
+            note = vocabulary.backend_note(backend)
+            self._sam_panel.set_sam_status(note)
+            self._statusbar.showMessage(note, 8000)
+            return
+
+        img8, ox, oy = self._get_sam_working_image()
+        if img8 is None:
+            self._sam_panel.set_sam_status("No image loaded.")
+            return
+
+        term = vocabulary.resolve(word)
+        shown = term.canonical if term else word
+        self._sam_panel.set_sam_status(f"Looking for {shown}…")
+
+        def _run():
+            return self._sam_predictor.predict_text(img8, word, confidence=confidence)
+
+        def _done(result):
+            masks, phrase = result
+            if not masks:
+                self._sam_panel.set_sam_status(
+                    f"No {shown} found (tried \"{phrase}\"). Lower the confidence, "
+                    f"try a different word, or use a point or box prompt."
+                )
+                return
+            self._pending_sam_label = word
+            self._add_sam_masks_to_store(masks, offset=(ox, oy))
+            self._sam_panel.set_sam_status(
+                f"{len(masks)} {shown} found using \"{phrase}\" — "
+                f"Accept All to keep them."
+            )
+
+        def _err(msg):
+            self._sam_panel.set_sam_status(f"Text prompt failed: {msg}")
+
+        self._sam_thread = SAMThread(_run, self)
+        self._sam_thread.done.connect(_done)
+        self._sam_thread.error.connect(_err)
+        self._sam_thread.start()
+
     def _add_sam_masks_to_store(self, masks, offset: tuple = (0, 0)) -> None:
         """Convert SAM masks to ROIAnnotations and add to the store.
 
