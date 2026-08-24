@@ -560,7 +560,7 @@ class AcornContext(QObject):
             else:
                 params = w._canvas_widget.canvas._params if hasattr(w._canvas_widget.canvas, "_params") else None
                 if params is not None:
-                    norm = apply_contrast(img.raw, params)
+                    norm = apply_contrast(img.raw, params, pixel_size_nm=img.pixel_size)
                 else:
                     raw = img.raw.astype(float)
                     raw -= raw.min()

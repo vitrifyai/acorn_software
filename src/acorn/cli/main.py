@@ -193,7 +193,7 @@ def cmd_train_export(args) -> None:
         try:
             img = DM4Image.from_file(src)
             h, w = img.shape[:2]
-            norm = apply_contrast(img.raw, params)
+            norm = apply_contrast(img.raw, params, pixel_size_nm=img.pixel_size)
             img8 = (np.clip(norm, 0.0, 1.0) * 255).astype(np.uint8)
 
             if config.tile_size is not None:

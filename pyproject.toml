@@ -43,7 +43,11 @@ dependencies = [
 #
 [project.optional-dependencies]
 # — the Explore workspace —
-viewer = ["PyQt6>=6.5", "PyQt6-Qt6>=6.5", "mrcfile>=1.4"]
+viewer = ["PyQt6>=6.5", "PyQt6-Qt6>=6.5", "mrcfile>=1.4",
+          "PyWavelets>=1.4"]   # wavelet and non-local-means denoising
+
+# — optional denoisers, each degrades to "not installed" in the panel —
+denoise = ["bm3d>=4.0"]        # add topaz-em separately; it pins torch
 
 # — the Annotate workspace: this is the heavy one (torch, CUDA) —
 annotate = [

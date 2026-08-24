@@ -137,7 +137,7 @@ class SAMControllerMixin:
             # img8 cache and the embedding cache instead of freezing the GUI.
             from acorn.core.contrast import apply_contrast
             import numpy as np
-            norm = apply_contrast(img.raw, params)
+            norm = apply_contrast(img.raw, params, pixel_size_nm=img.pixel_size)
             img8 = (np.clip(norm, 0.0, 1.0) * 255).astype(np.uint8)
             from_cache = self._sam_predictor.encode_image(img8)
             return img8, from_cache
@@ -278,7 +278,7 @@ class SAMControllerMixin:
             img8 = cache[2]
         else:
             from acorn.core.contrast import apply_contrast
-            norm = apply_contrast(img.raw, params)
+            norm = apply_contrast(img.raw, params, pixel_size_nm=img.pixel_size)
             img8 = (np.clip(norm, 0.0, 1.0) * 255).astype(np.uint8)
             self._sam_img8_cache = (img, params, img8)
         if self._sam_crop_region is None:

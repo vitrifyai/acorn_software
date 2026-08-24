@@ -385,7 +385,7 @@ def add_image(
     h, w = dm4img.shape[:2]
 
     # ── normalize to 8-bit ────────────────────────────────────────────────────
-    norm = apply_contrast(dm4img.raw, params)
+    norm = apply_contrast(dm4img.raw, params, pixel_size_nm=dm4img.pixel_size)
     img8 = (np.clip(norm, 0.0, 1.0) * 255).astype(np.uint8)
 
     # ── rasterise all ROI masks ───────────────────────────────────────────────

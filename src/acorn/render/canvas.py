@@ -228,7 +228,8 @@ class CryoCanvas:
                         fbp_hp_px=params.fbp_hp_px * step,
                         fbp_lp_px=params.fbp_lp_px * step,
                     )
-                self._norm = apply_contrast(self._dm4.raw, params)
+                self._norm = apply_contrast(self._dm4.raw, params,
+                                            pixel_size_nm=self._dm4.pixel_size)
             self._set_display(self._norm)
             self._img_artist.set_clim(0, 1)
             self._img_artist.set_cmap(params.colormap)

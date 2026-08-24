@@ -72,7 +72,8 @@ class DetectorControllerMixin:
 
         from acorn.core.contrast import apply_contrast
         import numpy as np
-        norm = apply_contrast(img.raw, self._contrast_panel.params())
+        norm = apply_contrast(img.raw, self._contrast_panel.params(),
+                              pixel_size_nm=img.pixel_size)
         img8 = (np.clip(norm, 0.0, 1.0) * 255).astype(np.uint8)
         conf = self._yolo_panel.conf_thresh
         iou  = self._yolo_panel.iou_thresh

@@ -42,6 +42,12 @@ class ContrastParams:
     bp_high_sigma: float = 1.0   # px radius for noise smoothing
     # post-processing
     gamma: float = 1.0
+    # Denoising rides with contrast because it is the same kind of thing: a
+    # transform applied to the raw data before anyone looks at it or detects on
+    # it. Keeping them together means one record of what was done to the image.
+    denoise_method: str = "none"
+    denoise_strength: float = 0.5
+    denoise_resolution_a: float = 20.0
     colormap: str = "gray"
 
 
@@ -190,8 +196,21 @@ def normalize_bandpass(
     return (f - lo) / (hi - lo + 1e-12)
 
 
-def apply_contrast(arr: np.ndarray, params: ContrastParams) -> np.ndarray:
-    """Apply contrast normalisation from a ContrastParams object → float32 in [0, 1]."""
+def apply_contrast(
+    arr: np.ndarray,
+    params: ContrastParams,
+    pixel_size_nm: "float | None" = None,
+) -> np.ndarray:
+    """
+    Apply contrast normalisation from a ContrastParams object → float32 in [0, 1].
+
+    Denoising, when selected, runs after normalisation and before gamma: the
+    denoisers expect data in roughly [0, 1], and gamma is a display curve that
+    should sit on top of the cleaned image rather than be smoothed itself.
+
+    *pixel_size_nm* is only needed by the resolution-based low-pass, which states
+    its cutoff in angstroms.
+    """
     f = arr.astype(np.float32)
     # Sanitize NaN/inf (common in masked / gain-corrected micrographs) so they
     # don't poison percentile/FFT normalisation → a blank image and NaN ROI stats.
@@ -215,6 +234,15 @@ def apply_contrast(arr: np.ndarray, params: ContrastParams) -> np.ndarray:
             f"Choose from: {list(dispatch)}"
         )
     result = dispatch[params.method]()
+    if getattr(params, "denoise_method", "none") not in ("none", "", None):
+        from acorn.core.denoise import DenoiseParams, apply_denoise
+        result = apply_denoise(
+            result,
+            DenoiseParams(method=params.denoise_method,
+                          strength=params.denoise_strength,
+                          resolution_a=params.denoise_resolution_a),
+            pixel_size_nm=pixel_size_nm,
+        )
     if params.gamma != 1.0:
         result = np.power(np.clip(result, 0.0, 1.0), params.gamma)
     return result

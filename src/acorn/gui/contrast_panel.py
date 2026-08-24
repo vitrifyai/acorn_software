@@ -205,6 +205,47 @@ class ContrastPanel(QWidget):
         layout.addWidget(self._stack)
 
         # ── gamma ─────────────────────────────────────────────────────────────
+        # ── denoising ─────────────────────────────────────────────────────────
+        # Here rather than in a workspace of its own: denoising is a transform on
+        # the raw data, like contrast, and it reaches the same places — the
+        # display, whatever a detector is given, and the tiles written for
+        # training. Keeping the two together means one record of what was done.
+        from acorn.core import denoise as _denoise
+
+        dn_box = QGroupBox("Denoising")
+        dn_vb = QVBoxLayout(dn_box)
+        dn_vb.setSpacing(4)
+
+        dn_form = QFormLayout()
+        self._denoise_method = QComboBox()
+        for m in _denoise.METHODS:
+            available = _denoise.is_available(m.key)
+            label = m.label if available else f"{m.label}  (not installed)"
+            self._denoise_method.addItem(label, m.key)
+            idx = self._denoise_method.count() - 1
+            self._denoise_method.setItemData(idx, m.note, Qt.ItemDataRole.ToolTipRole)
+            if not available:
+                self._denoise_method.model().item(idx).setEnabled(False)
+        self._denoise_method.currentIndexChanged.connect(self._on_denoise_method_changed)
+        dn_form.addRow("Method:", self._denoise_method)
+        dn_vb.addLayout(dn_form)
+
+        self._denoise_strength = _ParamRow("Strength", 0.0, 1.0, 0.5, decimals=2, step=0.05)
+        dn_vb.addWidget(self._denoise_strength)
+
+        self._denoise_res = _ParamRow("Resolution A", 3.0, 100.0, 20.0, decimals=1, step=1.0)
+        self._denoise_res.setToolTip(
+            "Cut everything finer than this. Needs the image's pixel size; the "
+            "status bar shows whether that came from the file header."
+        )
+        dn_vb.addWidget(self._denoise_res)
+
+        self._denoise_note = QLabel("")
+        self._denoise_note.setWordWrap(True)
+        self._denoise_note.setStyleSheet("font-size: 11px; color: #8a8a8a;")
+        dn_vb.addWidget(self._denoise_note)
+        layout.addWidget(dn_box)
+
         gamma_box = QGroupBox("Post-processing")
         gamma_vb = QVBoxLayout(gamma_box)
         gamma_vb.setSpacing(4)
@@ -440,6 +481,24 @@ class ContrastPanel(QWidget):
         finally:
             self._updating = False
 
+    def _on_denoise_method_changed(self) -> None:
+        """Show only the control the chosen method actually uses."""
+        from acorn.core import denoise as _denoise
+
+        key = self._denoise_method.currentData()
+        method = next((m for m in _denoise.METHODS if m.key == key), None)
+        uses_res = bool(method and method.uses_resolution)
+        active = key not in ("none", "", None)
+        self._denoise_strength.setVisible(active and not uses_res)
+        self._denoise_res.setVisible(active and uses_res)
+        note = ""
+        if method is not None and active:
+            note = method.note
+            if method.slow:
+                note += "  Slow on a large image — try it on a work region first."
+        self._denoise_note.setText(note)
+        self.contrast_changed.emit(self.params())
+
     def params(self) -> ContrastParams:
         return ContrastParams(
             method=self.current_method(),
@@ -453,4 +512,7 @@ class ContrastPanel(QWidget):
             bp_high_sigma=self._bp_high.value,
             gamma=self._gamma.value,
             colormap=self._cmap.currentText(),
+            denoise_method=self._denoise_method.currentData() or "none",
+            denoise_strength=self._denoise_strength.value,
+            denoise_resolution_a=self._denoise_res.value,
         )
