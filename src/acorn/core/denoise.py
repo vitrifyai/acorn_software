@@ -120,13 +120,37 @@ def _bm3d(a: np.ndarray, p: DenoiseParams, px_nm: Optional[float]) -> np.ndarray
     return bm3d.bm3d(a, sigma_psd=max(1e-4, sigma))
 
 
-def _topaz(a: np.ndarray, p: DenoiseParams, px_nm: Optional[float]) -> np.ndarray:
-    """Topaz-Denoise, trained on real cryo-EM micrographs."""
-    from topaz.denoise import denoise as topaz_denoise      # noqa: F401
-    from topaz.denoise import load_model as topaz_load
+_TOPAZ_CACHE: dict = {}
 
-    model = topaz_load("unet")
-    return np.asarray(topaz_denoise(model, a.astype(np.float32)), dtype=np.float32)
+
+def _topaz(a: np.ndarray, p: DenoiseParams, px_nm: Optional[float]) -> np.ndarray:
+    """
+    Topaz-Denoise: a U-net trained on real cryo-EM micrograph pairs.
+
+    Unlike everything else here it learned what electron-microscope noise looks
+    like, rather than assuming a general smoothness prior. The pretrained weights
+    ship with the package, so nothing needs training.
+
+    The model is cached: loading it costs far more than running it, and the panel
+    re-denoises on every parameter change.
+    """
+    import torch
+    from topaz.denoise import Denoise, denoise_image
+
+    # Pass the model NAME, not a loaded module: Denoise.__init__ compares with
+    # `type(model) == torch.nn.Module`, which is False for any real subclass, so
+    # handing it a loaded UDenoiseNet falls through to a TypeError that then
+    # crashes trying to concatenate the model into a string.
+    use_cuda = torch.cuda.is_available()
+    key = ("unet", use_cuda)
+    if key not in _TOPAZ_CACHE:
+        _TOPAZ_CACHE.clear()
+        _TOPAZ_CACHE[key] = Denoise("unet", use_cuda=use_cuda)
+    model = _TOPAZ_CACHE[key]
+
+    out = denoise_image(a.astype(np.float32), [model],
+                        normalize=True, use_cuda=use_cuda)
+    return np.asarray(out, dtype=np.float32)
 
 
 @dataclass(frozen=True)

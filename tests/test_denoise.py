@@ -46,13 +46,26 @@ def test_availability_reflects_installed_packages():
         assert D.is_available(m.key) is expected, f"{m.key} misreports availability"
 
 
-def test_an_unavailable_method_is_named_with_what_to_install():
+def test_an_unavailable_method_is_named_with_what_to_install(monkeypatch):
+    """
+    Driven rather than left to the environment: once everything is installed this
+    path stops being exercised exactly when it still needs to work, because the
+    people who hit it are the ones with a fresh install.
+    """
+    monkeypatch.setattr(D, "is_available", lambda key: False)
     for m in D.METHODS:
-        if not D.is_available(m.key):
-            note = D.missing_note(m.key)
-            assert m.label in note and all(r in note for r in m.requires)
-            return
-    pytest.skip("everything is installed in this environment")
+        if not m.requires:
+            continue
+        note = D.missing_note(m.key)
+        assert m.label in note, f"{m.key}: the message does not name the method"
+        for r in m.requires:
+            assert r in note, f"{m.key}: the message does not name {r}"
+
+
+def test_an_unavailable_method_returns_the_image_untouched(monkeypatch):
+    monkeypatch.setattr(D, "is_available", lambda key: False)
+    a = _noisy()
+    assert np.array_equal(D.apply_denoise(a, D.DenoiseParams(method="wavelet")), a)
 
 
 def test_wavelet_and_nlmeans_declare_pywavelets():
@@ -125,3 +138,34 @@ def test_contrast_params_carry_the_denoise_fields():
     for field in ("denoise_method", "denoise_strength", "denoise_resolution_a"):
         assert hasattr(p, field)
     assert p.denoise_method == "wavelet"
+
+
+# ── the optional heavyweights ─────────────────────────────────────────────────
+
+@pytest.mark.parametrize("method", ["bm3d", "topaz"])
+def test_optional_denoisers_run_when_installed(method):
+    """
+    Both were written against an API I had not run. Topaz in particular needs the
+    model NAME rather than a loaded module — Denoise.__init__ compares with
+    `type(model) == torch.nn.Module`, false for any real subclass, and the error
+    path then crashes concatenating the model into a string.
+    """
+    if not D.is_available(method):
+        pytest.skip(f"{method} not installed")
+    a = _noisy()
+    out = D.apply_denoise(a, D.DenoiseParams(method=method))
+    assert not np.array_equal(out, a), f"{method} silently returned the input"
+    assert out.shape == a.shape
+    assert _snr(out) > _snr(a), f"{method} did not improve SNR"
+
+
+def test_topaz_reuses_its_loaded_model():
+    """Loading costs seconds; the panel re-denoises on every parameter change."""
+    if not D.is_available("topaz"):
+        pytest.skip("topaz not installed")
+    import time
+    a = _noisy()
+    D.apply_denoise(a, D.DenoiseParams(method="topaz"))    # warm
+    t0 = time.time()
+    D.apply_denoise(a, D.DenoiseParams(method="topaz"))
+    assert time.time() - t0 < 5.0, "the model appears to be reloading each call"
