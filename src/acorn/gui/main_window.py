@@ -1481,6 +1481,21 @@ class MainWindow(
             store = self._canvas_widget.canvas.store
             self._context.annotations_changed.emit(store)
 
+    @staticmethod
+    def _sidecar_is_empty(data: dict) -> bool:
+        """
+        True when this sidecar would tell a future reader nothing.
+
+        pixel_size_nm holds a manual override and is None when the size came
+        from the file header, so a value there is real content: it is the only
+        record that someone corrected the calibration.
+        """
+        if data.get("annotations"):
+            return False
+        if data.get("exclude_zone") or data.get("crop_region"):
+            return False
+        return data.get("pixel_size_nm") is None
+
     def _do_autosave(self) -> None:
         """Write current annotations to the sidecar file (debounced)."""
         # Don't autosave while an image load is in flight: _img_idx has advanced
@@ -1505,6 +1520,18 @@ class MainWindow(
                 "exclude_zone": list(ez) if ez else None,
                 "crop_region": list(cr) if cr else None,
             }
+            # Nothing worth recording? Do not leave a file behind saying so.
+            # Clicking through a folder used to drop a hidden 99-byte sidecar
+            # beside every image, in what is often someone's raw data directory
+            # on a shared NAS. An empty sidecar carries no information: the
+            # loader treats a missing one identically.
+            if self._sidecar_is_empty(data):
+                if path.exists():
+                    try:
+                        path.unlink()
+                    except OSError:
+                        pass
+                return
             _atomic_write_text(path, json.dumps(data))
         except OSError:
             pass  # NAS write failure — silently skip, in-memory state is preserved

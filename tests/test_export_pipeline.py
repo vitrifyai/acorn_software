@@ -212,3 +212,26 @@ def test_a_single_image_at_high_split_fractions_also_survives(tmp_path):
     _export(tmp_path, n_sources=1)
     result = finalize_dataset(tmp_path, val_frac=0.5, test_frac=0.5, seed=1)
     assert result["split_counts"]["train"] > 0, result["split_counts"]
+
+
+def test_a_sidecar_with_nothing_in_it_is_not_written(tmp_path):
+    """
+    Clicking through a folder used to drop a hidden 99-byte annotations file
+    beside every image, in what is often raw data on a shared NAS. An empty
+    sidecar carries no information — a missing one is read identically.
+    """
+    import os
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    from acorn.gui.main_window import MainWindow
+
+    nothing = {"annotations": [], "pixel_size_nm": None,
+               "exclude_zone": None, "crop_region": None}
+    assert MainWindow._sidecar_is_empty(nothing) is True
+
+    for key, value in (("annotations", [{"kind": "roi"}]),
+                       ("pixel_size_nm", 0.59),
+                       ("exclude_zone", [0, 0, 10, 10]),
+                       ("crop_region", [0, 0, 10, 10])):
+        data = dict(nothing)
+        data[key] = value
+        assert MainWindow._sidecar_is_empty(data) is False, f"{key} is real content"

@@ -359,7 +359,15 @@ class SAMControllerMixin:
         params = self._sam_panel.auto_params
         active = self._sam_predictor.backend or "SAM"
         crop_note = " (cropped region)" if self._sam_crop_region is not None else ""
-        self._sam_panel.set_sam_status(f"Running {active}{crop_note}…")
+        # Say when the image is being reduced. SAM's own encoder works at about
+        # 1000px whatever it is given, so on a 24-megapixel micrograph it sees
+        # roughly a sixth of the linear detail — which silently limits how small
+        # a feature can be found, and used to be invisible.
+        scale_note = ""
+        if _sam_scale < 1.0 and self._sam_crop_region is None:
+            scale_note = (f" — image reduced {1/_sam_scale:.1f}× to {_nw}×{_nh}; "
+                          f"crop a region for small features")
+        self._sam_panel.set_sam_status(f"Running {active}{crop_note}{scale_note}…")
 
         def _run():
             return self._sam_predictor.predict_everything(img8_sam, **params)
