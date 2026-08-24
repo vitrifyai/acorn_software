@@ -168,15 +168,44 @@ def test_the_crowded_panels_now_fit_a_screen(window, tab, was):
     assert height < 900, f"{tab} is still {height}px — more than a screen"
 
 
-def test_the_action_a_panel_exists_for_never_folds(window):
-    """Folding Style away would leave the Annotate tab with no drawing tools."""
+def test_every_group_can_be_folded(window):
+    """
+    An earlier version kept Method, Style, Destination and Run permanently open,
+    on the grounds that they are what each panel is for. That just meant the
+    sections people most wanted out of the way would not move. Folding is one
+    click to undo and the choice is remembered, so nothing is exempt.
+    """
     win, _ = window
     from PyQt6.QtWidgets import QGroupBox as _G
+    stuck = []
     for _label, page in win._all_tabs:
         for g in page.findChildren(_G):
             title = C._title_without_arrow(g.title())
-            if title in win._NEVER_FOLDED:
-                assert not g.isCheckable(), f"{title} was made foldable"
+            if title and not g.isCheckable():
+                stuck.append(title)
+    assert not stuck, f"these groups cannot be folded: {sorted(set(stuck))}"
+
+
+def test_a_folded_group_collapses_to_its_title(window, ):
+    """
+    It was drawing a border as well as being set flat, so a collapsed section
+    still looked like an empty container rather than a heading.
+    """
+    win, app = window
+    from PyQt6.QtWidgets import QGroupBox as _G
+    page = dict(win._all_tabs)["Contrast"]
+    for g in page.findChildren(_G):
+        if not g.isCheckable():
+            continue
+        g.setChecked(True)
+        app.processEvents()
+        open_height = g.height()
+        g.setChecked(False)
+        app.processEvents()
+        assert g.height() <= 26, (
+            f"{C._title_without_arrow(g.title())} folded to {g.height()}px")
+        if open_height > 40:
+            assert g.height() < open_height / 2
 
 
 def test_which_groups_are_folded_is_remembered(window):

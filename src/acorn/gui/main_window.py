@@ -1215,8 +1215,11 @@ class MainWindow(
         from acorn.gui.shortcuts import ShortcutHelp
         ShortcutHelp(self).exec()
 
-    # The one thing a panel is for never folds away.
-    _NEVER_FOLDED = {"Method", "Style", "Destination", "Run"}
+    # Nothing is exempt. An earlier version kept Method, Style, Destination and
+    # Run permanently open on the grounds that they are what each panel is for,
+    # which just meant the sections people most wanted out of the way would not
+    # move. Folding is one click to undo and the state is remembered.
+    _NEVER_FOLDED: set[str] = set()
 
     # Folded on a fresh profile: real, but not what you reach for first.
     # Folded on a fresh profile: real settings, but not what you reach for first.

@@ -33,10 +33,13 @@ QGroupBox::title {
     left: 6px;
     padding: 0 4px;
 }
+/* A folded group is a title, not an empty box. setFlat() removes the frame;
+   an earlier version drew a border here as well, so a collapsed section still
+   looked like a container with nothing in it. */
 QGroupBox[folded="true"] {
-    border: 1px solid #363636;
-    border-radius: 4px;
-    margin-top: 6px;
+    border: none;
+    margin-top: 0px;
+    padding-top: 0px;
 }
 """
 
