@@ -823,6 +823,19 @@ class MainWindow(
                     "Plugin %s menu setup failed: %s", plugin.PLUGIN_ID, _plugin_exc
                 )
 
+        # A button on the tab bar to detach the current tab. Analyze is the case
+        # that needs it: the Measure tab and the Spatial Analysis dock share the
+        # right edge, each too narrow for its contents, and switching tabs hides
+        # whichever you were reading.
+        self._popped_out: dict[str, object] = {}
+        _pop_btn = QPushButton("\u29c9")
+        _pop_btn.setToolTip("Open this tab in its own window (closing it puts the tab back)")
+        _pop_btn.setFixedSize(22, 20)
+        _pop_btn.setFlat(True)
+        _pop_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        _pop_btn.clicked.connect(lambda _c=False: self.pop_out_current_tab())
+        control.setCornerWidget(_pop_btn, Qt.Corner.TopRightCorner)
+
         # Fold the control panels. Fully expanded, Annotate is 2181px and Export
         # 1516px against a viewport of roughly 700px, and most of what you scroll
         # past belongs to a tool you are not using at that moment.
@@ -1039,6 +1052,11 @@ class MainWindow(
         tabs = self._control_tabs
         current_label = tabs.tabText(tabs.currentIndex()) if tabs.count() else ""
 
+        # A popped-out tab's widget belongs to its floating window. Re-adding it
+        # here would re-parent it back into the tab bar and leave that window
+        # empty, so a workspace switch would silently swallow it.
+        popped = set(getattr(self, "_popped_out", {}))
+
         tabs.blockSignals(True)
         while tabs.count():
             tabs.removeTab(0)
@@ -1048,9 +1066,10 @@ class MainWindow(
             return (order.index(label) if label in order else len(order))
 
         for label, widget in sorted(self._all_tabs, key=sort_key):
-            if label in visible:
+            if label in visible and label not in popped:
                 tabs.addTab(widget, label)
         tabs.blockSignals(False)
+        tabs.setVisible(tabs.count() > 0)
 
         # Keep the user on the same tab if it survived the switch.
         for i in range(tabs.count()):
@@ -1273,6 +1292,36 @@ class MainWindow(
                 logging.getLogger(__name__).warning(
                     "could not make a panel collapsible", exc_info=True)
 
+    def pop_out_current_tab(self) -> None:
+        """Detach the visible control tab into its own floating window."""
+        from acorn.gui import popout
+
+        tabs = self._control_tabs
+        index = tabs.currentIndex()
+        if index < 0:
+            return
+        title = tabs.tabText(index)
+        panel = popout.pop_out(tabs, index, self)
+        if panel is None:
+            return
+        self._popped_out[title] = panel
+        panel.destroyed.connect(lambda *_a, t=title: self._popped_out.pop(t, None))
+        # An empty tab bar is dead space; give the room to the image instead.
+        tabs.setVisible(tabs.count() > 0)
+        panel.visibilityChanged.connect(
+            lambda _v, t=tabs: t.setVisible(t.count() > 0))
+        self._statusbar.showMessage(
+            f"{title} is now its own window — close it to put the tab back", 6000)
+
+    def pop_out_dock(self, plugin_id: str) -> None:
+        """Float a tool dock free of the window edge."""
+        dock = getattr(self, "_plugin_docks", {}).get(plugin_id)
+        if dock is None:
+            return
+        dock.show()
+        dock.setFloating(True)
+        dock.raise_()
+
     def _dock_panel(self, plugin_id: str):
         """
         The plugin's own panel for a dock, seeing past the scroll wrapper.
@@ -1424,6 +1473,11 @@ class MainWindow(
                 _a.setShortcut(_ws.shortcut)
             _a.triggered.connect(lambda _c=False, w=_ws.wid: self.set_workspace(w))
         view_menu.addSeparator()
+
+        pop_a = view_menu.addAction("Pop Out Current Tab")
+        pop_a.setShortcut("Ctrl+Shift+D")
+        pop_a.setStatusTip("Open the visible control tab in its own window")
+        pop_a.triggered.connect(lambda _c=False: self.pop_out_current_tab())
 
         show_all_a = view_menu.addAction("Show Every Panel")
         show_all_a.setShortcut("Ctrl+Shift+E")

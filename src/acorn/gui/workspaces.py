@@ -74,9 +74,9 @@ WORKSPACES: tuple[Workspace, ...] = (
     Workspace(
         wid="analyze",
         label="Analyze",
-        tagline="Get numbers out",
-        blurb="Particle measurements, spatial statistics, tracking across a series, "
-              "publication figures, and the 3D viewer.",
+        tagline="Measurements and statistics",
+        blurb="Particle size and shape, clustering and hotspot statistics, tracking "
+              "across a series, publication figures, and the 3D viewer.",
         tabs=("Measure",),
         docks=("acorn_spatial", "acorn_tracking", "acorn_3d"),
         shortcut="Ctrl+4",
