@@ -164,8 +164,23 @@ def finalize_dataset(
     n_val_sources   = n_val   + sum(1 for _, s in assigned_ids if s == "val")
     n_test_sources  = n_test  + sum(1 for _, s in assigned_ids if s == "test")
 
-    # Check we have at least some train images overall
+    # Guarantee a train split when there is anything to train on. Rounding takes
+    # everything away from train on small datasets — two source images at 34/34
+    # put one in val and one in test and left train empty — and failing there is
+    # unhelpful when the obvious intent is to train on what little there is.
+    # Validation is what gets given up: a model with no training data cannot
+    # exist, while one with no held-out data merely cannot be scored.
     n_explicit_train = sum(1 for _, s in assigned_ids if s == "train")
+    if n_train + n_explicit_train < 1 and n_u > 0:
+        if n_test > 0:
+            n_test -= 1
+        elif n_val > 0:
+            n_val -= 1
+        n_train = n_u - n_val - n_test
+        n_train_sources = n_train + n_explicit_train
+        n_val_sources   = n_val + sum(1 for _, s in assigned_ids if s == "val")
+        n_test_sources  = n_test + sum(1 for _, s in assigned_ids if s == "test")
+
     if n_train + n_explicit_train < 1 and len(source_ids) > 0:
         raise ValueError(
             "No images assigned to Train. Adjust split fractions or assignments."

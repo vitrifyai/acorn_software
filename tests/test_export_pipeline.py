@@ -177,3 +177,38 @@ def test_a_single_source_image_goes_to_train_rather_than_nowhere(tmp_path):
     counts = result["split_counts"]
     assert sum(counts.values()) > 0, f"the only source image vanished: {counts}"
     assert counts["train"] > 0, f"the only source image was not put in train: {counts}"
+
+
+# ── two defects found by running the whole text-to-training chain ─────────────
+
+def test_empty_categories_are_not_written_into_the_yolo_class_list(tmp_path):
+    """
+    A dataset of nothing but vesicles was training a two-class model whose first
+    class, the exporter's generic "Foreground", had no examples. An empty class
+    costs capacity, skews the loss, and makes the model's output misleading.
+    """
+    from acorn.core.yolo_trainer import convert_to_yolo
+    _export(tmp_path, n_sources=2)
+    finalize_dataset(tmp_path, val_frac=0.1, test_frac=0.0, seed=1)
+    _yaml, names = convert_to_yolo(tmp_path, tmp_path / "yolo")
+    assert names, "no classes at all"
+    assert "Foreground" not in names, f"empty catch-all class leaked in: {names}"
+    assert "Background" not in names and "Ignore" not in names
+
+
+def test_a_tiny_dataset_still_gets_a_train_split(tmp_path):
+    """
+    Two source images at 34/34 put one in val and one in test and raised
+    "No images assigned to Train". Validation is the thing to give up here: a
+    model with no training data cannot exist, one with no held-out data merely
+    cannot be scored.
+    """
+    _export(tmp_path, n_sources=2)
+    result = finalize_dataset(tmp_path, val_frac=0.34, test_frac=0.34, seed=1)
+    assert result["split_counts"]["train"] > 0, result["split_counts"]
+
+
+def test_a_single_image_at_high_split_fractions_also_survives(tmp_path):
+    _export(tmp_path, n_sources=1)
+    result = finalize_dataset(tmp_path, val_frac=0.5, test_frac=0.5, seed=1)
+    assert result["split_counts"]["train"] > 0, result["split_counts"]

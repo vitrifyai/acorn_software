@@ -59,6 +59,19 @@ def convert_to_yolo(dataset_dir: Path, out_dir: Path) -> tuple[Path, list[str]]:
 
     _skip = {"background", "ignore"}
     valid_cats = [c for c in categories if c["name"].lower() not in _skip]
+
+    # Drop categories nothing is annotated with. "Foreground" is created by the
+    # exporter as a generic catch-all and is usually empty, but it was still being
+    # written into data.yaml — so a dataset of nothing but vesicles trained a
+    # two-class model whose first class had no examples. An empty class costs
+    # capacity, skews the loss, and makes the model's output list misleading.
+    used_cat_ids = {a.get("category_id") for a in coco.get("annotations", [])}
+    populated = [c for c in valid_cats if c["id"] in used_cat_ids]
+    if populated:
+        valid_cats = populated
+    # If nothing is annotated at all, keep the full list rather than emit an
+    # empty class set, and let training fail with a clearer complaint.
+
     cat_id_to_idx = {c["id"]: i for i, c in enumerate(valid_cats)}
     class_names = [c["name"] for c in valid_cats]
 
