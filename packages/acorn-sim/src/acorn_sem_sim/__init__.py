@@ -9,7 +9,7 @@ Imports are deferred so that merely loading the plugin does not pull scipy in.
 """
 from __future__ import annotations
 
-__all__ = ["materials", "transport"]
+__all__ = ["imaging", "kernels", "materials", "transport"]
 
 
 def __getattr__(name):

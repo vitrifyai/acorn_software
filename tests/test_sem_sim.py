@@ -13,7 +13,6 @@ from __future__ import annotations
 
 import numpy as np
 import pytest
-
 from acorn_sem_sim import materials as M
 from acorn_sem_sim import transport as T
 
@@ -173,3 +172,223 @@ def test_mix_weight_averages_and_normalises():
 def test_unknown_material_names_what_exists():
     with pytest.raises(KeyError, match="silicon"):
         M.get("unobtainium")
+
+
+# ---------------------------------------------------------------------------
+# Kernels
+# ---------------------------------------------------------------------------
+
+from acorn_sem_sim import imaging as IM
+from acorn_sem_sim import kernels as K
+
+
+@pytest.fixture(scope="module")
+def si_kernels():
+    return K.compute(M.get("silicon"), 5.0, n_electrons=30_000, seed=0, use_cache=False)
+
+
+def test_kernel_cdf_reproduces_trajectory_quantiles(si_kernels):
+    """The kernel is a lossy summary of the trajectories; it must not be a
+    distorting one. Reconstructing enclosed weight by integrating a binned
+    areal density put the silicon SE core at 1.7 nm when the trajectories say
+    0.40 nm, because the density diverges at the origin. Accumulating the
+    histogram directly is exact, and this test pins that down."""
+    r = T.trace(M.get("silicon"), 5.0, n_electrons=30_000, seed=0)
+    order = np.argsort(r.se_r_nm)
+    cw = np.cumsum(r.se_weight[order]) / r.se_weight.sum()
+    for frac in (0.5, 0.9, 0.95):
+        direct = r.se_r_nm[order][np.searchsorted(cw, frac)]
+        via_kernel = si_kernels.se.radius_containing(frac)
+        assert via_kernel == pytest.approx(direct, rel=0.10), (
+            f"r{int(frac * 100)}: kernel {via_kernel:.2f} nm vs trajectories {direct:.2f} nm"
+        )
+
+
+@pytest.mark.parametrize("px", [0.5, 1.0, 5.0, 20.0, 50.0])
+def test_kernel_normalised(si_kernels, px):
+    assert si_kernels.se.to_pixels(px).sum() == pytest.approx(1.0, rel=1e-5)
+    assert si_kernels.bse.to_pixels(px).sum() == pytest.approx(1.0, rel=1e-5)
+
+
+def test_kernel_centre_weight_rises_with_pixel_size(si_kernels):
+    """A coarser pixel must capture more of the core, never less. Violating this
+    is the signature of under-resolving the sub-nanometre SE1 core."""
+    fracs = []
+    for px in (0.5, 1.0, 2.0, 5.0, 10.0, 20.0, 50.0):
+        a = si_kernels.se.to_pixels(px)
+        fracs.append(float(a[a.shape[0] // 2, a.shape[1] // 2]))
+    assert fracs == sorted(fracs), f"centre fraction not monotonic: {fracs}"
+
+
+def test_se_kernel_is_far_more_peaked_than_bse(si_kernels):
+    """The SE1/SE2 split: a sub-nanometre core on a pedestal hundreds of nm
+    wide. This is precisely what a single Gaussian MTF cannot represent, and it
+    is the reason this module exists."""
+    se50 = si_kernels.se.radius_containing(0.5)
+    bse50 = si_kernels.bse.radius_containing(0.5)
+    se95 = si_kernels.se.radius_containing(0.95)
+    assert se50 < bse50 / 20, f"SE r50={se50:.2f} vs BSE r50={bse50:.1f}"
+    assert se95 > 20 * se50, f"SE kernel has no broad pedestal: r50={se50}, r95={se95}"
+
+
+def test_bse_kernel_narrows_with_atomic_number():
+    r50 = []
+    for name in ("carbon", "silicon", "copper", "gold"):
+        k = K.compute(M.get(name), 10.0, n_electrons=12_000, seed=0, use_cache=False)
+        r50.append(k.bse.radius_containing(0.5))
+    assert r50 == sorted(r50, reverse=True), f"BSE kernel not narrowing with Z: {r50}"
+
+
+def test_yields_rise_with_tilt_but_stay_below_secant_law(si_kernels):
+    """Tilt dependence comes from transport, so unlike an imposed 1/cos(theta)
+    it saturates near grazing incidence instead of diverging."""
+    d0 = si_kernels.delta_at(0.0)
+    d60 = si_kernels.delta_at(60.0)
+    d80 = si_kernels.delta_at(80.0)
+    assert d0 < d60 < d80
+    assert d80 / d0 < 1.0 / np.cos(np.radians(80.0)), "yield exceeded the secant law"
+
+
+def test_kernel_cache_round_trip(tmp_path, monkeypatch):
+    monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path))
+    mat = M.get("copper")
+    a = K.compute(mat, 5.0, n_electrons=4000, seed=0, use_cache=True)
+    b = K.compute(mat, 5.0, n_electrons=4000, seed=0, use_cache=True)
+    assert np.allclose(a.se.cum, b.se.cum)
+    assert np.allclose(a.delta, b.delta)
+    assert len(list((tmp_path / "acorn" / "sem_kernels").glob("*.npz"))) == 1
+
+
+# ---------------------------------------------------------------------------
+# Image formation
+# ---------------------------------------------------------------------------
+
+def _discs(n=192, r=18, centres=((60, 60), (130, 120))):
+    idx = np.zeros((n, n), dtype=int)
+    yy, xx = np.mgrid[0:n, 0:n]
+    for cy, cx in centres:
+        idx[(yy - cy) ** 2 + (xx - cx) ** 2 < r * r] = 1
+    return idx
+
+
+@pytest.fixture(scope="module")
+def au_in_carbon():
+    idx = _discs()
+    return idx, IM.simulate(idx, ["carbon", "gold"],
+                            beam=IM.Beam(5.0, 4.0, 400.0),
+                            n_electrons=12_000, seed=1)
+
+
+def test_simulate_returns_ground_truth_unchanged(au_in_carbon):
+    idx, res = au_in_carbon
+    assert res.image.shape == idx.shape
+    assert np.array_equal(res.material_index, idx)
+    assert res.material_names == ["carbon", "gold"]
+    assert 0.0 <= res.meta["boundary_fraction"] <= 1.0
+
+
+def test_backscatter_gives_stronger_compositional_contrast_than_secondaries(au_in_carbon):
+    """BSE imaging is the Z-contrast mode; that must fall out of the model."""
+    idx, res = au_in_carbon
+    au, c = idx == 1, idx == 0
+    se_ratio = res.se[au].mean() / res.se[c].mean()
+    bse_ratio = res.bse[au].mean() / res.bse[c].mean()
+    assert bse_ratio > se_ratio > 1.0, (se_ratio, bse_ratio)
+
+
+def test_per_material_kernels_differ_from_one_shared_kernel():
+    """The claim the design rests on.
+
+    Gold's interaction volume is far smaller than carbon's, so convolving both
+    phases with a single kernel measurably changes the image. If this test ever
+    passes trivially, the per-material convolution has stopped doing anything
+    and the extra FFTs are waste.
+    """
+    idx = _discs()
+    beam = IM.Beam(20.0, 4.0, 400.0)
+    proper = IM.simulate(idx, ["carbon", "gold"], beam=beam,
+                         n_electrons=12_000, seed=2)
+
+    # Same scene, but force both phases through carbon's kernel by relabelling
+    # gold as a material with carbon's transport and gold's yields.
+    kc = K.compute(M.get("carbon"), beam.E0_kev, n_electrons=12_000, seed=2,
+                   use_cache=False)
+    kau = K.compute(M.get("gold"), beam.E0_kev, n_electrons=12_000, seed=2,
+                    use_cache=False)
+    yield_map = np.where(idx == 1, kau.eta_at(0.0), kc.eta_at(0.0))
+    from scipy.signal import fftconvolve
+    shared = fftconvolve(yield_map, kc.bse.to_pixels(beam.pixel_size_nm), mode="same")
+
+    edge = np.abs(np.gradient(proper.bse)[0]).max()
+    edge_shared = np.abs(np.gradient(shared)[0]).max()
+    assert edge > 1.5 * edge_shared, (
+        f"per-material kernels made no difference: {edge:.4g} vs {edge_shared:.4g}"
+    )
+
+
+def test_bse_detector_is_insensitive_to_topography():
+    """An annular BSE detector gives composition, not shading; an ETD gives both."""
+    from scipy.ndimage import gaussian_filter
+    n = 160
+    idx = np.zeros((n, n), dtype=int)
+    rng = np.random.default_rng(0)
+    h = gaussian_filter(rng.normal(0, 1, (n, n)), 8) * 400.0
+
+    beam = IM.Beam(5.0, 4.0, 2000.0)
+    etd = IM.simulate(idx, ["silicon"], height_nm=h, beam=beam,
+                      detector=IM.Detector("ETD", asymmetry=0.6),
+                      n_electrons=8000, seed=3)
+    bse = IM.simulate(idx, ["silicon"], height_nm=h, beam=beam,
+                      detector=IM.Detector("BSE"), n_electrons=8000, seed=3)
+    # correlation of signal with the surface slope facing the detector
+    _, gx = np.gradient(h, beam.pixel_size_nm)
+    slope = gx.ravel()
+    c_etd = abs(np.corrcoef(etd.signal.ravel(), slope)[0, 1])
+    c_bse = abs(np.corrcoef(bse.signal.ravel(), slope)[0, 1])
+    assert c_etd > c_bse, (c_etd, c_bse)
+
+
+def test_more_electrons_per_pixel_improves_snr():
+    idx = _discs()
+    out = {}
+    for dose in (50.0, 5000.0):
+        r = IM.simulate(idx, ["carbon", "gold"], beam=IM.Beam(5.0, 4.0, dose),
+                        n_electrons=8000, seed=4)
+        au, c = idx == 1, idx == 0
+        out[dose] = abs(r.image[au].mean() - r.image[c].mean()) / r.image[c].std()
+    assert out[5000.0] > out[50.0] * 3
+
+
+def test_vacuum_region_emits_nothing():
+    idx = np.zeros((64, 64), dtype=int)
+    idx[:32] = 1
+    r = IM.simulate(idx, ["vacuum", "silicon"], beam=IM.Beam(5.0, 8.0, 500.0),
+                    n_electrons=6000, seed=5)
+    assert r.se[:16].mean() > r.se[48:].mean() * 5
+
+
+def test_topography_alone_creates_contrast():
+    """Flat single-material specimen must be featureless; tilting it must not be."""
+    from scipy.ndimage import gaussian_filter
+    n = 128
+    idx = np.zeros((n, n), dtype=int)
+    beam = IM.Beam(5.0, 4.0, 4000.0)
+    flat = IM.simulate(idx, ["silicon"], beam=beam, n_electrons=8000, seed=6)
+    rng = np.random.default_rng(1)
+    h = gaussian_filter(rng.normal(0, 1, (n, n)), 6) * 500.0
+    rough = IM.simulate(idx, ["silicon"], height_nm=h, beam=beam,
+                        n_electrons=8000, seed=6)
+    inner = (slice(20, -20), slice(20, -20))
+    assert rough.signal[inner].std() > 10 * flat.signal[inner].std()
+
+
+def test_rejects_labels_with_no_material():
+    idx = np.array([[0, 5]], dtype=int)
+    with pytest.raises(ValueError, match="no material"):
+        IM.simulate(idx, ["silicon"])
+
+
+def test_rejects_mismatched_height_map():
+    with pytest.raises(ValueError, match="shape"):
+        IM.simulate(np.zeros((8, 8), dtype=int), ["silicon"],
+                    height_nm=np.zeros((4, 4)))
