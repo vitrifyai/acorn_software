@@ -207,7 +207,7 @@ def compute(material: Material, E0_kev: float = 5.0,
                 tilt_deg=z["tilt_deg"], delta=z["delta"], eta=z["eta"],
                 n_electrons=int(z["n_electrons"]),
             )
-        except Exception:  # noqa: BLE001, S110 - see below
+        except Exception:      # deliberate; see below
             # A corrupt, truncated or stale cache entry must never break a
             # simulation: fall through and recompute. There is nothing to log
             # to and nothing the caller could do differently.

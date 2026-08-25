@@ -758,6 +758,68 @@ _TOOLS: list[dict] = [
         "needs_confirm": False,
     },
     {
+        "name": "generate_sem_simulation",
+        "description": (
+            "Generate physics-based SEM images with exact ground truth, using Monte Carlo "
+            "electron transport. Use when the user asks for SEM simulation, scanning electron "
+            "microscopy, secondary or backscattered electron images, SE/BSE/ETD/in-lens/TLD "
+            "detectors, Z contrast, atomic-number contrast, interaction volume, low-kV surface "
+            "imaging, nanoparticles on a substrate, alloy grains, porosity, or cells in resin. "
+            "IMPORTANT: SEM has no CTF, no defocus and no Thon rings -- it is not a transmission "
+            "technique. If the user wants CTF, defocus, ice, or particles in vitreous ice they "
+            "want generate_tem_simulation instead. The resolution limit here is the interaction "
+            "volume, which grows steeply with beam energy (roughly E^1.67), so low kV is how SEM "
+            "gets surface sensitivity."
+        ),
+        "properties": {
+            "output_dir": {"type": "string", "description": "Folder to write generated SEM data."},
+            "count": {"type": "integer", "description": "Number of SEM images to generate."},
+            "scene": {
+                "type": "string",
+                "enum": ["nanoparticles", "grains", "porous", "biological", "cross_section"],
+                "description": (
+                    "Specimen. 'nanoparticles' = heavy particles on a light support (Z contrast "
+                    "plus relief). 'grains' = polished two-phase alloy, flat, so contrast is purely "
+                    "compositional. 'porous' = pores in a ceramic. 'biological' = cells in resin, "
+                    "almost no Z contrast so all signal is topography -- the hard case. "
+                    "'cross_section' = FIB-milled stack with a Pt cap."
+                ),
+            },
+            "E0_kev": {"type": "number", "description": "Beam energy in kV (0.2-30). The dominant control on interaction volume and hence resolution."},
+            "kv": {"type": "number", "description": "Alias for E0_kev."},
+            "pixel_size_nm": {"type": "number", "description": "Pixel size in nm."},
+            "image_size_px": {"type": "integer", "description": "Square image size in pixels."},
+            "detector": {
+                "type": "string",
+                "enum": ["ETD", "TLD", "BSE"],
+                "description": (
+                    "ETD = Everhart-Thornley, SE-dominated with directional shading, the "
+                    "topographic workhorse. TLD = through-lens/in-lens, sharper SE. "
+                    "BSE = annular backscatter, compositional Z contrast with little shading."
+                ),
+            },
+            "particle": {"type": "string", "description": "Particle material, e.g. gold, platinum, titania."},
+            "substrate": {"type": "string", "description": "Substrate or matrix material, e.g. carbon, silicon, resin."},
+            "phase_a": {"type": "string", "description": "First phase for scene=grains."},
+            "phase_b": {"type": "string", "description": "Second phase for scene=grains."},
+            "n_particles": {"type": "integer", "description": "Particle count for scene=nanoparticles."},
+            "diameter_nm_mean": {"type": "number", "description": "Mean particle diameter in nm."},
+            "diameter_nm_sd": {"type": "number", "description": "Particle diameter spread in nm."},
+            "relief": {"type": "boolean", "description": "Particles stand proud of the surface. Set false to flatten them and isolate pure Z contrast."},
+            "porosity": {"type": "number", "description": "Pore fraction 0-1 for scene=porous."},
+            "electrons_per_px": {"type": "number", "description": "Electrons per pixel (current x dwell). Affects noise only, never contrast. Use a low value for low-dose or beam-sensitive samples."},
+            "probe_nm": {"type": "number", "description": "Probe size in nm."},
+            "asymmetry": {"type": "number", "description": "Directional shading strength 0-1. Set 0 for flat shadowless illumination."},
+            "read_noise_e": {"type": "number", "description": "Read noise in electrons."},
+            "quality": {"type": "string", "enum": ["fast", "balanced", "careful"], "description": "Monte Carlo trajectories per kernel. Affects kernel smoothness, not physics. Kernels are cached after the first run."},
+            "seed": {"type": "integer", "description": "Base random seed."},
+            "open_generated": {"type": "boolean", "description": "Open generated images in Acorn. Default true."},
+            "save_layers": {"type": "boolean", "description": "Save the truth mask plus separate SE and BSE channels. Default true."},
+        },
+        "required": [],
+        "needs_confirm": False,
+    },
+    {
         "name": "generate_tem_simulation",
         "description": (
             "Generate physics-based cryo-TEM simulated micrographs. Use when the user asks for "
@@ -1360,6 +1422,7 @@ You are proactive: if a prerequisite is missing (model not loaded, no image open
 **"Measure / analyze X"**: ensure annotations exist (segment first if not) → run_particle_analysis(labels=[X], mode=batch) → export_measurements
 **"Prep for training"**: load_sam if needed → batch_run_sam(label=X, skip_annotated=true) — one call handles all images
 **"Generate FIB simulation / simulated FIB-SEM surface images"**: generate_fib_simulation(...). No image needs to be loaded. Prefer sample="bio" for biological lamella/surface requests and sample="material" for materials/grains/pores/oxide requests. Use liftout=true for lift-out, trench, Pt cap, or needle requests. Use low electrons_per_pixel for low-dose/noisy data. Explain briefly that the simulator uses phantom truth → FIB milling artifacts → detector noise.
+**"Generate SEM simulation / scanning electron images / SE or BSE images / Z contrast / interaction volume"**: generate_sem_simulation(...). No image needs to be loaded. This is Monte Carlo electron transport (screened Rutherford scattering + Bethe stopping), so every image ships with an exact ground-truth mask. Pick the scene from what the user describes: nanoparticles on a support, polished alloy grains, porous ceramic, cells in resin, or a FIB cross-section. Choose detector="BSE" whenever they ask about composition or atomic number, "TLD" for high-resolution surface detail, "ETD" otherwise. Beam energy is the key parameter -- say so: low kV (1-5) keeps the interaction volume small and the image surface-sensitive, high kV (20-30) buries it micrometres deep and blurs everything. There is NO CTF, defocus or Thon rings in SEM; if the user wants those they want the TEM tool.
 **"Generate TEM simulation / simulated cryo-TEM micrographs"**: generate_tem_simulation(...). No image needs to be loaded. Use simulation_path="fast" by default, "multislice" when the user asks for physics/electron scattering/PDB realism, and "custom" when the user provides a Python recipe. Use specimen_kind for PLGA, lipid vesicles, proteins/PDBs, or bacteria/cells. Explain briefly that fast mode uses specimen → projected potential → CTF → dose/detector, while multislice uses slice-by-slice electron wave propagation before detector noise.
 **"Advanced / realistic TEM, specific detector or microscope, a named bacterial species, ice contamination, thick cells, energy filtering, or several specimen types together"**: generate_tem_advanced(...). This is the full physics engine (detector-specific DQE/MTF/noise, microscope presets, inelastic thickness loss, dose-dependent radiation damage, GPU, composable scenes). Set microscope (krios/glacios/…) and detector_model (K3/Falcon4/…). Use specimen_kind=bacteria with species= for cells, add_contamination=true for crystalline ice, add_nanoparticles=true to mix in particles. Prefer this over generate_tem_simulation whenever the user names a detector/microscope, a species, contamination, thickness/energy-filter, or wants combined specimens.
 Note: generate_tem_simulation and generate_tem_advanced both route through one internal engine-vs-fast selector keyed on the specimen, so either is safe — but prefer generate_tem_advanced when a detector/microscope/species/contamination/energy-filter is named.

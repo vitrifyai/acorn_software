@@ -86,10 +86,10 @@ WORKSPACES: tuple[Workspace, ...] = (
         wid="simulate",
         label="Simulate",
         tagline="Make synthetic data",
-        blurb="Generate realistic TEM, FIB-SEM, and 4D-STEM images with labels "
+        blurb="Generate realistic TEM, SEM, FIB-SEM and 4D-STEM images with labels "
               "already attached, ready to feed back into Dataset.",
         tabs=("Contrast", "Annotate"),
-        docks=("acorn_tem_sim", "acorn_fib_sim"),
+        docks=("acorn_tem_sim", "acorn_sem_sim", "acorn_fib_sim"),
         shortcut="Ctrl+5",
         panel_width=320,
     ),

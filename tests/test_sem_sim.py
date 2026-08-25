@@ -11,9 +11,14 @@ Joy's backscatter database; Kanaya & Okayama (1972) for the range formula.
 """
 from __future__ import annotations
 
+import json
+
 import numpy as np
 import pytest
+from acorn_sem_sim import imaging as IM
+from acorn_sem_sim import kernels as K
 from acorn_sem_sim import materials as M
+from acorn_sem_sim import scenes as SC
 from acorn_sem_sim import transport as T
 
 # Backscatter yield at 20 keV, normal incidence. These are PREDICTED by the
@@ -177,10 +182,6 @@ def test_unknown_material_names_what_exists():
 # ---------------------------------------------------------------------------
 # Kernels
 # ---------------------------------------------------------------------------
-
-from acorn_sem_sim import imaging as IM
-from acorn_sem_sim import kernels as K
-
 
 @pytest.fixture(scope="module")
 def si_kernels():
@@ -392,3 +393,137 @@ def test_rejects_mismatched_height_map():
     with pytest.raises(ValueError, match="shape"):
         IM.simulate(np.zeros((8, 8), dtype=int), ["silicon"],
                     height_nm=np.zeros((4, 4)))
+
+
+# ---------------------------------------------------------------------------
+# Scenes, export, and CLU parameter handling
+# ---------------------------------------------------------------------------
+
+
+
+
+@pytest.mark.parametrize("kind", sorted(SC.BUILDERS))
+def test_every_scene_builds_consistently(kind):
+    s = SC.build(kind, shape=(96, 96), pixel_size_nm=6.0, seed=0)
+    assert s.material_index.shape == (96, 96)
+    assert s.height_nm.shape == (96, 96)
+    assert s.material_index.min() >= 0
+    assert s.material_index.max() < len(s.material_names)
+    for name in s.material_names:
+        M.get(name)                       # every name must resolve to a material
+    assert s.description
+
+
+def test_every_scene_is_listed_for_the_ui():
+    """A scene the panel and CLU cannot name is a scene nobody can reach."""
+    assert set(SC.BUILDERS) == set(SC.SCENE_LABELS)
+
+
+def test_flat_scenes_really_are_flat():
+    """The grains scene exists to isolate composition; relief would defeat it."""
+    s = SC.build("grains", shape=(64, 64), pixel_size_nm=8.0, seed=0)
+    assert float(np.abs(s.height_nm).max()) == 0.0
+
+
+def test_relief_flag_controls_topography():
+    on = SC.build("nanoparticles", shape=(128, 128), pixel_size_nm=4.0,
+                  n_particles=8, relief=True, seed=1)
+    off = SC.build("nanoparticles", shape=(128, 128), pixel_size_nm=4.0,
+                   n_particles=8, relief=False, seed=1)
+    assert float(np.abs(on.height_nm).max()) > 0
+    assert float(np.abs(off.height_nm).max()) == 0.0
+    assert np.array_equal(on.material_index, off.material_index)
+
+
+def test_unknown_scene_lists_alternatives():
+    with pytest.raises(KeyError, match="nanoparticles"):
+        SC.build("banana")
+
+
+def test_dataset_export_writes_images_truth_and_annotations(tmp_path):
+    from acorn_sem_sim.io import generate_sem_dataset
+    paths = generate_sem_dataset(tmp_path, 2, {
+        "scene": "nanoparticles", "E0_kev": 5.0, "pixel_size_nm": 4.0,
+        "image_size_px": 128, "n_particles": 10, "diameter_nm_mean": 40.0,
+        "n_electrons": 4000,
+    }, seed=0)
+    assert len(paths) == 2 and all(p.exists() for p in paths)
+
+    meta = json.loads((tmp_path / "metadata.json").read_text())
+    assert len(meta["images"]) == 2
+    assert all(i["annotations"] > 0 for i in meta["images"]), \
+        "ground truth produced no annotations -- the point of simulating is lost"
+
+    for name in ("_truth.tif", "_se.tif", "_bse.tif"):
+        assert (tmp_path / "layers" / f"semsim_00000{name}").exists()
+
+    ann = json.loads((tmp_path / "images" / "semsim_00000.annotations.json").read_text())
+    assert ann["annotations"]
+    first = ann["annotations"][0]
+    assert first["label"] == "gold" and len(first["polygon"]) >= 3
+    assert first["accepted"] is True
+
+
+def test_export_does_not_annotate_background_or_vacuum(tmp_path):
+    """A substrate filling the frame is not a useful annotation, and pores are
+    holes rather than objects. Exporting either would swamp the real count."""
+    from acorn_sem_sim.io import generate_sem_dataset
+    generate_sem_dataset(tmp_path, 1, {
+        "scene": "porous", "E0_kev": 5.0, "pixel_size_nm": 8.0,
+        "image_size_px": 128, "n_electrons": 4000,
+    }, seed=0)
+    ann = json.loads((tmp_path / "images" / "semsim_00000.annotations.json").read_text())
+    labels = {a["label"] for a in ann["annotations"]}
+    assert "vacuum" not in labels and "alumina" not in labels
+
+
+# -- CLU parameter normalisation (pure logic, no Qt) -------------------------
+
+def test_clu_accepts_the_synonyms_a_model_will_reach_for():
+    from acorn_sem_sim.plugin import _params_from_clu
+    p = _params_from_clu({"kv": 12, "sample": "alloy", "signal": "backscatter",
+                          "pixel_nm": 3, "images": 4, "electrons_per_pixel": 250})
+    assert p["E0_kev"] == 12.0
+    assert p["scene"] == "grains"
+    assert p["detector"] == "BSE"
+    assert p["pixel_size_nm"] == 3.0
+    assert p["count"] == 4
+    assert p["electrons_per_px"] == 250.0
+
+
+@pytest.mark.parametrize("text,expected", [
+    ("in-lens", "TLD"), ("inlens", "TLD"), ("Z contrast", "ETD"),
+    ("bse", "BSE"), ("backscattered", "BSE"), ("", "ETD"), (None, "ETD"),
+])
+def test_detector_synonyms(text, expected):
+    from acorn_sem_sim.plugin import _detector_from_text
+    assert _detector_from_text(text) == expected
+
+
+@pytest.mark.parametrize("text,expected", [
+    ("cells", "biological"), ("resin", "biological"), ("pores", "porous"),
+    ("lamella", "cross_section"), ("polished", "grains"), ("anything else", "nanoparticles"),
+])
+def test_scene_synonyms(text, expected):
+    from acorn_sem_sim.plugin import _scene_from_text
+    assert _scene_from_text(text) == expected
+
+
+def test_clu_defaults_are_complete_enough_to_run(tmp_path):
+    """An empty CLU call must still produce a runnable parameter set."""
+    from acorn_sem_sim.io import generate_sem_dataset
+    from acorn_sem_sim.plugin import _params_from_clu
+    p = _params_from_clu({})
+    p.update({"image_size_px": 96, "n_electrons": 3000, "count": 1})
+    paths = generate_sem_dataset(tmp_path, 1, p, seed=0)
+    assert len(paths) == 1 and paths[0].exists()
+
+
+def test_field_of_view_warning_fires_only_when_it_should():
+    from acorn_sem_sim.plugin import _field_of_view_warning
+    ok = _field_of_view_warning({"E0_kev": 2.0, "pixel_size_nm": 4.0,
+                                 "image_size_px": 512, "substrate": "gold"})
+    bad = _field_of_view_warning({"E0_kev": 30.0, "pixel_size_nm": 1.0,
+                                  "image_size_px": 128, "substrate": "carbon"})
+    assert ok == ""
+    assert "interaction volume" in bad and "lower the kV" in bad

@@ -48,7 +48,7 @@ WORKSPACE_TOOLS: dict[str, frozenset[str]] = {
     }),
     "simulate": frozenset({
         "generate_tem_simulation", "generate_tem_advanced", "generate_4dstem",
-        "generate_fib_simulation", "simulate_from_reference",
+        "generate_fib_simulation", "generate_sem_simulation", "simulate_from_reference",
     }),
 }
 

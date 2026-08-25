@@ -25,6 +25,7 @@ gpu = ["cupy-cuda12x>=13"]
 [project.entry-points."acorn.plugins"]
 acorn_fib_sim = "acorn_fib_sim.plugin:FibSimulationPlugin"
 acorn_tem_sim = "acorn_tem_sim.plugin:TemSimulationPlugin"
+acorn_sem_sim = "acorn_sem_sim.plugin:SemSimulationPlugin"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/acorn_tem_sim", "src/acorn_fib_sim", "src/acorn_sem_sim"]
