@@ -27,4 +27,4 @@ acorn_fib_sim = "acorn_fib_sim.plugin:FibSimulationPlugin"
 acorn_tem_sim = "acorn_tem_sim.plugin:TemSimulationPlugin"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/acorn_tem_sim", "src/acorn_fib_sim"]
+packages = ["src/acorn_tem_sim", "src/acorn_fib_sim", "src/acorn_sem_sim"]
