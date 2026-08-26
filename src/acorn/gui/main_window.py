@@ -745,9 +745,34 @@ class MainWindow(
                     control.addTab(panel, plugin.TAB_LABEL or plugin.PLUGIN_ID)
             except Exception as _plugin_exc:
                 import logging as _logging
-                _logging.getLogger(__name__).warning(
-                    "Plugin %s failed to create panel: %s", plugin.PLUGIN_ID, _plugin_exc
-                )
+
+                from acorn.gui.plugin_failure import placeholder_for
+                _title = plugin.TAB_LABEL or plugin.PLUGIN_ID
+                _stand_in = placeholder_for(_title, _plugin_exc)
+                if _stand_in is None:
+                    # Optional dependency missing: expected, and not worth a notice.
+                    _logging.getLogger(__name__).info(
+                        "Plugin %s unavailable (optional dependency): %s",
+                        plugin.PLUGIN_ID, _plugin_exc)
+                else:
+                    _logging.getLogger(__name__).warning(
+                        "Plugin %s failed to create panel: %s",
+                        plugin.PLUGIN_ID, _plugin_exc, exc_info=True)
+                    # Put it where the panel would have gone, so a tool that
+                    # broke says so instead of merely being absent.
+                    if getattr(plugin, "FLOATING", False):
+                        self._floating_plugins.append((plugin, _stand_in))
+                    else:
+                        control.addTab(_stand_in, _title)
+
+        # Plugins that never got as far as being constructed. These are not in
+        # self._plugins at all, so nothing above can stand in for them.
+        from acorn.plugin_loader import load_failures as _load_failures
+        for _failure in _load_failures():
+            if _failure.missing_dependency:
+                continue
+            from acorn.gui.plugin_failure import FailurePanel
+            control.addTab(FailurePanel(_failure.name, _failure.error), _failure.name)
 
         self._control_tabs = control
         splitter.addWidget(control)
