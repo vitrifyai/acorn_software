@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
-from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from PyQt6.QtCore import QThread, QTimer, pyqtSignal
+from acorn_sim_common import as_bool, fresh_run_dir, open_paths_in_acorn
+from PyQt6.QtCore import QThread, pyqtSignal
 from PyQt6.QtWidgets import QMessageBox, QWidget
 
 from acorn.plugin_base import AcornPlugin
@@ -28,7 +28,7 @@ class _FibSimThread(QThread):
     def run(self) -> None:
         try:
             config = _config_from_params(self.params)
-            output_dir = _fresh_run_dir(Path(self.params["output_dir"]), "fib_run")
+            output_dir = fresh_run_dir(Path(self.params["output_dir"]), "fib_run")
             paths = generate_fib_dataset(
                 output_dir,
                 int(self.params["count"]),
@@ -92,7 +92,7 @@ class FibSimulationPlugin(AcornPlugin):
         self._context.set_status(message, timeout_ms=8000)
         params = self._thread.params if self._thread is not None else {}
         if params.get("open_generated", True) and image_paths:
-            opened, detail = _open_paths_in_acorn(self._context, image_paths)
+            opened, detail = open_paths_in_acorn(self._context, image_paths)
             if self._panel is not None:
                 self._panel.set_status(f"Opening {opened} generated image(s): {output_dir}" if opened else detail)
             self._context.set_status(
@@ -152,17 +152,17 @@ def _params_from_clu(params: dict) -> dict:
     return {
         "output_dir": params.get("output_dir") or str(Path.home() / "fib_sim_output"),
         "count": int(params.get("count", params.get("images", 10))),
-        "open_generated": _as_bool(params.get("open_generated", True)),
-        "save_layers": _as_bool(params.get("save_layers", True)),
+        "open_generated": as_bool(params.get("open_generated", True)),
+        "save_layers": as_bool(params.get("save_layers", True)),
         "sample": sample,
         "width": int(params.get("width", 640)),
         "height": int(params.get("height", 512)),
         "pixel_size_nm": float(params.get("pixel_size_nm", 5.0)),
         "seed": int(params.get("seed", 1)),
         "liftout": liftout,
-        "trench": _as_bool(params.get("trench", True)),
-        "pt_cap": _as_bool(params.get("pt_cap", True)),
-        "needle": _as_bool(params.get("needle", liftout)),
+        "trench": as_bool(params.get("trench", True)),
+        "pt_cap": as_bool(params.get("pt_cap", True)),
+        "needle": as_bool(params.get("needle", liftout)),
         "mill_axis": str(params.get("mill_axis", "y")),
         "curtain_strength": float(params.get("curtain_strength", params.get("curtaining", 0.28 if sample == "bio" else 0.18))),
         "curtain_edge_gain": float(params.get("curtain_edge_gain", 2.0)),
@@ -182,36 +182,3 @@ def _sample_from_text(value) -> str:
     if text in {"material", "materials", "grain", "grains", "oxide", "metal"}:
         return "material"
     return "bio"
-
-
-def _as_bool(value) -> bool:
-    if isinstance(value, bool):
-        return value
-    if isinstance(value, str):
-        return value.strip().lower() not in {"0", "false", "no", "off", ""}
-    return bool(value)
-
-
-def _fresh_run_dir(base_dir: Path, prefix: str) -> Path:
-    base_dir = Path(base_dir)
-    stamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
-    run_dir = base_dir / f"{prefix}_{stamp}"
-    counter = 1
-    while run_dir.exists():
-        run_dir = base_dir / f"{prefix}_{stamp}_{counter}"
-        counter += 1
-    return run_dir
-
-
-def _open_paths_in_acorn(context: "AcornContext", paths: list[str]) -> tuple[int, str]:
-    real_paths = [Path(p) for p in paths if p and Path(p).exists()]
-    if not real_paths:
-        return 0, "Generated images, but no output TIFF files were found to open."
-    window_getter = getattr(context, "_w", None)
-    if window_getter is None:
-        return 0, "Generated images, but Acorn window is unavailable for auto-open."
-    window = window_getter()
-    if window is None or not hasattr(window, "open_files"):
-        return 0, "Generated images, but Acorn viewer is unavailable for auto-open."
-    QTimer.singleShot(0, lambda paths=real_paths: window.open_files(paths))
-    return len(real_paths), f"Opening {len(real_paths)} generated image(s)."

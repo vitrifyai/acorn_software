@@ -39,7 +39,7 @@ class Beam:
     E0_kev:         float = 5.0
     pixel_size_nm:  float = 5.0
     electrons_per_px: float = 300.0     # dwell current x time, in electrons
-    probe_nm:       float = 1.0         # finite probe size, added in quadrature
+    probe_nm:       float = 1.0         # FWHM of the focused probe; blurs the yield maps
 
 
 @dataclass

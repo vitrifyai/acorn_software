@@ -9,7 +9,9 @@ Imports are deferred so that merely loading the plugin does not pull scipy in.
 """
 from __future__ import annotations
 
-__all__ = ["imaging", "kernels", "materials", "transport"]
+# GUI modules (panel, gauge, plugin) are deliberately absent: they pull PyQt6,
+# and the point of deferring imports here is that headless use never does.
+__all__ = ["imaging", "io", "kernels", "materials", "scenes", "transport"]
 
 
 def __getattr__(name):

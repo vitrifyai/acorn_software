@@ -33,6 +33,11 @@ _WARN = QColor("#d4a24c")
 _BAD = QColor("#c65f5f")
 _INK = QColor("#6c7086")
 
+# Shared with the panel so a colour is defined once. Two copies of "#d4a24c"
+# drift apart the first time either is adjusted.
+HINT_CSS = f"font-size: 11px; color: {_INK.name()};"
+WARN_CSS = f"font-size: 11px; color: {_WARN.name()};"
+
 
 def _frac(nm: float) -> float:
     """Position of a length on the log axis, clamped to [0, 1]."""

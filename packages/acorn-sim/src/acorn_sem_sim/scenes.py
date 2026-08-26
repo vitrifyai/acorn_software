@@ -21,18 +21,36 @@ import numpy as np
 
 @dataclass
 class Scene:
-    """A specimen and the truth about it."""
+    """A specimen and the truth about it.
+
+    `material_names` is physics -- what each label is made of, and what the
+    transport model needs. `label_names` is what those regions should be CALLED
+    in an annotation, which is not always the same thing: a pore is made of
+    vacuum, but nobody annotates "vacuum", they annotate "pore".
+
+    `background_labels` names the labels that are context rather than objects.
+    A support or embedding matrix filling the frame is not a useful annotation
+    and would swamp any real object count. It is a tuple, not a single label,
+    and it can be empty -- in a two-phase alloy or a layer stack every region is
+    an object, and excluding one of them would silently halve the ground truth.
+    """
 
     material_index: np.ndarray
     material_names: list[str]
     height_nm: np.ndarray
     pixel_size_nm: float
     description: str = ""
+    label_names: list[str] | None = None
+    background_labels: tuple[int, ...] = (0,)
     meta: dict = field(default_factory=dict)
 
-    @property
-    def shape(self) -> tuple[int, int]:
-        return self.material_index.shape
+    def annotation_name(self, label: int) -> str:
+        """What to call `label` in an annotation."""
+        names = self.label_names or self.material_names
+        return names[int(label)]
+
+    def is_background(self, label: int) -> bool:
+        return int(label) in self.background_labels
 
 
 def _smooth_noise(shape, rng, sigma_px, amplitude=1.0):
@@ -89,8 +107,9 @@ def nanoparticles_on_substrate(shape=(512, 512), pixel_size_nm=2.0, n_particles=
 
     return Scene(idx, [substrate, particle], h, pixel_size_nm,
                  f"{len(placed)} {particle} particles on {substrate}",
-                 {"n_particles": len(placed), "relief": bool(relief),
-                  "diameter_nm_mean": diameter_nm_mean})
+                 meta={"n_particles_placed": len(placed), "relief": bool(relief),
+                       "diameter_nm_mean": diameter_nm_mean,
+                       "n_particles_requested": int(n_particles)})
 
 
 def two_phase_grains(shape=(512, 512), pixel_size_nm=5.0, n_grains=24,
@@ -112,9 +131,12 @@ def two_phase_grains(shape=(512, 512), pixel_size_nm=5.0, n_grains=24,
     nearest = np.argmin(d2, axis=0)
     idx = phase[nearest].astype(np.int32)
 
+    # No background: in a two-phase alloy both phases are the objects of
+    # interest, and treating either as context would export half the truth.
     return Scene(idx, [phase_a, phase_b], np.zeros(shape, np.float32), pixel_size_nm,
                  f"{n_grains}-grain {phase_a}/{phase_b} alloy, polished flat",
-                 {"n_grains": int(n_grains), "flat": True})
+                 background_labels=(),
+                 meta={"n_grains": int(n_grains), "flat": True})
 
 
 def porous_surface(shape=(512, 512), pixel_size_nm=4.0, porosity=0.25,
@@ -137,9 +159,15 @@ def porous_surface(shape=(512, 512), pixel_size_nm=4.0, porosity=0.25,
     from scipy.ndimage import gaussian_filter
     h = gaussian_filter(h, 1.5)
 
+    # The pore is what gets segmented in a porous sample. Its material is
+    # vacuum, but its annotation label is "pore" -- naming it after the material
+    # would have it filtered out as empty space and the scene would export no
+    # ground truth at all.
     return Scene(idx, [matrix, "vacuum"], h, pixel_size_nm,
                  f"porous {matrix}, {porosity:.0%} porosity",
-                 {"porosity": float(pores.mean())})
+                 label_names=[matrix, "pore"],
+                 meta={"porosity_achieved": float(pores.mean()),
+                       "porosity_requested": float(porosity)})
 
 
 def biological_surface(shape=(512, 512), pixel_size_nm=8.0, n_cells=14, seed=0) -> Scene:
@@ -167,7 +195,7 @@ def biological_surface(shape=(512, 512), pixel_size_nm=8.0, n_cells=14, seed=0) 
 
     return Scene(idx, ["resin", "biology"], h.astype(np.float32), pixel_size_nm,
                  f"{n_cells} cells in resin -- topographic contrast only",
-                 {"n_cells": int(n_cells), "z_contrast": "negligible"})
+                 meta={"n_cells": int(n_cells), "z_contrast": "negligible"})
 
 
 def fib_cross_section(shape=(512, 512), pixel_size_nm=5.0, n_layers=4, seed=0) -> Scene:
@@ -192,9 +220,11 @@ def fib_cross_section(shape=(512, 512), pixel_size_nm=5.0, n_layers=4, seed=0) -
 
     h = _smooth_noise(shape, rng, 3, 8.0)               # residual curtaining relief
 
+    # Every layer is a region someone would segment, including the substrate.
     return Scene(idx.astype(np.int32), names, h.astype(np.float32), pixel_size_nm,
                  f"FIB cross-section, Pt cap over {len(names) - 1} layers",
-                 {"layers": names})
+                 background_labels=(),
+                 meta={"layers": names})
 
 
 BUILDERS = {

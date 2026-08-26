@@ -3,7 +3,8 @@ from __future__ import annotations
 import tifffile
 
 from acorn_fib_sim.io import generate_fib_dataset
-from acorn_fib_sim.plugin import _fresh_run_dir, _open_paths_in_acorn, _params_from_clu
+from acorn_fib_sim.plugin import _params_from_clu
+from acorn_sim_common import fresh_run_dir, open_paths_in_acorn
 from acorn_fib_sim.simulator import ImagingConfig, MillingConfig, SimConfig, simulate
 
 
@@ -53,9 +54,9 @@ def test_clu_params_map_to_fib_sim_request(tmp_path) -> None:
 
 
 def test_fib_plugin_uses_fresh_run_directories(tmp_path) -> None:
-    first = _fresh_run_dir(tmp_path, "fib_run")
+    first = fresh_run_dir(tmp_path, "fib_run")
     first.mkdir(parents=True)
-    second = _fresh_run_dir(tmp_path, "fib_run")
+    second = fresh_run_dir(tmp_path, "fib_run")
 
     assert first != second
     assert first.parent == tmp_path
@@ -67,7 +68,7 @@ def test_fib_auto_open_reports_missing_outputs(tmp_path) -> None:
         def _w(self):
             raise AssertionError("window should not be used without files")
 
-    count, message = _open_paths_in_acorn(Context(), [str(tmp_path / "missing.tif")])
+    count, message = open_paths_in_acorn(Context(), [str(tmp_path / "missing.tif")])
 
     assert count == 0
     assert "no output TIFF files" in message

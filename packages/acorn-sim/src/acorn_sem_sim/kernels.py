@@ -14,7 +14,7 @@ So each (material, energy, tilt) yields:
     eta     backscatter yield
 
 K_SE is the interesting one. It is not a Gaussian and not close to one: at 5 keV
-in silicon its median radius is 0.4 nm while its 95th percentile is 211 nm. That
+in silicon its median radius is 0.40 nm while its 95th percentile is 209 nm. That
 is the SE1/SE2 split -- a sub-nanometre core from the incident probe sitting on a
 pedestal hundreds of nanometres wide contributed by backscatters re-crossing the
 surface. Every single-Gaussian MTF model collapses those two into one width and

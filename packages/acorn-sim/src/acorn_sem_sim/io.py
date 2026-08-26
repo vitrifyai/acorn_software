@@ -15,6 +15,7 @@ import tifffile
 
 from . import scenes as _scenes
 from .imaging import Beam, Detector, SEMImage, simulate
+from .scenes import Scene
 
 
 def uint8_image(image: np.ndarray) -> np.ndarray:
@@ -57,20 +58,24 @@ def _polygons_for_label(mask: np.ndarray, min_area_px: int = 12) -> list[list[li
     return out
 
 
-def write_annotations(path: Path, result: SEMImage, min_area_px: int = 12) -> int:
+def write_annotations(path: Path, result: SEMImage, scene: Scene | None = None,
+                      min_area_px: int = 12) -> int:
     """Write an ACORN annotation sidecar from the ground-truth label map.
 
-    Label 0 is treated as background and not exported -- a substrate or matrix
-    filling most of the frame is not a useful annotation, and exporting it would
-    swamp any real object count.
+    The scene decides what counts as an object and what it is called. Filtering
+    on the material name instead -- skipping "vacuum", say -- looks reasonable
+    and is wrong: in a porous specimen the pores ARE the objects, they are made
+    of vacuum, and that rule silently exported nothing at all.
     """
+    names = (scene.label_names or scene.material_names) if scene else result.material_names
+    background = scene.background_labels if scene else (0,)
+
     annotations = []
     for value in np.unique(result.material_index):
-        if int(value) == 0:
+        label = int(value)
+        if label in background:
             continue
-        name = result.material_names[int(value)]
-        if name == "vacuum":
-            continue
+        name = names[label] if label < len(names) else str(label)
         for poly in _polygons_for_label(result.material_index == value, min_area_px):
             annotations.append({"label": name, "polygon": poly, "source": "simulation",
                                 "accepted": True})
@@ -145,13 +150,15 @@ def generate_sem_dataset(output_dir: Path, count: int, params: dict, *,
         tifffile.imwrite(image_path, uint8_image(result.image))
         paths.append(image_path)
 
-        n_ann = write_annotations(image_dir / f"{stem}.annotations.json", result)
+        n_ann = write_annotations(image_dir / f"{stem}.annotations.json",
+                                  result, scene)
 
         if save_layers:
             tifffile.imwrite(layer_dir / f"{stem}_truth.tif",
                              result.material_index.astype(np.uint8))
             tifffile.imwrite(layer_dir / f"{stem}_se.tif", result.se.astype(np.float32))
             tifffile.imwrite(layer_dir / f"{stem}_bse.tif", result.bse.astype(np.float32))
+            tifffile.imwrite(layer_dir / f"{stem}_tilt.tif", result.tilt_deg.astype(np.float32))
 
         metadata.append({
             "id": i + 1,
@@ -159,8 +166,10 @@ def generate_sem_dataset(output_dir: Path, count: int, params: dict, *,
             "scene": kind,
             "description": scene.description,
             "annotations": n_ann,
+            "pixel_size_nm": scene.pixel_size_nm,
             "width": int(result.image.shape[1]),
             "height": int(result.image.shape[0]),
+            "scene_params": scene.meta,
             **result.meta,
         })
 

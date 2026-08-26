@@ -2,17 +2,17 @@
 
 from __future__ import annotations
 
-from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from PyQt6.QtCore import QThread, QTimer, pyqtSignal
+from acorn_sim_common import as_bool, fresh_run_dir, open_paths_in_acorn
+from PyQt6.QtCore import QThread, pyqtSignal
 from PyQt6.QtWidgets import QMessageBox, QWidget
 
 from acorn.plugin_base import AcornPlugin
+from acorn_tem_sim.engine_io import generate_4dstem, generate_tem_advanced
 from acorn_tem_sim.io import generate_tem_dataset
 from acorn_tem_sim.simulator import Specimen, resolve
-from acorn_tem_sim.engine_io import generate_tem_advanced, generate_4dstem
 
 if TYPE_CHECKING:
     from acorn.gui.context import AcornContext
@@ -29,7 +29,7 @@ class _TemSimThread(QThread):
     def run(self) -> None:
         try:
             cfg, specimen = _config_from_params(self.params)
-            output_dir = _fresh_run_dir(Path(self.params["output_dir"]), "tem_run")
+            output_dir = fresh_run_dir(Path(self.params["output_dir"]), "tem_run")
             paths = generate_tem_dataset(
                 output_dir,
                 int(self.params["count"]),
@@ -118,10 +118,10 @@ class TemSimulationPlugin(AcornPlugin):
 
         def work(p):
             from acorn_tem_sim.reference import simulate_from_reference
-            out = _fresh_run_dir(Path(p.get("output_dir") or (Path.home() / "tem_sim_output")), "ref_run")
+            out = fresh_run_dir(Path(p.get("output_dir") or (Path.home() / "tem_sim_output")), "ref_run")
             simulate_from_reference(ref, str(p.get("modality", "cryoem")), params=p,
                                     n=int(p.get("count", p.get("n", 8))),
-                                    calibrate=_as_bool(p.get("calibrate", True)), out_dir=str(out))
+                                    calibrate=as_bool(p.get("calibrate", True)), out_dir=str(out))
             return [str(x) for x in sorted(Path(out).glob("sim_*.png"))]
 
         self._thread = _EngineThread(params, work)
@@ -155,13 +155,13 @@ class TemSimulationPlugin(AcornPlugin):
             self._panel.set_running(True)
 
         def work(p):
-            out = _fresh_run_dir(Path(p.get("output_dir") or (Path.home() / "tem_sim_output")),
+            out = fresh_run_dir(Path(p.get("output_dir") or (Path.home() / "tem_sim_output")),
                                  "fourd_run" if action == "generate_4dstem" else "tem_adv_run")
             if action == "generate_4dstem":
                 return [str(x) for x in generate_4dstem(out, p, seed=int(p.get("seed", 1)))]
             return [str(x) for x in generate_tem_advanced(
                 out, int(p.get("count", 5)), p, seed=int(p.get("seed", 1)),
-                save_layers=_as_bool(p.get("save_layers", True)))]
+                save_layers=as_bool(p.get("save_layers", True)))]
 
         self._thread = _EngineThread(params, work)
         self._thread.finished_ok.connect(lambda paths: self._on_engine_finished(label, paths))
@@ -173,7 +173,7 @@ class TemSimulationPlugin(AcornPlugin):
     def _on_engine_finished(self, label: str, image_paths: list) -> None:
         self._context.set_status(f"Generated {label}: {len(image_paths)} image(s)", timeout_ms=8000)
         if image_paths:
-            _open_paths_in_acorn(self._context, image_paths)
+            open_paths_in_acorn(self._context, image_paths)
 
     def _on_generate_requested(self, params: dict) -> None:
         if self._thread is not None and self._thread.isRunning():
@@ -197,7 +197,7 @@ class TemSimulationPlugin(AcornPlugin):
         self._context.set_status(message, timeout_ms=8000)
         params = self._thread.params if self._thread is not None else {}
         if params.get("open_generated", True) and image_paths:
-            opened, detail = _open_paths_in_acorn(self._context, image_paths)
+            opened, detail = open_paths_in_acorn(self._context, image_paths)
             if self._panel is not None:
                 self._panel.set_status(f"Opening {opened} generated image(s): {output_dir}" if opened else detail)
             self._context.set_status(
@@ -260,8 +260,8 @@ def _params_from_clu(params: dict) -> dict:
     return {
         "output_dir": params.get("output_dir") or str(Path.home() / "tem_sim_output"),
         "count": int(params.get("count", params.get("images", 10))),
-        "open_generated": _as_bool(params.get("open_generated", True)),
-        "save_layers": _as_bool(params.get("save_layers", True)),
+        "open_generated": as_bool(params.get("open_generated", True)),
+        "save_layers": as_bool(params.get("save_layers", True)),
         "simulation_path": _simulation_path_from_text(params.get("simulation_path", params.get("backend", params.get("path", "fast")))),
         "custom_script_path": str(params.get("custom_script_path", params.get("script_path", ""))),
         "slice_thickness_a": float(params.get("slice_thickness_a", 5.0)),
@@ -275,7 +275,7 @@ def _params_from_clu(params: dict) -> dict:
         "detector_model": str(params.get("detector_model", "K3")),
         "defocus_min_um": float(params.get("defocus_min_um", -1.0)),
         "defocus_max_um": float(params.get("defocus_max_um", -2.5)),
-        "phase_plate": _as_bool(params.get("phase_plate", False)),
+        "phase_plate": as_bool(params.get("phase_plate", False)),
         "seed": int(params.get("seed", 1)),
         "specimen_kind": _specimen_kind_from_text(params.get("specimen_kind", params.get("kind", params.get("sample", "plga")))),
         "n_particles": int(params.get("n_particles", params.get("particles", 45))),
@@ -286,7 +286,7 @@ def _params_from_clu(params: dict) -> dict:
         "oligomer_count": int(params.get("oligomer_count", 1)),
         "ice_thickness_nm": float(params.get("ice_thickness_nm", 45.0)),
         "solvent_noise": float(params.get("solvent_noise", 6.0)),
-        "allow_overlap": _as_bool(params.get("allow_overlap", False)),
+        "allow_overlap": as_bool(params.get("allow_overlap", False)),
     }
 
 
@@ -319,14 +319,6 @@ def _use_engine(params: dict) -> bool:
     return kind in ("plga", "nanoparticles", "")   # default PLGA -> engine (better physics, GPU)
 
 
-def _as_bool(value) -> bool:
-    if isinstance(value, bool):
-        return value
-    if isinstance(value, str):
-        return value.strip().lower() not in {"0", "false", "no", "off", ""}
-    return bool(value)
-
-
 def _specimen_kind_from_text(value) -> str:
     text = str(value or "plga").strip().lower().replace("-", "_").replace(" ", "_")
     if text in {"solid", "solid_particles", "nanoparticle", "nanoparticles", "plga"}:
@@ -351,28 +343,3 @@ def _simulation_path_from_text(value) -> str:
     if text in {"custom", "script", "python", "custom_python"}:
         return "custom"
     return "fast"
-
-
-def _fresh_run_dir(base_dir: Path, prefix: str) -> Path:
-    base_dir = Path(base_dir)
-    stamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
-    run_dir = base_dir / f"{prefix}_{stamp}"
-    counter = 1
-    while run_dir.exists():
-        run_dir = base_dir / f"{prefix}_{stamp}_{counter}"
-        counter += 1
-    return run_dir
-
-
-def _open_paths_in_acorn(context: "AcornContext", paths: list[str]) -> tuple[int, str]:
-    real_paths = [Path(p) for p in paths if p and Path(p).exists()]
-    if not real_paths:
-        return 0, "Generated images, but no output TIFF files were found to open."
-    window_getter = getattr(context, "_w", None)
-    if window_getter is None:
-        return 0, "Generated images, but Acorn window is unavailable for auto-open."
-    window = window_getter()
-    if window is None or not hasattr(window, "open_files"):
-        return 0, "Generated images, but Acorn viewer is unavailable for auto-open."
-    QTimer.singleShot(0, lambda paths=real_paths: window.open_files(paths))
-    return len(real_paths), f"Opening {len(real_paths)} generated image(s)."

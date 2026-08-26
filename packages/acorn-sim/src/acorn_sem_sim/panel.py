@@ -25,7 +25,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from .gauge import InteractionVolumeGauge
+from .gauge import HINT_CSS, WARN_CSS, InteractionVolumeGauge
 from .materials import MATERIALS
 from .scenes import SCENE_LABELS
 
@@ -70,10 +70,24 @@ _DETECTORS = [
 
 _MATERIAL_NAMES = [m for m in sorted(MATERIALS) if m != "vacuum"]
 
+# Applied before every preset. A preset names a condition, so selecting one must
+# restore that condition completely: without this, choosing "Low dose / noisy"
+# and then returning to a normal preset left read noise at 6 e-, quietly moving
+# the noise floor of anything generated afterwards.
+_BASELINE: dict = {
+    "scene": "nanoparticles", "particle": "gold", "substrate": "carbon",
+    "n_particles": 40, "diameter_nm_mean": 40.0, "diameter_nm_sd": 12.0,
+    "relief": True,
+    "E0_kev": 5.0, "pixel_size_nm": 4.0, "image_size_px": 512,
+    "electrons_per_px": 500.0, "probe_nm": 1.0,
+    "detector": "ETD", "bse_mix": 0.15, "elevation_deg": 25.0,
+    "azimuth_deg": 0.0, "asymmetry": 0.30, "read_noise_e": 3.0,
+    "scan_jitter_px": 0.0,
+}
+
 
 class SemSimPanel(QWidget):
     generate_requested = pyqtSignal(dict)
-    action_requested = pyqtSignal(str, dict)
 
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
@@ -95,7 +109,7 @@ class SemSimPanel(QWidget):
         layout.addWidget(self._gauge)
         self._advice = QLabel("")
         self._advice.setWordWrap(True)
-        self._advice.setStyleSheet("font-size: 11px; color: #d4a24c;")
+        self._advice.setStyleSheet(WARN_CSS)
         layout.addWidget(self._advice)
 
         layout.addWidget(self._build_detector_group())
@@ -112,7 +126,7 @@ class SemSimPanel(QWidget):
 
         self._status = QLabel("Ready.")
         self._status.setWordWrap(True)
-        self._status.setStyleSheet("font-size: 11px; color: #6c7086;")
+        self._status.setStyleSheet(HINT_CSS)
         layout.addWidget(self._status)
         layout.addStretch()
 
@@ -128,7 +142,7 @@ class SemSimPanel(QWidget):
         form.addRow("Preset:", self._preset)
         self._preset_hint = QLabel("")
         self._preset_hint.setWordWrap(True)
-        self._preset_hint.setStyleSheet("font-size: 11px; color: #6c7086;")
+        self._preset_hint.setStyleSheet(HINT_CSS)
         form.addRow(self._preset_hint)
         return box
 
@@ -279,7 +293,9 @@ class SemSimPanel(QWidget):
         if not preset:
             return
         self._preset_hint.setText(preset.get("_hint", ""))
-        self.apply_params({k: v for k, v in preset.items() if not k.startswith("_")})
+        settings = dict(_BASELINE)
+        settings.update({k: v for k, v in preset.items() if not k.startswith("_")})
+        self.apply_params(settings)
 
     def _on_scene_changed(self) -> None:
         kind = self._scene.currentData()

@@ -527,3 +527,167 @@ def test_field_of_view_warning_fires_only_when_it_should():
                                   "image_size_px": 128, "substrate": "carbon"})
     assert ok == ""
     assert "interaction volume" in bad and "lower the kV" in bad
+
+
+# ---------------------------------------------------------------------------
+# Regressions found by reading the code back
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize("kind", sorted(SC.BUILDERS))
+def test_every_scene_exports_some_ground_truth(tmp_path, kind):
+    """No scene may produce an empty truth file.
+
+    The porous scene did exactly that. Its pores are the objects anyone would
+    segment, they are made of vacuum, and the exporter skipped regions by
+    MATERIAL name -- so the one scene whose objects are empty space silently
+    shipped zero annotations while still looking like it had worked.
+    """
+    from acorn_sem_sim.io import generate_sem_dataset
+    generate_sem_dataset(tmp_path, 1, {
+        "scene": kind, "image_size_px": 128, "pixel_size_nm": 8.0,
+        "n_electrons": 3000, "n_particles": 10,
+    }, seed=0)
+    ann = json.loads((tmp_path / "images" / "semsim_00000.annotations.json").read_text())
+    assert ann["annotations"], f"scene {kind!r} exported no ground truth"
+
+
+def test_pores_are_annotated_as_pores_not_as_vacuum(tmp_path):
+    from acorn_sem_sim.io import generate_sem_dataset
+    generate_sem_dataset(tmp_path, 1, {
+        "scene": "porous", "image_size_px": 128, "pixel_size_nm": 8.0,
+        "n_electrons": 3000,
+    }, seed=0)
+    ann = json.loads((tmp_path / "images" / "semsim_00000.annotations.json").read_text())
+    labels = {a["label"] for a in ann["annotations"]}
+    assert labels == {"pore"}, labels
+
+
+def test_both_alloy_phases_are_annotated(tmp_path):
+    """Treating either phase as background would export half the truth."""
+    from acorn_sem_sim.io import generate_sem_dataset
+    generate_sem_dataset(tmp_path, 1, {
+        "scene": "grains", "image_size_px": 128, "pixel_size_nm": 8.0,
+        "n_electrons": 3000, "phase_a": "iron", "phase_b": "copper",
+    }, seed=0)
+    ann = json.loads((tmp_path / "images" / "semsim_00000.annotations.json").read_text())
+    assert {a["label"] for a in ann["annotations"]} == {"iron", "copper"}
+
+
+def test_substrate_is_not_annotated(tmp_path):
+    """The support fills the frame; annotating it would swamp the object count."""
+    from acorn_sem_sim.io import generate_sem_dataset
+    generate_sem_dataset(tmp_path, 1, {
+        "scene": "nanoparticles", "image_size_px": 128, "pixel_size_nm": 8.0,
+        "n_electrons": 3000, "n_particles": 10,
+    }, seed=0)
+    ann = json.loads((tmp_path / "images" / "semsim_00000.annotations.json").read_text())
+    assert {a["label"] for a in ann["annotations"]} == {"gold"}
+
+
+def test_scene_parameters_reach_the_dataset_record(tmp_path):
+    """What a scene actually built, not just what was asked for.
+
+    Requested and achieved differ -- particles are dropped when they will not
+    fit without overlapping -- and a dataset record that only stores the request
+    misdescribes its own contents.
+    """
+    from acorn_sem_sim.io import generate_sem_dataset
+    generate_sem_dataset(tmp_path, 1, {
+        "scene": "nanoparticles", "image_size_px": 128, "pixel_size_nm": 4.0,
+        "n_electrons": 3000, "n_particles": 200, "diameter_nm_mean": 60.0,
+    }, seed=0)
+    rec = json.loads((tmp_path / "metadata.json").read_text())["images"][0]
+    sp = rec["scene_params"]
+    assert sp["n_particles_requested"] == 200
+    assert 0 < sp["n_particles_placed"] < 200, "crowding was not recorded"
+    assert rec["pixel_size_nm"] == 4.0
+
+
+def test_shared_plugin_helpers_have_one_definition():
+    """These were copied verbatim into three plugins, which is how three copies
+    become three behaviours."""
+    import acorn_sim_common as common
+    from acorn_fib_sim import plugin as fib
+    from acorn_sem_sim import plugin as sem
+    from acorn_tem_sim import plugin as tem
+    for mod in (tem, fib, sem):
+        assert mod.fresh_run_dir is common.fresh_run_dir
+        assert mod.open_paths_in_acorn is common.open_paths_in_acorn
+        assert mod.as_bool is common.as_bool
+
+
+@pytest.mark.parametrize("value,expected", [
+    (True, True), (False, False), ("false", False), ("no", False),
+    ("off", False), ("0", False), ("", False), ("true", True), ("yes", True),
+])
+def test_as_bool_handles_the_strings_a_model_sends(value, expected):
+    """Plain bool("false") is True, which silently inverts the setting."""
+    from acorn_sim_common import as_bool
+    assert as_bool(value) is expected
+
+
+def test_fresh_run_dir_never_reuses_a_path(tmp_path):
+    from acorn_sim_common import fresh_run_dir
+    seen = set()
+    for _ in range(5):
+        d = fresh_run_dir(tmp_path, "run")
+        assert d not in seen
+        d.mkdir(parents=True)
+        seen.add(d)
+
+
+def test_all_public_submodules_are_reachable():
+    """`import acorn_sem_sim; acorn_sem_sim.scenes` must work. The lazy __getattr__
+    only serves names in __all__, and two real submodules were missing from it."""
+    import importlib
+
+    import acorn_sem_sim as pkg
+    for name in ("transport", "kernels", "imaging", "materials", "scenes", "io"):
+        assert getattr(pkg, name) is importlib.import_module(f"acorn_sem_sim.{name}")
+
+
+def test_bare_import_stays_headless():
+    """The deferred imports exist so headless use never pays for Qt or scipy."""
+    import subprocess
+    import sys
+    code = ("import sys, acorn_sem_sim; "
+            "print('PyQt6' in sys.modules, 'scipy' in sys.modules)")
+    out = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True)
+    assert out.stdout.strip() == "False False", out.stdout
+
+
+def test_plugin_can_actually_build_its_panel():
+    """Construct the panel the way the plugin does.
+
+    Removing a signal from the panel while the plugin still connected to it made
+    every test here pass and the dock vanish from the running application. The
+    unit tests build the panel directly and never exercised that connection.
+    """
+    import os
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    pytest.importorskip("PyQt6")
+    from acorn_sem_sim.plugin import SemSimulationPlugin
+    from PyQt6.QtWidgets import QApplication, QWidget
+
+    app = QApplication.instance() or QApplication([])
+
+    class _Context:
+        """Minimal stand-in for AcornContext."""
+
+        class _Signal:
+            def connect(self, _slot):
+                pass
+
+        action_requested = _Signal()
+
+        def set_status(self, *_a, **_k):
+            pass
+
+    plugin = SemSimulationPlugin(_Context())
+    panel = plugin.create_panel()
+    try:
+        assert isinstance(panel, QWidget)
+        assert panel.params()["scene"]        # the plugin reads this back
+    finally:
+        panel.deleteLater()
+        app.processEvents()
