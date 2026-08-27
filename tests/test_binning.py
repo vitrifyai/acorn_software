@@ -19,7 +19,6 @@ from acorn.core.binning import (
     validate_factor,
 )
 
-
 # --- arithmetic -------------------------------------------------------------
 
 def test_bins_exact_block_means():
