@@ -20,7 +20,6 @@ from typing import Optional
 
 import numpy as np
 
-
 # ── supported extensions ──────────────────────────────────────────────────────
 
 DM4_EXTS   = {".dm4"}
@@ -50,7 +49,6 @@ class DM4Metadata:
     pixel_unit: str = "nm"
     pixel_size_from_header: bool = False  # True when read from file header
     bin_factor: int = 1          # analysis binning applied at load; 1 = native
-    native_pixel_size: float = 1.0        # nm/px as stored in the file
     binning_cropped_px: tuple = (0, 0)    # rows, cols dropped so the shape divided
     mag: Optional[float] = None
     voltage_kV: Optional[float] = None
@@ -59,6 +57,18 @@ class DM4Metadata:
     filepath: Path = field(default_factory=Path)
     filename: str = ""
     all_tags: dict = field(default_factory=dict)
+
+    @property
+    def native_pixel_size(self) -> float:
+        """nm/px on the file's own grid, before any analysis binning.
+
+        Derived rather than stored. As a field it defaulted to 1.0, so anything
+        constructing a DM4Image directly -- the 3-D projection viewer does --
+        carried a native pixel size that disagreed with its own pixel size.
+        Deriving it also keeps it right through a manual override, which is
+        applied as native x bin_factor.
+        """
+        return self.pixel_size / max(int(self.bin_factor), 1)
 
 
 # ── main image class ──────────────────────────────────────────────────────────
@@ -163,7 +173,6 @@ class DM4Image:
         if self._frames is not None:
             self._frames = bin_frames(self._frames, factor, native).data
 
-        self.meta.native_pixel_size = native
         self.meta.pixel_size = result.pixel_size_nm
         self.meta.bin_factor = factor
         self.meta.binning_cropped_px = result.cropped_px
@@ -195,7 +204,6 @@ class DM4Image:
                 f"Unsupported file format: {ext!r}\n"
                 f"Supported: {sorted(ALL_EXTS)}"
             )
-        obj.meta.native_pixel_size = obj.meta.pixel_size
         obj.apply_binning(bin_factor)
         return obj
 

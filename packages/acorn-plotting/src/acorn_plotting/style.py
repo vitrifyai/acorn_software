@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import matplotlib
 
-
 ACORN_RC: dict = {
     "figure.facecolor":     "white",
     "axes.facecolor":       "white",

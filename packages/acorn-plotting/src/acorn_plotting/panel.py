@@ -5,12 +5,23 @@ import numpy as np
 from PyQt6.QtCore import pyqtSignal
 from PyQt6.QtGui import QColor
 from PyQt6.QtWidgets import (
-    QCheckBox, QComboBox, QFileDialog, QHBoxLayout, QLabel,
-    QLineEdit, QPushButton, QSizePolicy, QSpinBox, QTabWidget,
-    QTextEdit, QToolButton, QVBoxLayout, QWidget,
+    QCheckBox,
+    QComboBox,
+    QFileDialog,
+    QHBoxLayout,
+    QLabel,
+    QLineEdit,
+    QPushButton,
+    QSizePolicy,
+    QSpinBox,
+    QTabWidget,
+    QTextEdit,
+    QToolButton,
+    QVBoxLayout,
+    QWidget,
 )
 
-from acorn_plotting.figures import PLOT_TYPES, _XLABEL_MAP
+from acorn_plotting.figures import _XLABEL_MAP, PLOT_TYPES
 
 PALETTES: dict[str, list[str]] = {
     "ACORN":        ["#4878CF", "#D65F5F", "#6ACC65", "#B47CC7", "#C4AD66", "#77BEDB"],
@@ -491,7 +502,7 @@ class PlotPanel(QWidget):
             return
         df     = pd.concat(frames, ignore_index=True)
         metric = self._stats_metric_combo.currentData() or "ecd_nm"
-        from acorn_plotting.stats import run_statistics, format_stats_report
+        from acorn_plotting.stats import format_stats_report, run_statistics
         result = run_statistics(df, metric)
         self._stats_text.setPlainText(format_stats_report(result))
         self._tabs.setCurrentIndex(1)
@@ -549,7 +560,9 @@ class PlotPanel(QWidget):
         if not path:
             return
         try:
-            import pandas as pd, os
+            import os
+
+            import pandas as pd
             df    = pd.read_csv(path)
             label = os.path.splitext(os.path.basename(path))[0]
             self._datasets.append({"label": label, "df": df,

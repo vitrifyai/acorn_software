@@ -2,7 +2,31 @@
 from __future__ import annotations
 
 from typing import Optional
+
 import numpy as np
+
+
+def _format_p(p: float) -> str:
+    """Render a p-value the way it must appear in a manuscript.
+
+    Rounding to four decimal places turned any p below 0.00005 into "0.0", and
+    the plain-language recommendation said so verbatim -- "p = 0.0" is not a
+    result any test produces, and copying it into a paper is a reporting error.
+    """
+    if p is None:
+        return ""
+    p = float(p)
+    if p < 0.0001:
+        return "< 0.0001"
+    if p < 0.001:
+        return f"{p:.5f}"
+    return f"{p:.4f}"
+
+
+def _p_phrase(p_text: str) -> str:
+    """"p < 0.0001" rather than "p = < 0.0001"."""
+    t = str(p_text).strip()
+    return f"p {t}" if t.startswith("<") else f"p = {t}"
 
 
 def _stars(p: float) -> str:
@@ -36,9 +60,16 @@ def run_statistics(df, metric: str, group_col: Optional[str] = "label") -> dict:
     else:
         groups = {"all": df[metric].dropna().values}
 
-    groups = {k: v for k, v in groups.items() if len(v) >= 3}
+    # Groups too small to test are excluded -- but SAID SO. Dropping them
+    # silently meant four conditions could go in and a two-group comparison come
+    # out, with nothing in the result naming what had been left behind.
+    MIN_N = 3
+    excluded = [{"group": k, "n": int(len(v))}
+                for k, v in groups.items() if len(v) < MIN_N]
+    groups = {k: v for k, v in groups.items() if len(v) >= MIN_N}
     if not groups:
-        return {"error": "Need at least 3 values per group for statistics."}
+        return {"error": f"Need at least {MIN_N} values per group for statistics.",
+                "excluded": excluded}
 
     # ── Descriptive stats ────────────────────────────────────────────────────
     descriptive = []
@@ -100,14 +131,14 @@ def run_statistics(df, metric: str, group_col: Optional[str] = "label") -> dict:
             stat, p = scipy_stats.ttest_ind(a, b, equal_var=False)
             comparison = {
                 "test": "Welch t-test", "statistic": round(float(stat), 4),
-                "p": round(float(p), 4), "significance": _stars(p),
+                "p": float(p), "p_text": _format_p(p), "significance": _stars(p),
                 "note": "Used because both groups appear normally distributed.",
             }
         else:
             stat, p = scipy_stats.mannwhitneyu(a, b, alternative="two-sided")
             comparison = {
                 "test": "Mann-Whitney U", "statistic": round(float(stat), 4),
-                "p": round(float(p), 4), "significance": _stars(p),
+                "p": float(p), "p_text": _format_p(p), "significance": _stars(p),
                 "note": "Used because at least one group is non-normal.",
             }
 
@@ -116,7 +147,7 @@ def run_statistics(df, metric: str, group_col: Optional[str] = "label") -> dict:
             stat, p = scipy_stats.f_oneway(*group_list)
             comparison = {
                 "test": "One-way ANOVA", "statistic": round(float(stat), 4),
-                "p": round(float(p), 4), "significance": _stars(p),
+                "p": float(p), "p_text": _format_p(p), "significance": _stars(p),
                 "note": "Used because all groups appear normally distributed.",
             }
             if p < 0.05:
@@ -129,7 +160,7 @@ def run_statistics(df, metric: str, group_col: Optional[str] = "label") -> dict:
                             posthoc.append({
                                 "group_a": group_names[i],
                                 "group_b": group_names[j],
-                                "p": round(ph_p, 4),
+                                "p": float(ph_p), "p_text": _format_p(ph_p),
                                 "significance": _stars(ph_p),
                             })
                 except Exception:
@@ -138,7 +169,7 @@ def run_statistics(df, metric: str, group_col: Optional[str] = "label") -> dict:
             stat, p = scipy_stats.kruskal(*group_list)
             comparison = {
                 "test": "Kruskal-Wallis", "statistic": round(float(stat), 4),
-                "p": round(float(p), 4), "significance": _stars(p),
+                "p": float(p), "p_text": _format_p(p), "significance": _stars(p),
                 "note": "Used because at least one group is non-normal.",
             }
             if p < 0.05:
@@ -152,7 +183,8 @@ def run_statistics(df, metric: str, group_col: Optional[str] = "label") -> dict:
                         posthoc.append({
                             "group_a": group_names[i],
                             "group_b": group_names[j],
-                            "p_bonferroni": round(ph_p_bonf, 4),
+                            "p_bonferroni": float(ph_p_bonf),
+                            "p_text": _format_p(ph_p_bonf),
                             "significance": _stars(ph_p_bonf),
                         })
                 except Exception:
@@ -163,16 +195,22 @@ def run_statistics(df, metric: str, group_col: Optional[str] = "label") -> dict:
 
     # ── Plain-language recommendation ────────────────────────────────────────
     n_groups = len(groups)
+    exclusion_note = ""
+    if excluded:
+        named = ", ".join(f"{e['group']} (n={e['n']})" for e in excluded)
+        exclusion_note = (
+            f" Excluded from the comparison for having fewer than {MIN_N} "
+            f"values: {named}.")
     if n_groups == 1:
         rec = "You have one group. Descriptive statistics and normality are shown above."
     elif n_groups == 2:
         test_used = comparison.get("test", "")
         sig = comparison.get("significance", "")
-        p_val = comparison.get("p", None)
+        p_val = comparison.get("p_text") or comparison.get("p")
         if p_val is not None:
             rec = (
                 f"Two groups compared using {test_used}. "
-                f"p = {p_val} ({sig}). "
+                f"{_p_phrase(p_val)} ({sig}). "
                 + ("The difference is statistically significant." if sig != "ns"
                    else "No statistically significant difference detected.")
                 + (" Both groups were normally distributed, so a parametric test was used."
@@ -184,10 +222,10 @@ def run_statistics(df, metric: str, group_col: Optional[str] = "label") -> dict:
     else:
         test_used = comparison.get("test", "")
         sig = comparison.get("significance", "")
-        p_val = comparison.get("p", None)
+        p_val = comparison.get("p_text") or comparison.get("p")
         rec = (
             f"{n_groups} groups compared using {test_used}. "
-            + (f"Overall p = {p_val} ({sig}). " if p_val is not None else "")
+            + (f"Overall {_p_phrase(p_val)} ({sig}). " if p_val is not None else "")
             + (f"Post-hoc pairwise comparisons shown below ({len(posthoc)} pairs)."
                if posthoc else "")
         )
@@ -199,7 +237,8 @@ def run_statistics(df, metric: str, group_col: Optional[str] = "label") -> dict:
         "all_normal":    all_normal,
         "comparison":    comparison,
         "posthoc":       posthoc,
-        "recommendation": rec,
+        "excluded":      excluded,
+        "recommendation": rec + exclusion_note,
     }
 
 

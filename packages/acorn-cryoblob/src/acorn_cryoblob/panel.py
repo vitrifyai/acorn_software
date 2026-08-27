@@ -2,15 +2,14 @@
 
 from __future__ import annotations
 
-from acorn.gui import path_field
-
 from pathlib import Path
 
 from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtWidgets import (
-    QFileDialog,
     QCheckBox,
+    QComboBox,
     QDoubleSpinBox,
+    QFileDialog,
     QFormLayout,
     QGroupBox,
     QHBoxLayout,
@@ -26,8 +25,9 @@ from PyQt6.QtWidgets import (
     QTabWidget,
     QVBoxLayout,
     QWidget,
-    QComboBox,
 )
+
+from acorn.gui import path_field
 
 
 class CryoBlobPanel(QWidget):

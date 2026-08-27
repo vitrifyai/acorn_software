@@ -2,13 +2,12 @@
 
 from __future__ import annotations
 
-from collections import OrderedDict
 import json
 import os
+from collections import OrderedDict
 from pathlib import Path
 
 from PyQt6.QtCore import QThread, pyqtSignal
-
 
 DEFAULT_COLUMNS = [
     "File Location",
@@ -220,6 +219,7 @@ def _load_source_image(file_path: str, pixel_size_nm: float, *, use_cache: bool,
     import mrcfile
     import tifffile
     from PIL import Image
+
     from acorn.core.dm4_loader import DM4Image
 
     # The bin factor belongs in the key: the same file at a different binning is
@@ -1526,8 +1526,8 @@ def _detect_distance_watershed_np(
     seeds one marker per distance peak, and watersheds to split touching blobs."""
     import numpy as np
     from scipy import ndimage as ndi
-    from skimage.filters import threshold_otsu, gaussian
     from skimage.feature import peak_local_max
+    from skimage.filters import gaussian, threshold_otsu
     from skimage.segmentation import watershed
     from skimage.transform import rescale
 
@@ -1727,6 +1727,7 @@ def _read_display_image(file_path: str):
     import mrcfile
     import tifffile
     from PIL import Image
+
     from acorn.core.dm4_loader import DM4Image
 
     path = Path(file_path)
@@ -2008,9 +2009,9 @@ def _process_single_file(
     """Run the requested CryoBLOB detector and return ACORN-friendly records."""
     _configure_jax_memory()
 
-    import numpy as np
     import cryoblob
     import jax.numpy as jnp
+    import numpy as np
     from cryoblob.types import MRC_Image
 
     im_np, y_nm_per_px, x_nm_per_px, pixel_size_source = _load_source_image(

@@ -171,14 +171,16 @@ def test_loader_binning_scales_pixel_size_and_records_provenance(tmp_path):
         100, 5, (256, 256)).astype(np.float32))
 
     native = DM4Image.from_file(path)
-    native.meta.pixel_size = 0.5          # simulate a calibrated header
     binned = DM4Image.from_file(path, bin_factor=4)
-    binned.meta.native_pixel_size = 0.5
 
     assert binned.raw.shape == (64, 64)
     assert binned.meta.bin_factor == 4
     assert native.meta.bin_factor == 1
     assert binned.meta.shape == binned.raw.shape
+    # derived, so it describes the file's own grid whatever the binning
+    assert binned.meta.native_pixel_size == pytest.approx(
+        binned.meta.pixel_size / 4)
+    assert native.meta.native_pixel_size == pytest.approx(native.meta.pixel_size)
 
 
 def test_loader_default_is_unbinned(tmp_path):

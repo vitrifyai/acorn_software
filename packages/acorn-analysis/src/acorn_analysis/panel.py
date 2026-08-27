@@ -912,6 +912,9 @@ class AnalysisPanel(QWidget):
 # ── module-level helpers ──────────────────────────────────────────────────────
 
 def _p_stars(p: float) -> str:
+    """Significance stars. Thresholds match acorn_plotting.stats._stars; this
+    package does not depend on acorn-plotting, so the convention is repeated
+    rather than imported. Change both together."""
     if p < 0.001:
         return "***"
     if p < 0.01:

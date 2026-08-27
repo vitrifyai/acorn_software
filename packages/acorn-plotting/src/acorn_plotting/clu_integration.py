@@ -2,12 +2,12 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Optional, TYPE_CHECKING
+from typing import TYPE_CHECKING, Optional
 
 from PyQt6.QtWidgets import QWidget
 
-from acorn.plugin_base import AcornPlugin
 from acorn.export import ACORN_MEASUREMENTS_DIR, MEASUREMENTS_CSV
+from acorn.plugin_base import AcornPlugin
 
 if TYPE_CHECKING:
     from acorn.gui.context import AcornContext
@@ -168,8 +168,9 @@ class PlottingPlugin(AcornPlugin):
         if w is None:
             return False
 
-        from PyQt6.QtWidgets import QDockWidget
         from PyQt6.QtCore import Qt
+        from PyQt6.QtWidgets import QDockWidget
+
         from acorn_plotting.panel import PlotPanel
 
         self._panel = PlotPanel()
@@ -240,7 +241,7 @@ class PlottingPlugin(AcornPlugin):
         if df is None or df.empty:
             self._context.set_status("Stats: no measurements — run particle analysis first.")
             return
-        from acorn_plotting.stats import run_statistics, format_stats_report
+        from acorn_plotting.stats import format_stats_report, run_statistics
         result = run_statistics(df, metric)
         report = format_stats_report(result)
         if self._ensure_dock() and self._panel is not None:

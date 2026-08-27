@@ -9,20 +9,18 @@ from typing import TYPE_CHECKING
 
 from PyQt6.QtWidgets import QMessageBox, QWidget
 
+from acorn.plugin_base import AcornPlugin
+from acorn_cryoblob.thread import SUPPORTED_EXTS, CryoBlobThread
+
+if TYPE_CHECKING:
+    from acorn.gui.context import AcornContext
+
 # A folder pick that recurses into a parent dir can resolve hundreds of images.
 # CryoBLOB detection is CPU-bound (skimage/scipy stages), so a big accidental
 # sweep pins a core for many minutes and holds the Run button disabled the whole
 # time. Warn (interactive) or refuse (CLU) above this count so a mistaken folder
 # pick can't silently lock the UI.
 _MAX_FILES_WARN = 50
-
-from acorn.plugin_base import AcornPlugin
-
-from acorn_cryoblob.thread import SUPPORTED_EXTS
-from acorn_cryoblob.thread import CryoBlobThread
-
-if TYPE_CHECKING:
-    from acorn.gui.context import AcornContext
 
 
 # Fallback detection params for a CLU-driven run when the panel isn't built yet
@@ -294,7 +292,7 @@ class CryoBlobPlugin(AcornPlugin):
 
     def _rows_to_annotations(self, rows, img_path: Path) -> list:
         """Convert CryoBLOB result rows for one image into ACORN annotation objects."""
-        from acorn.core.annotations import ROIAnnotation, LineAnnotation
+        from acorn.core.annotations import LineAnnotation, ROIAnnotation
         try:
             from acorn.core.annotations import PolylineAnnotation
         except ImportError:

@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-
 import numpy as np
 
 _XLABEL_MAP = {
@@ -26,8 +25,15 @@ def _groups(df, metric, label_col):
 
 
 def _stats(vals):
+    """n, mean, SAMPLE standard deviation, median.
+
+    ddof=1 to match run_statistics. With the default ddof=0 the figure title and
+    the statistics table reported different standard deviations for the same
+    data -- a discrepancy that gets noticed in review, not before.
+    """
     n = len(vals)
-    return n, float(np.mean(vals)), float(np.std(vals)), float(np.median(vals))
+    sd = float(np.std(vals, ddof=1)) if n > 1 else 0.0
+    return n, float(np.mean(vals)), sd, float(np.median(vals))
 
 
 def _sig_bracket(ax, x1, x2, y, p, h=None):
@@ -36,7 +42,10 @@ def _sig_bracket(ax, x1, x2, y, p, h=None):
         h = (ylim[1] - ylim[0]) * 0.025
     ax.plot([x1, x1, x2, x2], [y, y + h, y + h, y],
             lw=0.75, color="#000000", clip_on=False)
-    stars = "***" if p < 0.001 else "**" if p < 0.01 else "*" if p < 0.05 else "ns"
+    # One definition of the thresholds, shared with the text output. A second
+    # copy here could drift and have a figure disagree with its own caption.
+    from acorn_plotting.stats import _stars
+    stars = _stars(p)
     ax.text((x1 + x2) * 0.5, y + h * 1.3, stars,
             ha="center", va="bottom", fontsize=9, color="#000000", fontweight="bold")
 
@@ -96,8 +105,8 @@ def draw_histogram(ax, df, metric="ecd_nm", n_bins=30, label_col="label",
 
 def draw_box_jitter(ax, df, metric="ecd_nm", label_col="label", palette=None,
                     log_y=False, show_sig=True, xlabel=None, ylabel=None):
-    from acorn_plotting.style import PALETTE
     from acorn_plotting.stats import run_statistics
+    from acorn_plotting.style import PALETTE
     pal = palette or PALETTE
 
     grps = [(l, v) for l, v in _groups(df, metric, label_col) if len(v) > 0]
