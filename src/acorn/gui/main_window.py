@@ -2327,18 +2327,35 @@ class MainWindow(
     # ── pixel size helpers ────────────────────────────────────────────────────
 
     def _update_px_btn(self, px_nm: float, from_header: bool) -> None:
-        """Refresh the status-bar pixel size button label."""
+        """Refresh the status-bar pixel size button label.
+
+        `px_nm` is the size measurements actually use, which under binning is
+        the header value scaled by the bin factor. Labelling that "(header)"
+        would misattribute it -- the file says 0.2081 nm/px, not the 0.8324 a
+        4x bin produces -- so the binning is named in the label. The number was
+        always right; where it came from was not.
+        """
         manually_set = self._img_idx in self._px_overrides
+        bin_factor = int(getattr(self, "_bin_factor", 1) or 1)
+        binned = f", {bin_factor}x binned" if bin_factor > 1 else ""
         if from_header:
-            text  = f"{px_nm:.4f} nm/px  (header)"
+            text  = f"{px_nm:.4f} nm/px  (header{binned})"
             color = _PAL.ACCEPTED          # read from the file header — trustworthy
         elif manually_set:
-            text  = f"{px_nm:.4f} nm/px  (manual)"
+            text  = f"{px_nm:.4f} nm/px  (manual{binned})"
             color = _PAL.PENDING           # you supplied this, the file did not
         else:
             text  = "px: not set  (click to enter)"
             color = "#E05252"              # measurements are wrong until this is set
         self._px_btn.setText(text)
+        if bin_factor > 1:
+            self._px_btn.setToolTip(
+                f"Measurements use {px_nm:.4f} nm/px.\n"
+                f"The file's own grid is {px_nm / bin_factor:.4f} nm/px; "
+                f"{bin_factor}x analysis binning scales it.\n"
+                "Click to set pixel size manually.")
+        else:
+            self._px_btn.setToolTip("Click to set pixel size manually")
         self._px_btn.setStyleSheet(
             f"QPushButton {{ color: {color}; font-size: 11px; padding: 0 6px; border: none; }}"
             f"QPushButton:hover {{ color: #ffffff; text-decoration: underline; }}"

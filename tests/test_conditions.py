@@ -258,3 +258,69 @@ def test_binning_claims_invariance_rather_than_no_relationship():
 def test_active_condition_reports_whether_it_touches_numbers():
     assert ActiveCondition(get("pixel_size_override"), "x").alters_numbers
     assert not ActiveCondition(get("contrast"), "x").alters_numbers
+
+
+# --- the status-bar pixel size must say where its number came from -----------
+
+def test_the_pixel_size_button_names_the_binning_that_produced_it():
+    """The number was always right; the attribution was not.
+
+    Under 4x binning the button read "0.8324 nm/px (header)" while the header
+    actually says 0.2081. Anyone checking provenance would have been told the
+    file said something it does not.
+    """
+    import os
+
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    pytest.importorskip("PyQt6")
+    from PyQt6.QtWidgets import QApplication
+
+    from acorn.gui.main_window import MainWindow
+
+    app = QApplication.instance() or QApplication([])
+    try:
+        window = MainWindow()
+        window._img_idx = 0
+
+        window._bin_factor = 1
+        window._update_px_btn(0.2081, from_header=True)
+        native = window._px_btn.text()
+        assert "0.2081" in native and "header" in native
+        assert "binned" not in native
+
+        window._bin_factor = 4
+        window._update_px_btn(0.8324, from_header=True)
+        binned = window._px_btn.text()
+        assert "0.8324" in binned
+        assert "4x binned" in binned, binned
+        # and the file's own grid stays recoverable
+        assert "0.2081" in window._px_btn.toolTip()
+    finally:
+        window.close()
+        window.deleteLater()
+        app.processEvents()
+
+
+def test_an_uncalibrated_image_says_so_rather_than_showing_a_number():
+    """Measurements are meaningless until it is set, so this must not look
+    like a valid calibration."""
+    import os
+
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    pytest.importorskip("PyQt6")
+    from PyQt6.QtWidgets import QApplication
+
+    from acorn.gui.main_window import MainWindow
+
+    app = QApplication.instance() or QApplication([])
+    try:
+        window = MainWindow()
+        window._img_idx = 0
+        window._px_overrides.clear()
+        window._bin_factor = 1
+        window._update_px_btn(1.0, from_header=False)
+        assert "not set" in window._px_btn.text()
+    finally:
+        window.close()
+        window.deleteLater()
+        app.processEvents()
