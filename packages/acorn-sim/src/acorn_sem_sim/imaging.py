@@ -63,6 +63,7 @@ class Detector:
     asymmetry:     float = 0.30    # directional shading strength, 0..1
     read_noise_e:  float = 3.0
     scan_jitter_px: float = 0.0
+    charging:      float = 0.0     # 0 = off. See charging.py before raising it.
 
 
 @dataclass
@@ -223,6 +224,31 @@ def simulate(material_index: np.ndarray,
             se_total = gaussian_filter(se_total, sigma)
             bse_total = gaussian_filter(bse_total, sigma)
 
+    # Charging, if it was asked for. Off by default because an artefact model
+    # that arrives uninvited ends up in a figure without anyone deciding it
+    # should. The tendency is computed from the transport; the appearance is
+    # drawn -- see charging.py for why that distinction is kept explicit.
+    charge_meta: dict = {"charging": "off"}
+    if detector.charging > 0:
+        from .charging import CONDUCTORS, apply_charging, charge_state
+
+        insulating = np.zeros(material_index.shape, dtype=bool)
+        worst = 0.0
+        for idx in present:
+            mat = mats[int(idx)]
+            if mat.rho <= 0 or mat.name in CONDUCTORS:
+                continue
+            insulating |= (material_index == idx)
+            st = charge_state(mat, beam.E0_kev, n_electrons=6000, seed=seed)
+            if abs(st.balance) > abs(worst):
+                worst = st.balance
+        se_total, charge_meta = apply_charging(
+            se_total, insulating, h, worst, strength=detector.charging,
+            seed=seed)
+        bse_total, _ = apply_charging(
+            bse_total, insulating, h, worst, strength=detector.charging,
+            seed=seed)
+
     kind = detector.kind.upper()
     if kind == "BSE":
         signal = bse_total.copy()
@@ -254,6 +280,7 @@ def simulate(material_index: np.ndarray,
             "materials": [names[int(i)] for i in present],
             "kernel_weight_lost": lost,
             "boundary_fraction": _boundary_fraction(material_index),
+            **charge_meta,
         },
     )
 

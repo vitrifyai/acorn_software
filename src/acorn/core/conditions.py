@@ -133,6 +133,21 @@ CONDITIONS: tuple[Condition, ...] = (
         claim=MeasurementClaim.UNRELATED,
     ),
     Condition(
+        key="charging",
+        label="Simulated charging",
+        affects=(Affects.MEASUREMENT, Affects.DETECTION, Affects.APPEARANCE),
+        note=("A simulated artefact, not a property of the specimen, and it "
+              "moves numbers by a lot. Measured on a 29-spore field: severe "
+              "charging grew mean object area 2.2x and changed the object "
+              "count from 40 to 28. Note the direction -- the count moved "
+              "TOWARD the truth, because flaring fills the dark ridged "
+              "interiors that otherwise fragment one spore into several. So "
+              "charging can flatter a segmentation as easily as it spoils "
+              "one, and a method tuned on charged simulations may be tuned to "
+              "the artefact. Which way it goes depends on the method."),
+        claim=MeasurementClaim.ALTERS,
+    ),
+    Condition(
         key="contrast",
         label="Contrast method",
         affects=(Affects.APPEARANCE,),
@@ -161,7 +176,8 @@ def evaluate(*, bin_factor: int = 1,
              crop_region=None,
              exclude_zones=None,
              contrast_method: str = "percentile",
-             default_contrast: str = "percentile") -> list[ActiveCondition]:
+             default_contrast: str = "percentile",
+             charging: float = 0.0) -> list[ActiveCondition]:
     """Everything currently in force, most consequential first.
 
     Takes plain values rather than reaching into the window, so it is testable
@@ -204,6 +220,10 @@ def evaluate(*, bin_factor: int = 1,
         n = len(exclude_zones) if hasattr(exclude_zones, "__len__") else 1
         active.append(ActiveCondition(
             get("exclude_zones"), f"{n} zone(s)"))
+
+    if float(charging) > 0:
+        active.append(ActiveCondition(
+            get("charging"), f"strength {float(charging):.2g}"))
 
     if (contrast_method and contrast_method not in ("", "none")
             and contrast_method != default_contrast):

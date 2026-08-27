@@ -99,7 +99,7 @@ _BASELINE: dict = {
     "coating_nm": 10.0, "coating": "gold",
     "detector": "ETD", "bse_mix": 0.15, "elevation_deg": 25.0,
     "azimuth_deg": 0.0, "asymmetry": 0.30, "read_noise_e": 3.0,
-    "scan_jitter_px": 0.0,
+    "scan_jitter_px": 0.0, "charging": 0.0,
 }
 
 
@@ -290,6 +290,15 @@ class SemSimPanel(QWidget):
         self._jitter = _spin(0.0, 10.0, 0.0, 0.1)
         self._jitter.setToolTip("Scan-line jitter in pixels; a stage-drift stand-in.")
         form.addRow("Scan jitter px:", self._jitter)
+
+        self._charging = _spin(0.0, 2.0, 0.0, 0.1)
+        self._charging.setToolTip(
+            "Specimen charging on non-conducting materials: flaring, scan "
+            "streaks and drift. Whether a material charges and in which "
+            "direction is computed from its electron yield; how strong the "
+            "artefact looks is set here. Off by default — a coated specimen "
+            "and any metal are unaffected whatever this is set to.")
+        form.addRow("Charging:", self._charging)
         return box
 
     def _build_output_group(self) -> QGroupBox:
@@ -450,6 +459,7 @@ class SemSimPanel(QWidget):
             "asymmetry": self._asymmetry.value(),
             "read_noise_e": self._read_noise.value(),
             "scan_jitter_px": self._jitter.value(),
+            "charging": self._charging.value(),
             "seed": 0,
         }
 
@@ -469,7 +479,7 @@ class SemSimPanel(QWidget):
             "probe_nm": self._probe, "bse_mix": self._bse_mix,
             "elevation_deg": self._elevation, "azimuth_deg": self._azimuth,
             "asymmetry": self._asymmetry, "read_noise_e": self._read_noise,
-            "scan_jitter_px": self._jitter,
+            "scan_jitter_px": self._jitter, "charging": self._charging,
         }
         blocked = list(widgets.values()) + [self._scene, self._particle,
                                             self._substrate, self._detector,

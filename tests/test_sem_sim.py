@@ -905,3 +905,111 @@ def test_the_charging_crossover_is_predicted_for_biology():
     assert total[5.0] < 0.5, "yield did not fall away"
     # published crossover for organic material is roughly 0.5-2 kV
     assert 0.4 < max(k for k, v in total.items() if v >= 1.0) < 2.0, total
+
+
+def test_charging_is_off_unless_asked_for():
+    """An artefact model that arrives by default ends up in a figure by accident."""
+    from acorn_sem_sim.imaging import Detector
+
+    assert IM.Detector("ETD").charging == 0.0
+
+
+def test_a_conductor_never_charges_however_hard_it_is_pushed():
+    """Charging is a property of the material, not of the strength slider."""
+    from acorn_sem_sim.charging import charge_state
+    from acorn_sem_sim.materials import get as material
+
+    for name in ("gold", "copper", "carbon"):
+        st = charge_state(material(name), kv=1.0)
+        assert st.conducts and not st.charges, name
+
+    scene = SC.build("spores", shape=(192, 192), pixel_size_nm=20.0, n_spores=8,
+                  coating_nm=12.0, coating="gold", substrate="silicon", seed=3)
+    kw = dict(material_names=scene.material_names, height_nm=scene.height_nm,
+              beam=IM.Beam(E0_kev=2.0, pixel_size_nm=20.0, electrons_per_px=400),
+              n_electrons=4000, seed=3)
+    clean = IM.simulate(scene.material_index, detector=IM.Detector("TLD"), **kw)
+    pushed = IM.simulate(scene.material_index,
+                      detector=IM.Detector("TLD", charging=2.0), **kw)
+    assert np.allclose(clean.signal, pushed.signal), \
+        "a gold-coated specimen changed when charging was turned up"
+
+
+def test_charging_flares_some_features_and_leaves_others_alone():
+    """The failure this catches: a uniform brightening that renormalises away.
+
+    An earlier version drove accumulation from distance to the image border,
+    which lifted the whole field evenly. Contrast-stretch the result and it is
+    indistinguishable from the clean image -- it looked like nothing had
+    happened, because for any purpose that autoscales, nothing had.
+    """
+    from scipy import ndimage as _nd
+
+    scene = SC.build("spores", shape=(384, 384), pixel_size_nm=20.0, n_spores=24,
+                  coating_nm=0.0, substrate="resin", clustering=0.4, seed=11)
+    kw = dict(material_names=scene.material_names, height_nm=scene.height_nm,
+              beam=IM.Beam(E0_kev=2.0, pixel_size_nm=20.0, electrons_per_px=800),
+              n_electrons=8000, seed=11)
+    spore = scene.material_index == 1
+    labels, n = _nd.label(spore)
+    assert n >= 8
+
+    def per_spore(charging):
+        img = IM.simulate(scene.material_index,
+                       detector=IM.Detector("TLD", charging=charging), **kw).signal
+        means = np.array(_nd.mean(img, labels, range(1, n + 1)))
+        return means / means.mean()          # normalised: a uniform lift cancels
+
+    spread_off = per_spore(0.0).std()
+    spread_on = per_spore(1.2).std()
+    assert spread_on > spread_off * 1.15, (
+        f"charging did not make spores differ from each other "
+        f"({spread_off:.3f} -> {spread_on:.3f}); it is brightening uniformly")
+
+
+def test_the_scan_streak_trails_behind_and_never_ahead():
+    """Charge laid down affects what is written after it, not what came before."""
+    from acorn_sem_sim.charging import apply_charging
+
+    signal = np.ones((128, 128), np.float32)
+    insulating = np.ones((128, 128), bool)
+    height = np.zeros((128, 128), np.float32)
+    height[56:72, 56:72] = 400.0
+
+    out, meta = apply_charging(signal, insulating, height, balance=-0.6,
+                               strength=1.5, scan_axis=1, seed=0)
+    assert meta["charging"] == "applied"
+
+    rows = slice(56, 72)
+    before = out[rows, 30:50].mean()      # written before the feature
+    after = out[rows, 78:98].mean()       # written after it
+    assert after > before * 1.05, (
+        f"the streak is symmetric (before {before:.3f}, after {after:.3f}); "
+        "a causal scan artefact must trail one way only")
+
+
+def test_charging_direction_follows_the_computed_yield():
+    """Sign comes from the transport model, not from a hard-coded assumption."""
+    from acorn_sem_sim.charging import apply_charging
+
+    signal = np.ones((96, 96), np.float32)
+    insulating = np.ones((96, 96), bool)
+    height = np.zeros((96, 96), np.float32)
+    height[40:56, 40:56] = 300.0
+
+    neg, _ = apply_charging(signal, insulating, height, balance=-0.6, seed=0)
+    pos, _ = apply_charging(signal, insulating, height, balance=+0.6, seed=0)
+    feature = (slice(40, 56), slice(40, 56))
+    assert neg[feature].mean() > 1.0, "negative charging should brighten"
+    assert pos[feature].mean() < 1.0, "positive charging should darken"
+
+
+def test_charging_is_declared_as_altering_measurements():
+    """It changes sizes and counts, so it must not be filed under 'appearance'."""
+    from acorn.core.conditions import MeasurementClaim, evaluate, get
+
+    assert get("charging").claim is MeasurementClaim.ALTERS
+    assert not evaluate(charging=0.0), "off should not light the indicator"
+    active = evaluate(charging=1.0)
+    assert [a.condition.key for a in active] == ["charging"]
+    assert active[0].alters_numbers

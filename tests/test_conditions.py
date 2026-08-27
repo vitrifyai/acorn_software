@@ -64,6 +64,7 @@ def test_defaults_report_nothing_in_force():
     ({"crop_region": (0, 0, 10, 10)}, "crop_region"),
     ({"exclude_zones": [(0, 0, 5, 5)]}, "exclude_zones"),
     ({"contrast_method": "bandpass"}, "contrast"),
+    ({"charging": 1.0}, "charging"),
 ])
 def test_each_setting_is_reported_when_it_is_on(kwargs, expected_key):
     active = evaluate(**kwargs)
@@ -81,6 +82,7 @@ def test_each_setting_is_reported_when_it_is_on(kwargs, expected_key):
     {"crop_region": None},
     {"exclude_zones": []},
     {"contrast_method": "percentile"},
+    {"charging": 0.0},
 ])
 def test_a_setting_at_its_default_is_not_reported(kwargs):
     """Reporting defaults as "in force" is how a warning becomes noise, and then
@@ -216,6 +218,7 @@ _EVIDENCE = {
     "bin_factor": "test_binning_does_not_change_a_measured_diameter",
     "pixel_size_override": "test_a_manual_pixel_size_is_the_only_thing_that_scales_a_measurement",
     "denoise": "test_denoising_biases_a_measured_size_and_that_is_why_it_is_declared",
+    "charging": "test_charging_moves_a_measured_size_and_an_object_count",
 }
 
 
@@ -324,3 +327,44 @@ def test_an_uncalibrated_image_says_so_rather_than_showing_a_number():
         window.close()
         window.deleteLater()
         app.processEvents()
+
+
+def test_charging_moves_a_measured_size_and_an_object_count():
+    """Evidence for the ALTERS claim on simulated charging.
+
+    Worth stating precisely, because the effect is not the one you would guess.
+    Flaring does not merely bloat objects -- it fills the dark ridged interiors
+    of an uncoated spore, which an intensity threshold would otherwise split
+    into fragments. So the object count moves TOWARD the truth while the areas
+    inflate. A detector tuned against charged simulations can therefore look
+    better than it is, which is precisely why this is declared rather than left
+    for someone to discover in their results.
+    """
+    from acorn_sem_sim import scenes as SC
+    from acorn_sem_sim.imaging import Beam, Detector, simulate
+    from scipy import ndimage
+    from skimage.filters import threshold_otsu
+
+    scene = SC.build("spores", shape=(384, 384), pixel_size_nm=20.0, n_spores=30,
+                     coating_nm=0.0, substrate="resin", clustering=0.4, seed=11)
+    kw = dict(material_names=scene.material_names, height_nm=scene.height_nm,
+              beam=Beam(E0_kev=2.0, pixel_size_nm=20.0, electrons_per_px=800),
+              n_electrons=8000, seed=11)
+
+    def measure(charging):
+        img = simulate(scene.material_index,
+                       detector=Detector("TLD", charging=charging), **kw).signal
+        lab, n = ndimage.label(img > threshold_otsu(img))
+        areas = np.array(ndimage.sum(np.ones_like(lab), lab, range(1, n + 1)))
+        areas = areas[areas > 30]
+        return len(areas), float(areas.mean())
+
+    n_clean, area_clean = measure(0.0)
+    n_charged, area_charged = measure(1.2)
+
+    assert area_charged > area_clean * 1.4, (
+        f"charging barely moved measured area ({area_clean:.0f} -> "
+        f"{area_charged:.0f} px); the ALTERS claim would be overstated")
+    assert n_charged != n_clean, (
+        f"charging left the object count at {n_clean}; it is declared as "
+        "affecting detection, so it must actually affect it")

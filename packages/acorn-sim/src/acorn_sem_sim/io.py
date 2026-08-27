@@ -112,6 +112,7 @@ def generate_sem_dataset(output_dir: Path, count: int, params: dict, *,
         asymmetry=float(params.get("asymmetry", 0.30)),
         read_noise_e=float(params.get("read_noise_e", 3.0)),
         scan_jitter_px=float(params.get("scan_jitter_px", 0.0)),
+        charging=float(params.get("charging", 0.0)),
     )
 
     size = int(params.get("image_size_px", 512))
