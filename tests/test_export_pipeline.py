@@ -235,3 +235,43 @@ def test_a_sidecar_with_nothing_in_it_is_not_written(tmp_path):
         data = dict(nothing)
         data[key] = value
         assert MainWindow._sidecar_is_empty(data) is False, f"{key} is real content"
+
+
+# ── durability ────────────────────────────────────────────────────────────────
+
+def test_finalized_splits_are_written_atomically(tmp_path, monkeypatch):
+    """These define what a model trains on and what it is judged against.
+
+    A run interrupted mid-write must not leave a truncated split for the next
+    run to read. The exporter already wrote its COCO file atomically; the
+    finalizer wrote its splits with a plain write_text, so the same subsystem
+    was careful in one place and not the other.
+    """
+    import acorn.export.dataset_finalizer as fin
+
+    _export(tmp_path, n_sources=4)
+
+    seen = []
+    real = fin.__dict__.get("_atomic_write_text")
+    from acorn.export.training_exporter import _atomic_write_text as impl
+
+    def _spy(path, text):
+        seen.append(Path(path).name)
+        impl(path, text)
+
+    monkeypatch.setattr("acorn.export.training_exporter._atomic_write_text", _spy)
+    finalize_dataset(tmp_path, val_frac=0.25, test_frac=0.25, seed=0)
+
+    assert real is None or True  # the import is local to the function
+    for name in ("train.json", "split_map.json", "dataset_stats.json"):
+        assert name in seen, f"{name} was not written atomically ({seen})"
+
+
+def test_no_temporary_files_are_left_behind(tmp_path):
+    """An atomic write that leaves its scratch file behind is a mess the next
+    reader has to distinguish from real data."""
+    _export(tmp_path, n_sources=3)
+    finalize_dataset(tmp_path, val_frac=0.34, test_frac=0.33, seed=0)
+    leftovers = [p.name for p in tmp_path.rglob("*")
+                 if p.is_file() and (p.suffix == ".tmp" or p.name.startswith(".tmp"))]
+    assert leftovers == [], leftovers

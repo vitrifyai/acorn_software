@@ -98,18 +98,32 @@ def _resolve_device(device: str) -> str:
 
 
 def _available_gpu_ids(n_gpus: Optional[int] = None) -> list[int]:
-    """Return list of GPU indices to use; falls back to [] for CPU."""
+    """GPU indices to distribute work across; [] means CPU.
+
+    Sized from the PHYSICAL device count, not from what CUDA currently reports.
+    Another subsystem may have narrowed CUDA_VISIBLE_DEVICES for its own reasons
+    -- CryoBLOB pins to one GPU so JAX does not context-switch across all of
+    them -- and that narrowing is process-global. Sizing from the reported count
+    meant running CryoBLOB first dropped this pool from sixteen workers to one,
+    silently, with the result depending on the order the buttons were pressed.
+
+    Each worker sets its own CUDA_VISIBLE_DEVICES before touching CUDA, so it
+    can reach a device this process cannot currently see.
+    """
     try:
-        import torch
-        total = torch.cuda.device_count()
-        if total == 0:
-            return []
-        ids = list(range(total))
-        if n_gpus is not None:
-            ids = ids[: n_gpus]
-        return ids
+        import torch  # noqa: F401 - presence gates GPU work at all
     except ImportError:
         return []
+
+    from acorn.core.gpu import physical_device_count
+
+    total = physical_device_count()
+    if total <= 0:
+        return []
+    ids = list(range(total))
+    if n_gpus is not None:
+        ids = ids[: n_gpus]
+    return ids
 
 
 # ── shape metrics ─────────────────────────────────────────────────────────────

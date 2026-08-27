@@ -205,17 +205,24 @@ def finalize_dataset(
         for img_id in source_to_ids[sid]:
             split_map[img_id] = spl
 
+    # Written atomically, as the exporter already writes its COCO file. These
+    # define which images a model trains on and which it is judged against, so a
+    # run interrupted mid-write must not leave a truncated split behind for the
+    # next run to read.
+    from acorn.export.training_exporter import _atomic_write_text
+
     # ── write per-split COCO files ────────────────────────────────────────────
     for split_name in ("train", "val", "test"):
         ids_in_split = {img_id for img_id, s in split_map.items() if s == split_name}
         if not ids_in_split:
             continue
         subset = _coco_subset(coco, ids_in_split)
-        (splits_dir / f"{split_name}.json").write_text(json.dumps(subset, indent=2))
+        _atomic_write_text(splits_dir / f"{split_name}.json",
+                           json.dumps(subset, indent=2))
 
-    (splits_dir / "split_map.json").write_text(
-        json.dumps({str(k): v for k, v in split_map.items()}, indent=2)
-    )
+    _atomic_write_text(
+        splits_dir / "split_map.json",
+        json.dumps({str(k): v for k, v in split_map.items()}, indent=2))
 
     # ── compute statistics ────────────────────────────────────────────────────
     ann_by_image: dict[int, list] = defaultdict(list)
@@ -266,7 +273,8 @@ def finalize_dataset(
         "split_seed":   seed,
     }
 
-    (dataset_dir / "dataset_stats.json").write_text(json.dumps(stats, indent=2))
+    _atomic_write_text(dataset_dir / "dataset_stats.json",
+                       json.dumps(stats, indent=2))
 
     # ── human-readable summary ────────────────────────────────────────────────
     lines = [

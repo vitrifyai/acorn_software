@@ -19,6 +19,8 @@ class DetectorControllerMixin:
         return self._yolo_thread is not None and self._yolo_thread.isRunning()
     def _on_yolo_load_model(self, model_path: str) -> None:
         if self._yolo_busy():
+            self._yolo_panel.set_model_status(
+                "A model is already loading — wait for it to finish.", loaded=False)
             return
         from acorn.core.yolo_predictor import YOLOPredictor
         predictor = YOLOPredictor()
@@ -173,6 +175,8 @@ class DetectorControllerMixin:
         n_classes: int, ckpt_path: str,
     ) -> None:
         if self._unet_busy():
+            self._unet_panel.set_model_status(
+                "A model is already loading — wait for it to finish.", loaded=False)
             return
         from acorn.core.unet_predictor import UNetPredictor
         tile_size = self._unet_panel.tile_size

@@ -46,6 +46,14 @@ def _configure_jax_memory() -> None:
     # pins a different set. This avoids lighting up all 16 DGX GPUs for one run.
     # This JAX build honors CUDA_VISIBLE_DEVICES; JAX_CUDA_VISIBLE_DEVICES alone
     # was not sufficient on the DGX.
+    # Record what the process could see BEFORE narrowing it. The pin is
+    # process-global and one-way -- once CUDA initialises, restoring the
+    # variable gives nothing back -- so anything sizing a workload later has to
+    # be able to ask what the machine actually has. Without this, running
+    # CryoBLOB silently cut the batch surface-area analysis from sixteen GPU
+    # workers to one.
+    from acorn.core.gpu import remember_visible_devices
+    remember_visible_devices()
     os.environ.setdefault("CUDA_VISIBLE_DEVICES", "0")
     os.environ.setdefault("JAX_CUDA_VISIBLE_DEVICES", os.environ["CUDA_VISIBLE_DEVICES"])
     flags = os.environ.get("XLA_FLAGS", "")

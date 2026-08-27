@@ -197,6 +197,11 @@ class SAMControllerMixin:
         return _PAL.color_for_label(key)
     def _on_sam_load_model(self, checkpoint: str, model_cfg: str, backend: str) -> None:
         if self._sam_busy():
+            # Say so. A SAM 3 load takes tens of seconds and the button stays
+            # enabled throughout, so a second click is normal -- swallowing it
+            # without a word makes the control look broken.
+            self._sam_panel.set_model_status(
+                "A model is already loading — wait for it to finish.", loaded=False)
             return
 
         ckpt_arg = checkpoint if checkpoint else None
