@@ -46,9 +46,12 @@ DEFAULT_EM_CONTRAST = "bandpass"  # used by _switch_to and contrast-panel init
 
 @dataclass
 class DM4Metadata:
-    pixel_size: float = 1.0      # nm/px
+    pixel_size: float = 1.0      # nm/px — AFTER binning, so measurements stay calibrated
     pixel_unit: str = "nm"
     pixel_size_from_header: bool = False  # True when read from file header
+    bin_factor: int = 1          # analysis binning applied at load; 1 = native
+    native_pixel_size: float = 1.0        # nm/px as stored in the file
+    binning_cropped_px: tuple = (0, 0)    # rows, cols dropped so the shape divided
     mag: Optional[float] = None
     voltage_kV: Optional[float] = None
     shape: tuple = field(default_factory=tuple)
@@ -138,9 +141,42 @@ class DM4Image:
 
     # ── factory methods ───────────────────────────────────────────────────────
 
+    def apply_binning(self, factor: int) -> None:
+        """Bin the image (and every movie frame) and rescale the pixel size.
+
+        The two must happen together. Binning without rescaling leaves every
+        distance, area and diameter wrong by the bin factor while still carrying
+        units, which is worse than having no calibration at all -- so this is the
+        only supported way to bin a loaded image, and it is a method on the
+        object that owns both the array and its calibration.
+        """
+        from acorn.core.binning import bin_frames, bin_image, validate_factor
+
+        factor = validate_factor(factor)
+        if factor == 1 or self.raw is None:
+            return
+
+        native = self.meta.pixel_size
+        result = bin_image(self.raw, factor, native)
+        self.raw = result.data
+
+        if self._frames is not None:
+            self._frames = bin_frames(self._frames, factor, native).data
+
+        self.meta.native_pixel_size = native
+        self.meta.pixel_size = result.pixel_size_nm
+        self.meta.bin_factor = factor
+        self.meta.binning_cropped_px = result.cropped_px
+        self.meta.shape = self.raw.shape
+
     @classmethod
-    def from_file(cls, filepath: str | Path) -> "DM4Image":
-        """Load any supported format. Dispatches by file extension."""
+    def from_file(cls, filepath: str | Path, bin_factor: int = 1) -> "DM4Image":
+        """Load any supported format. Dispatches by file extension.
+
+        `bin_factor` bins for ANALYSIS, not for display: the returned array is
+        what detectors and measurements will see, and `meta.pixel_size` is
+        already scaled to match.
+        """
         p = Path(str(filepath).strip().strip('"').strip("'"))
         ext = p.suffix.lower()
         obj = cls()
@@ -159,12 +195,14 @@ class DM4Image:
                 f"Unsupported file format: {ext!r}\n"
                 f"Supported: {sorted(ALL_EXTS)}"
             )
+        obj.meta.native_pixel_size = obj.meta.pixel_size
+        obj.apply_binning(bin_factor)
         return obj
 
     @classmethod
-    def open(cls, filepath: str | Path) -> "DM4Image":
+    def open(cls, filepath: str | Path, bin_factor: int = 1) -> "DM4Image":
         """Alias for from_file; use with `with` statement."""
-        return cls.from_file(filepath)
+        return cls.from_file(filepath, bin_factor=bin_factor)
 
     def __enter__(self) -> "DM4Image":
         return self

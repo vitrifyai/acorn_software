@@ -556,7 +556,11 @@ class MainWindow(
         self._img_idx: int = -1          # -1 = no image loaded yet
         self._click_buffer: list[tuple[float, float]] = []
         self._engine: MeasurementEngine = MeasurementEngine(pixel_size=1.0)
-        self._px_overrides: dict[int, float] = {}  # manually set pixel size per image index
+        # Manually set pixel size per image index, in NATIVE nm/px -- the file's
+        # own grid, before any analysis binning. Storing the binned value instead
+        # would silently invalidate the override the moment the bin factor
+        # changed, and every measurement would be wrong by that factor.
+        self._px_overrides: dict[int, float] = {}
         self._last_distance_px: float = 0.0        # last measured distance in pixels
         self._contrast_states: dict[int, ContrastParams] = {}
         self._ann_states: dict[int, list] = {}   # per-image annotation snapshots
@@ -889,6 +893,7 @@ class MainWindow(
 
         # ── signals ───────────────────────────────────────────────────────────
         self._contrast_panel.contrast_changed.connect(self._on_contrast_changed)
+        self._contrast_panel.bin_factor_changed.connect(self._on_bin_factor_changed)
         self._ann_panel.undo_requested.connect(self._on_undo)
         self._ann_panel.clear_requested.connect(self._on_clear_annotations)
         self._ann_panel.clear_profiles_requested.connect(
@@ -2021,6 +2026,45 @@ class MainWindow(
 
     # ── image navigation ──────────────────────────────────────────────────────
 
+    def _on_bin_factor_changed(self, factor: int) -> None:
+        """Apply analysis binning, reloading so detectors see the binned pixels.
+
+        Binning happens at load, so an image already in memory has to come back
+        from disk. Existing annotations were drawn in the old pixel grid and do
+        not survive the change, so say so and let the choice be made rather than
+        discarding work silently.
+        """
+        from acorn.core.binning import describe
+
+        factor = int(factor)
+        previous = getattr(self, "_bin_factor", 1)
+        if factor == previous:
+            return
+
+        annotated = sum(self._annotation_count(i)
+                        for i in range(len(self._image_paths)))
+        if annotated:
+            reply = QMessageBox.question(
+                self, "Change analysis binning",
+                f"{annotated} annotation(s) were drawn on the current pixel grid "
+                f"and cannot be carried across a change of binning.\n\n"
+                f"{describe(factor)}\n\n"
+                f"Re-load at {factor}x and discard them?",
+                QMessageBox.StandardButton.Cancel | QMessageBox.StandardButton.Yes,
+                QMessageBox.StandardButton.Cancel)
+            if reply != QMessageBox.StandardButton.Yes:
+                self._contrast_panel.set_bin_factor(previous)
+                return
+
+        self._bin_factor = factor
+        self._statusbar.showMessage(describe(factor), 8000)
+        # Binning is applied at load, so every cached image is now stale --
+        # not just the visible one.
+        self._image_cache.clear()
+        self._image_cache_fingerprints.clear()
+        if self._image_paths:
+            self._switch_to(self._img_idx)
+
     def _switch_to(self, idx: int) -> None:
         if not self._image_paths:
             return
@@ -2060,7 +2104,9 @@ class MainWindow(
             or (ContrastParams(method=DEFAULT_EM_CONTRAST) if path.suffix.lower() in EM_EXTS else self._contrast_panel.params())
         )
         self._statusbar.showMessage(f"Loading {path.name}…")
-        self._image_load_thread = ImageLoadThread(idx, path, contrast_params, parent=self)
+        self._image_load_thread = ImageLoadThread(
+            idx, path, contrast_params, parent=self,
+            bin_factor=getattr(self, '_bin_factor', 1))
         self._image_load_thread.finished.connect(self._on_image_loaded)
         self._image_load_thread.error.connect(self._on_image_load_error)
         self._image_load_thread.start()
@@ -2073,6 +2119,13 @@ class MainWindow(
             self._image_cache_fingerprints.pop(oldest, None)
         self._image_cache[idx] = img
         self._image_cache_fingerprints[idx] = _image_file_fingerprint(img.filepath) if img.filepath else None
+        # Report what the load actually produced. The requested factor and the
+        # result differ whenever the shape did not divide evenly, and a silently
+        # smaller field would be a measurement error waiting to happen.
+        if getattr(img.meta, "bin_factor", 1) != 1:
+            self._contrast_panel.show_binning_result(
+                img.meta.bin_factor, img.meta.pixel_size,
+                getattr(img.meta, "binning_cropped_px", (0, 0)))
         # Only render if this is still the current image (user may not have switched).
         if idx == self._img_idx:
             self._finish_switch(idx, img, precomputed_norm=norm)
@@ -2094,9 +2147,13 @@ class MainWindow(
 
     def _finish_switch(self, idx: int, img: DM4Image, precomputed_norm=None) -> None:
         """Complete the image switch once the DM4Image is available."""
-        # Reapply any manually set pixel size for this image (survives cache eviction)
+        # Reapply any manually set pixel size for this image (survives cache
+        # eviction). Overrides are stored native, so scale to the binned grid --
+        # assigning the native value straight onto a binned image would undo the
+        # rescale that keeps measurements in real units.
         if idx in self._px_overrides:
-            img.meta.pixel_size = self._px_overrides[idx]
+            img.meta.pixel_size = (self._px_overrides[idx]
+                                   * getattr(img.meta, "bin_factor", 1))
         self._engine = MeasurementEngine(pixel_size=img.pixel_size)
 
         canvas = self._canvas_widget.canvas
@@ -2315,8 +2372,10 @@ class MainWindow(
         if ps_nm <= 0:
             return
 
-        # Persist so this survives cache eviction and reload
-        self._px_overrides[img_idx] = ps_nm
+        # Persist so this survives cache eviction and reload. The user typed the
+        # pixel size of the image in front of them, which is the binned one, so
+        # store it back on the native grid.
+        self._px_overrides[img_idx] = ps_nm / getattr(img.meta, "bin_factor", 1)
         self._autosave_timer.start()
 
         img.meta.pixel_size = ps_nm
@@ -3947,7 +4006,8 @@ class MainWindow(
             if ps_nm > 0 and self._img_idx >= 0:
                 img = self._image_cache.get(self._img_idx)
                 if img is not None:
-                    self._px_overrides[self._img_idx] = ps_nm
+                    self._px_overrides[self._img_idx] = (
+                        ps_nm / getattr(img.meta, "bin_factor", 1))
                     self._autosave_timer.start()
                     img.meta.pixel_size = ps_nm
                     img.meta.pixel_size_from_header = False

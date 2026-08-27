@@ -197,17 +197,19 @@ class ImageLoadThread(QThread):
     finished = pyqtSignal(int, object, object)  # (idx, DM4Image, norm_array)
     error    = pyqtSignal(int, str)             # (idx, error message)
 
-    def __init__(self, idx: int, path: Path, contrast_params, parent=None):
+    def __init__(self, idx: int, path: Path, contrast_params, parent=None,
+                 bin_factor: int = 1):
         super().__init__(parent)
         self._idx     = idx
         self._path    = path
         self._params  = contrast_params
+        self._bin     = int(bin_factor)
 
     def run(self) -> None:
         try:
             from acorn.core.contrast import apply_contrast
             from acorn.render.canvas import _DISPLAY_MAX_DIM
-            img = DM4Image.from_file(self._path)
+            img = DM4Image.from_file(self._path, bin_factor=self._bin)
 
             # Compute contrast on full-res raw so the precomputed norm is
             # full-resolution (required for correct ROI stats, line profiles,

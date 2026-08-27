@@ -129,6 +129,45 @@ class ContrastPanel(QWidget):
     """
 
     contrast_changed = pyqtSignal(object)   # ContrastParams
+    bin_factor_changed = pyqtSignal(int)     # analysis binning, needs a reload
+
+    def _on_bin_changed(self, _index: int) -> None:
+        factor = int(self._bin_combo.currentData() or 1)
+        from acorn.core.binning import describe
+        self._bin_note.setText(describe(factor))
+        if not self._updating:
+            self.bin_factor_changed.emit(factor)
+
+    def bin_factor(self) -> int:
+        return int(self._bin_combo.currentData() or 1)
+
+    def set_bin_factor(self, factor: int) -> None:
+        """Set without emitting -- for restoring saved state."""
+        i = self._bin_combo.findData(int(factor))
+        if i < 0:
+            return
+        was, self._updating = self._updating, True
+        try:
+            self._bin_combo.setCurrentIndex(i)
+        finally:
+            self._updating = was
+        from acorn.core.binning import describe
+        self._bin_note.setText(describe(int(factor)))
+
+    def show_binning_result(self, factor: int, pixel_size_nm: float,
+                            cropped_px: tuple = (0, 0)) -> None:
+        """Report what the load actually produced, not what was requested.
+
+        The two differ when the image does not divide evenly: rows or columns
+        are dropped so the shape divides, and a silently smaller field would be
+        a measurement error waiting to happen.
+        """
+        from acorn.core.binning import describe
+        text = describe(int(factor), pixel_size_nm)
+        if any(cropped_px):
+            text += (f" {cropped_px[0]} row(s) and {cropped_px[1]} column(s) "
+                     f"were dropped so the shape divided evenly.")
+        self._bin_note.setText(text)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -137,6 +176,42 @@ class ContrastPanel(QWidget):
         layout = QVBoxLayout(_content)
         layout.setContentsMargins(8, 8, 8, 8)
         layout.setSpacing(8)
+
+        # ── analysis binning ──────────────────────────────────────────────────
+        # Deliberately first, above every display control, and worded so it
+        # cannot be mistaken for one. Everything else in this panel changes how
+        # the image is drawn; this changes the pixels that detection and
+        # measurement actually receive, and rescales the pixel size with them.
+        bin_box = QGroupBox("Analysis binning")
+        bin_layout = QVBoxLayout(bin_box)
+        bin_layout.setSpacing(4)
+
+        bin_row = QHBoxLayout()
+        bin_row.addWidget(QLabel("Bin:"))
+        self._bin_combo = QComboBox()
+        for f in (1, 2, 4, 8):
+            self._bin_combo.addItem("None" if f == 1 else f"{f} x {f}", f)
+        self._bin_combo.setToolTip(
+            "Averages blocks of pixels BEFORE analysis, and scales the pixel "
+            "size to match so measurements stay in real units.\n\n"
+            "This is not a display setting — it changes the pixels that "
+            "detection and measurement receive.\n\n"
+            "It does not make faint objects detectable: a filter matched to the "
+            "object size extracts the same signal from full resolution. What it "
+            "does is reduce a large image properly, by averaging, rather than "
+            "leaving a model to resize it however it happens to.\n\n"
+            "Applies when an image is loaded, so changing it reloads the "
+            "current image.")
+        bin_row.addWidget(self._bin_combo, 1)
+        bin_layout.addLayout(bin_row)
+
+        self._bin_note = QLabel("")
+        self._bin_note.setWordWrap(True)
+        self._bin_note.setStyleSheet("font-size: 11px; color: #6c7086;")
+        bin_layout.addWidget(self._bin_note)
+
+        self._bin_combo.currentIndexChanged.connect(self._on_bin_changed)
+        layout.addWidget(bin_box)
 
         # ── presets ───────────────────────────────────────────────────────────
         preset_box = QGroupBox("Presets")
