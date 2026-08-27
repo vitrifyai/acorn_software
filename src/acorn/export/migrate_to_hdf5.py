@@ -113,7 +113,6 @@ def migrate_dataset(
                 # We reconstruct the stem from the original file_name
                 # The entry_stem is the PNG filename without extension
                 old_stem = Path(img_path).stem   # e.g. "0001_stem_t0000_orig"
-                label    = ann.get("label", "Unlabelled").replace(" ", "_")
                 # Find the mask file — try common naming patterns
                 mask_file = None
                 inst_dir = dataset_dir / "masks" / old_stem

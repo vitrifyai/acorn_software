@@ -301,6 +301,16 @@ class PlottingPlugin(AcornPlugin):
             if panel._metric_combo.itemData(i) == metric:
                 panel._metric_combo.setCurrentIndex(i)
                 break
+        # scatter_y and n_bins are declared by the plot_measurements tool, so a
+        # request for "ECD against circularity" or "60 bins" arrives here. They
+        # were read and then dropped, and the panel's current values were used
+        # instead -- the assistant accepting a parameter and quietly ignoring it.
+        for i in range(panel._y_combo.count()):
+            if panel._y_combo.itemData(i) == scatter_y:
+                panel._y_combo.setCurrentIndex(i)
+                break
+        panel._bins_spin.setValue(
+            max(panel._bins_spin.minimum(), min(panel._bins_spin.maximum(), n_bins)))
         panel._suppress_redraw = False
 
         panel.show_figure(None, df=df)

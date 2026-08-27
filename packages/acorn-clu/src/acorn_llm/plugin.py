@@ -5,7 +5,6 @@ from typing import TYPE_CHECKING
 from acorn.plugin_base import AcornPlugin
 
 if TYPE_CHECKING:
-    from acorn.gui.context import AcornContext
     from PyQt6.QtWidgets import QMenuBar
 
 

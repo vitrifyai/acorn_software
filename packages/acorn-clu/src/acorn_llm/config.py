@@ -1,7 +1,7 @@
 """LLM provider configuration — loaded from / saved to ~/.acorn/llm_config.json."""
 from __future__ import annotations
 import json
-from dataclasses import dataclass, asdict, field
+from dataclasses import dataclass, asdict
 from pathlib import Path
 
 _CONFIG_PATH = Path.home() / ".acorn" / "llm_config.json"

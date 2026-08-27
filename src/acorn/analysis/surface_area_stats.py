@@ -1132,7 +1132,6 @@ def export_stats_report(
     -------
     stats dict from compare_groups() (same structure).
     """
-    import matplotlib
 
     out = Path(output_dir)
     out.mkdir(parents=True, exist_ok=True)

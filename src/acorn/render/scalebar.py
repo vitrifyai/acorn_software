@@ -68,8 +68,8 @@ def draw_scalebar(
     from matplotlib.lines import Line2D
 
     artists = []
-    h_ax, w_ax = ax.get_ylim()[0], ax.get_xlim()[1]   # image dims in data coords
-    # ax limits: xlim=(−0.5, W−0.5), ylim=(H−0.5, −0.5) → h_ax ≈ H, w_ax ≈ W
+    # ax limits: xlim=(−0.5, W−0.5), ylim=(H−0.5, −0.5), so the absolute
+    # differences below are the image dimensions in data coordinates.
     h_img = abs(ax.get_ylim()[0] - ax.get_ylim()[1])
     w_img = abs(ax.get_xlim()[1] - ax.get_xlim()[0])
 

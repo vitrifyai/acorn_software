@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import numpy as np
-from PyQt6.QtCore import Qt, pyqtSignal
+from PyQt6.QtCore import pyqtSignal
 from PyQt6.QtGui import QColor
 from PyQt6.QtWidgets import (
     QCheckBox, QComboBox, QFileDialog, QHBoxLayout, QLabel,
@@ -10,7 +10,6 @@ from PyQt6.QtWidgets import (
     QTextEdit, QToolButton, QVBoxLayout, QWidget,
 )
 
-from acorn_plotting.style import PALETTE
 from acorn_plotting.figures import PLOT_TYPES, _XLABEL_MAP
 
 PALETTES: dict[str, list[str]] = {

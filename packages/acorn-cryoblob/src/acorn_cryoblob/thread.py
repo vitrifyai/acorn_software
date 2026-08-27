@@ -2289,7 +2289,7 @@ class CryoBlobThread(QThread):
 
         try:
             import pandas as pd
-        except ImportError as exc:
+        except ImportError:
             self.error.emit(
                 "CryoBLOB is not installed in the ACORN environment.\n"
                 "Install the plugin package in the same environment as ACORN."

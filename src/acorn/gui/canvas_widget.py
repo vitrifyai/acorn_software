@@ -1009,7 +1009,6 @@ class CanvasWidget(QWidget):
             if handle_id == "right" and ps > 0:
                 ax = canvas.ax
                 xlim = ax.get_xlim()
-                ylim = ax.get_ylim()
                 w_img = abs(xlim[1] - xlim[0])
                 x0 = ann.x_frac * w_img + xlim[0]
                 ann.nm = max(1.0, (x - x0) * ps)

@@ -287,10 +287,9 @@ def simulate_from_reference(image_path, modality, params=None, n=10,
 
     if modality == "cryoem":
         resolved, manifest = _run_cryoem(shape, meta, params, n, defocus_um, out, bfactor)
-        px = resolved["pixel_size_a"]
+        resolved["pixel_size_a"]
     else:
         resolved, manifest = _run_fib(shape, params, n, out)
-        px = None
 
     manifest = {"modality": modality, "reference": str(image_path),
                 "canvas": list(shape), "n": n, "calibrated": bool(calibrate),

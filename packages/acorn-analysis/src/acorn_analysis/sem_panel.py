@@ -1,10 +1,9 @@
 """SEM 3D surface area analysis panel."""
 from __future__ import annotations
 
-from pathlib import Path
 from typing import Optional
 
-from PyQt6.QtCore import pyqtSignal, Qt
+from PyQt6.QtCore import pyqtSignal
 from PyQt6.QtWidgets import (
     QCheckBox, QDoubleSpinBox, QFileDialog, QFormLayout, QGroupBox,
     QHBoxLayout, QLabel, QLineEdit, QPushButton, QProgressBar,
@@ -308,7 +307,6 @@ class SEMPanel(QWidget):
         self._status.setText(msg)
 
     def show_results(self, df, out_dir) -> None:
-        import pandas as pd
         self._results_tabs.setVisible(True)
 
         cols = ["particle_id", "label", "image_name",
@@ -403,7 +401,7 @@ class SEMPanel(QWidget):
         self.sem_requested.emit(config)
 
     def _on_train_nn(self) -> None:
-        from PyQt6.QtWidgets import QDialog, QDialogButtonBox
+        from PyQt6.QtWidgets import QDialog
         dlg = _TrainDialog(self)
         if dlg.exec() == QDialog.DialogCode.Accepted:
             self.train_requested.emit(dlg.config())

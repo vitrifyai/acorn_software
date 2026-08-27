@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from PyQt6.QtWidgets import (
     QComboBox, QDialog, QDialogButtonBox, QFormLayout,
-    QLabel, QLineEdit, QPushButton, QVBoxLayout,
+    QLabel, QLineEdit, QVBoxLayout,
 )
 
 from acorn_llm.config import LLMConfig, load_config, save_config

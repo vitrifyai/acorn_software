@@ -1,11 +1,9 @@
 """Particle Measurements panel -- 2D shape metrics for TEM/STEM nanoparticles."""
 from __future__ import annotations
 
-import math
 from pathlib import Path
 from typing import Optional
 
-import numpy as np
 
 from PyQt6.QtCore import Qt, QThread, pyqtSignal
 from PyQt6.QtWidgets import (
@@ -22,7 +20,6 @@ from PyQt6.QtWidgets import (
     QPushButton,
     QRadioButton,
     QScrollArea,
-    QSizePolicy,
     QTableWidget,
     QTableWidgetItem,
     QTabWidget,

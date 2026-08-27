@@ -2,10 +2,9 @@
 
 from __future__ import annotations
 
-import numpy as np
 from PyQt6.QtGui import QColor
 from PyQt6.QtWidgets import (
-    QColorDialog, QDialog, QDialogButtonBox, QFileDialog, QHBoxLayout,
+    QColorDialog, QDialog, QFileDialog, QHBoxLayout,
     QLabel, QPushButton, QVBoxLayout,
 )
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvasQtAgg

@@ -22,8 +22,7 @@ from scipy.ndimage import gaussian_filter
 
 from .potential import (MIP_VITREOUS_ICE, MIP_PLGA, MIP_CRYSTALLINE_ICE,
                         _fill_polygon, nm_to_px)
-from .bacteria import (MIP as CELL_MIP, SPECIES, ENVELOPE, Bacterium,
-                       _seg_distance_2d, _point_seg_dist, _disk_add, _add_flagella)
+from .bacteria import (MIP as CELL_MIP, SPECIES, ENVELOPE, _seg_distance_2d, _point_seg_dist, _disk_add, _add_flagella)
 from .multislice import (multislice_exit_wave, coherent_ctf, image_from_wave,
                          apply_inelastic)
 from .optics import _tukey2d

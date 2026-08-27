@@ -434,7 +434,6 @@ class SpatialPanel(QWidget):
         rows = ["Per-image spatial summary (selected labels):", ""]
         rows.append(f"{'image':<26} {'cond':>8} {'n':>4} {'R':>6} {'clust':>6}  verdict")
         per_cond: dict[str, list[float]] = {}
-        per_image_feats: list = []   # (image, label, x, y, cluster) for export
         for idx in sorted(states.keys()):
             anns = states[idx]
             px = ctx.pixel_size_for_index(idx) or 1.0

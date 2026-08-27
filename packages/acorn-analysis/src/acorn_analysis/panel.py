@@ -4,13 +4,11 @@ from __future__ import annotations
 from acorn.gui import path_field
 
 import json
-import os
 from pathlib import Path
 from typing import Optional
 
 from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtWidgets import (
-    QButtonGroup,
     QCheckBox,
     QComboBox,
     QDoubleSpinBox,
@@ -558,7 +556,6 @@ class AnalysisPanel(QWidget):
         group_by_label = getattr(self, "_group_by_label_check", None)
         group_by_label = group_by_label.isChecked() if group_by_label is not None else True
 
-        import pandas as _pd
         plot_df = df.copy()
         plot_df["_sa"] = plot_df["SA_nm2"] * scale
 
@@ -579,7 +576,6 @@ class AnalysisPanel(QWidget):
         import matplotlib
         matplotlib.use("QtAgg")
         import matplotlib.pyplot as plt
-        import matplotlib.ticker as mticker
         from matplotlib.lines import Line2D
 
         if plot_type == "Histogram (KDE)":

@@ -31,7 +31,6 @@ def polygon_metrics(vertices: list, px_nm: float) -> dict:
         return {}
     pts = np.array(vertices, dtype=float)
     x, y = pts[:, 0], pts[:, 1]
-    n = len(pts)
     xs_r = np.roll(x, -1)
     ys_r = np.roll(y, -1)
     area_px2 = 0.5 * abs(float((x * ys_r - xs_r * y).sum()))

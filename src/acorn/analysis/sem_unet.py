@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import math
 from pathlib import Path
-from typing import Callable, Optional
+from typing import Callable
 
 import numpy as np
 
@@ -50,7 +50,8 @@ class SEMHeightUNet:
 
     def __new__(cls, max_correction: float = 0.3):
         try:
-            import torch.nn as nn
+            # Imported to probe availability; the real work happens in the impl.
+            import torch.nn as nn  # noqa: F401
         except ImportError as exc:
             raise ImportError("PyTorch required: pip install torch") from exc
         return _SEMHeightUNetImpl(max_correction)
@@ -87,7 +88,6 @@ class _SEMHeightUNetImpl:
 
             def forward(self, x):
                 import torch
-                import torch.nn.functional as F
                 s1 = self.enc1(x)
                 s2 = self.enc2(self.pool1(s1))
                 s3 = self.enc3(self.pool2(s2))
@@ -145,8 +145,9 @@ class SyntheticSEMDataset:
         shape_types: list | None = None,
     ):
         try:
-            import torch
-            import torch.utils.data as tdata
+            # Imported to probe availability before the impl is constructed.
+            import torch  # noqa: F401
+            import torch.utils.data as tdata  # noqa: F401
         except ImportError as exc:
             raise ImportError("PyTorch required: pip install torch") from exc
         return _SyntheticSEMDatasetImpl(

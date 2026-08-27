@@ -29,8 +29,8 @@ overridden by the user.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass, field
-from typing import Iterable, Literal
+from dataclasses import dataclass
+from typing import Literal
 
 Polarity = Literal["dark", "light"]
 Domain = Literal["biology", "materials", "shared"]

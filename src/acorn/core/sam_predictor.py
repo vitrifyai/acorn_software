@@ -271,7 +271,6 @@ class SAMPredictor:
 
     def _build_cache_payload(self) -> dict:
         """Serialise current embedding state to a torch-saveable dict."""
-        import torch
         if self._active_backend == "sam3":
             # SAM3 state is a dict of tensors — save as-is
             state = self._cached_state
@@ -306,7 +305,6 @@ class SAMPredictor:
 
     def _restore_from_cache(self, payload: dict) -> None:
         """Restore predictor state from a cached payload dict."""
-        import torch
         backend = payload.get("backend")
         if backend == "sam3":
             state = payload["state"]

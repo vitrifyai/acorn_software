@@ -240,7 +240,6 @@ class DoseSeriesDialog(QDialog):
         n_rows = 2 if show_diff else 1
         self._fig.clear()
 
-        calibrated = self._px_nm > 0 and self._px_nm != 1.0
 
         for col, (avg, (s, e)) in enumerate(zip(averages, ranges)):
             frame_s = s + self._start_frame

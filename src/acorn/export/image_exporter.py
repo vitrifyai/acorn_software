@@ -7,9 +7,8 @@ from typing import Optional
 
 from acorn.core.dm4_loader import DM4Image
 from acorn.core.contrast import ContrastParams
-from acorn.core.annotations import AnnotationStore, ScalebarAnnotation
+from acorn.core.annotations import AnnotationStore
 from acorn.render.canvas import CryoCanvas
-from acorn.render.scalebar import nice_scalebar_nm
 
 
 def export_image(

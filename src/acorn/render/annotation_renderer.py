@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING, Optional
 
 import numpy as np
 from matplotlib.lines import Line2D
-from matplotlib.patches import Circle, FancyArrowPatch, Rectangle, Polygon
+from matplotlib.patches import Circle, Rectangle, Polygon
 
 if TYPE_CHECKING:
     from matplotlib.axes import Axes

@@ -9,7 +9,6 @@ import os
 os.environ.setdefault("MPLBACKEND", "QtAgg")
 
 import json
-import subprocess
 import sys
 from dataclasses import asdict
 from pathlib import Path
@@ -35,7 +34,7 @@ def _atomic_write_text(path: Path, text: str) -> None:
 from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtGui import QColor
 from PyQt6.QtWidgets import (
-    QApplication, QCheckBox, QComboBox, QDialog, QDialogButtonBox, QDockWidget, QFileDialog,
+    QApplication, QComboBox, QDialog, QDialogButtonBox, QDockWidget, QFileDialog,
     QDoubleSpinBox, QFormLayout, QGroupBox, QLabel, QLineEdit, QListWidget, QListWidgetItem,
     QMainWindow, QMessageBox,
     QHBoxLayout, QPushButton, QSpinBox, QSplitter, QStatusBar,
@@ -47,7 +46,7 @@ from acorn.core.contrast import ContrastParams
 from acorn.core.annotations import (
     AnnotationStore, ArrowAnnotation, LineAnnotation, CircleAnnotation,
     RectangleAnnotation, TextAnnotation, ScalebarAnnotation,
-    DistanceMeasurement, AngleMeasurement, ROIAnnotation,
+    ROIAnnotation,
 )
 from acorn.core.measurements import MeasurementEngine
 from acorn.export import measurements_dir as _meas_dir, MEASUREMENTS_CSV as _MEAS_CSV
@@ -2500,7 +2499,6 @@ class MainWindow(
         self._px_overrides    = {(k if k < row else k - 1): v
                                   for k, v in getattr(self, "_px_overrides", {}).items()
                                   if k != row}
-        stem = None
         if hasattr(self, "_export_queue"):
             # Remove from export queue if present (queue stores dicts with 'stem' key)
             pass  # queue is stem-based, not index-based; no action needed
@@ -3927,7 +3925,6 @@ class MainWindow(
 
         elif action == "set_contrast":
             import dataclasses
-            from acorn.core.contrast import ContrastParams
             method = params.get("method", "percentile")
             p = self._contrast_panel.params()
             kwargs: dict = {"method": method}
@@ -4283,7 +4280,7 @@ class MainWindow(
     def _focus_is_text_input() -> bool:
         """Return True if a text-entry widget currently has keyboard focus."""
         from PyQt6.QtWidgets import (
-            QLineEdit, QPlainTextEdit, QTextEdit, QSpinBox, QDoubleSpinBox, QComboBox,
+            QLineEdit, QPlainTextEdit, QTextEdit, QDoubleSpinBox, QComboBox,
         )
         return isinstance(
             QApplication.focusWidget(),

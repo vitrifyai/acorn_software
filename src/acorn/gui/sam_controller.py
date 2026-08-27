@@ -70,7 +70,6 @@ class SAMControllerMixin:
         points_snap = list(self._sam_prompt_points)
         labels_snap = list(self._sam_prompt_labels)
         points_for_sam = [(px - ox, py - oy) for px, py in points_snap]
-        n_pts = len(sampled)
         self._sam_panel.set_sam_status(f"Running SAM with {len(points_snap)} point(s)…")
 
         def _run():

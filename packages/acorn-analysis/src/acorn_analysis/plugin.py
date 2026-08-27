@@ -2,7 +2,7 @@
 from __future__ import annotations
 import json
 from pathlib import Path
-from typing import Optional, TYPE_CHECKING
+from typing import TYPE_CHECKING
 
 from PyQt6.QtWidgets import QMessageBox, QWidget
 
@@ -460,7 +460,7 @@ class AnalysisPlugin(AcornPlugin):
         from acorn_analysis.sem_thread import SEMAnalysisThread
 
         selected_labels = set(config["selected_labels"])
-        px_nm           = config["pixel_size_nm"]
+        config["pixel_size_nm"]
         out_dir_str     = config.get("output_dir", "")
 
         items: list[dict] = []

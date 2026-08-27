@@ -1,6 +1,6 @@
 """Tracking plugin — particle/cell tracking across image sequences."""
 from __future__ import annotations
-from typing import Optional, TYPE_CHECKING
+from typing import TYPE_CHECKING
 
 from PyQt6.QtWidgets import QMessageBox, QWidget
 

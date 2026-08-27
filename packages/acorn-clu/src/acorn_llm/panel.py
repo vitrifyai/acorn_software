@@ -12,7 +12,7 @@ from PyQt6.QtWidgets import (
     QComboBox,
 )
 
-from acorn_llm.config import LLMConfig, load_config, save_config
+from acorn_llm.config import load_config, save_config
 from acorn_llm.agent import LLMAgent
 
 if TYPE_CHECKING:

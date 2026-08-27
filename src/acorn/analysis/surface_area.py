@@ -46,7 +46,7 @@ from __future__ import annotations
 import logging
 import os
 from dataclasses import asdict, dataclass
-from typing import List, Optional, Sequence
+from typing import Optional, Sequence
 
 import numpy as np
 
@@ -1708,7 +1708,6 @@ def compute_specific_surface_area(
     more textured particle surfaces, and values above ~0.05 suggest that the
     fourier_spiky estimation tier should be verified or applied manually.
     """
-    import pandas as pd
 
     n_total = len(results_df)
     df = results_df[results_df["SA_nm2"] > 0].copy()

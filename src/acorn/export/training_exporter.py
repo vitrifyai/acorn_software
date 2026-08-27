@@ -34,8 +34,8 @@ from __future__ import annotations
 
 import json
 import os
-from concurrent.futures import ThreadPoolExecutor, as_completed
-from dataclasses import dataclass, asdict, field
+from concurrent.futures import ThreadPoolExecutor
+from dataclasses import dataclass, asdict
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -435,7 +435,7 @@ def add_image(
             tile_img   = tile["img"]
             tile_masks = tile["masks"]
             y0, x0     = tile["y0"], tile["x0"]
-            t_idx      = tile["tile_idx"]
+            tile["tile_idx"]
 
             # Identify which instances have any pixels in this tile
             active = [i for i, m in enumerate(tile_masks) if m.max() > 0]

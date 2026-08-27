@@ -193,7 +193,6 @@ class MicroSAMPredictor:
 
     def load_model(self, progress_cb=None) -> None:
         """Load the model, downloading the checkpoint if needed."""
-        import torch
         from segment_anything import sam_model_registry, SamPredictor
 
         device = self._resolve_device()
@@ -270,7 +269,6 @@ class MicroSAMPredictor:
         }
 
     def _restore_from_cache(self, payload: dict) -> None:
-        import torch
         device = next(self._predictor.model.parameters()).device
         self._predictor.features      = payload["features"].to(device)
         self._predictor.original_size = tuple(payload["original_size"])

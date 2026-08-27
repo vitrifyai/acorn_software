@@ -4,8 +4,10 @@ from typing import Optional
 import numpy as np  # imported inside run() but add here for clarity
 from PyQt6.QtCore import QThread, pyqtSignal
 
-from acorn.analysis.surface_area import estimate_surface_area
-from acorn.analysis.surface_area_stats import compare_groups, export_stats_report
+# Surface-area analysis is imported inside run() rather than here. The same
+# imports already existed at both scopes, which meant the deferral was defeated:
+# the module-level pair pulled pandas at import time regardless, costing 0.31 s
+# to a process that may never run an analysis.
 
 
 class AnalysisThread(QThread):
