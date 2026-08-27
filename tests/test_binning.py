@@ -232,7 +232,6 @@ def test_tools_that_load_files_themselves_still_honour_binning(tmp_path):
     would still be right, but the setting would do nothing."""
     pytest.importorskip("acorn_cryoblob")
     import tifffile
-
     from acorn_cryoblob.thread import _load_source_image
 
     path = tmp_path / "field.tif"
@@ -258,7 +257,6 @@ def test_the_source_cache_distinguishes_bin_factors(tmp_path):
     one would silently ignore the setting."""
     pytest.importorskip("acorn_cryoblob")
     import tifffile
-
     from acorn_cryoblob.thread import _load_source_image
 
     path = tmp_path / "cached.tif"
@@ -268,3 +266,36 @@ def test_the_source_cache_distinguishes_bin_factors(tmp_path):
     b, *_ = _load_source_image(str(path), 1.0, use_cache=True, bin_factor=4)
     assert a.shape == (256, 256)
     assert b.shape == (64, 64), "cache returned the unbinned image"
+
+
+def test_cryoblob_blob_size_readout_states_the_physical_scale():
+    """Min/Max blob size are in pixels of the downscaled image, so binning moves
+    what they mean physically. Left unstated, binning 4x quietly makes CryoBLOB
+    hunt for objects four times larger than the operator intends."""
+    import os
+
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    pytest.importorskip("PyQt6")
+    from acorn_cryoblob.panel import CryoBlobPanel
+    from PyQt6.QtWidgets import QApplication
+
+    app = QApplication.instance() or QApplication([])
+    try:
+        panel = CryoBlobPanel()
+        panel.set_pixel_size(0.2081)
+        native = panel._size_nm_note.text()
+        panel.set_pixel_size(0.2081 * 4)
+        binned = panel._size_nm_note.text()
+
+        assert "nm" in native and native != binned
+        assert "Binning the image changes this" in native
+
+        # the stated range must scale with the pixel size, not stay put
+        import re
+        nums = lambda t: [float(x) for x in re.findall(r"([\d.]+)-([\d.]+) nm", t)[0]]
+        lo_n, hi_n = nums(native)
+        lo_b, hi_b = nums(binned)
+        assert lo_b == pytest.approx(lo_n * 4, rel=0.01)
+        assert hi_b == pytest.approx(hi_n * 4, rel=0.01)
+    finally:
+        app.processEvents()

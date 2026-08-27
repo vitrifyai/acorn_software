@@ -291,6 +291,17 @@ class CryoBlobPanel(QWidget):
         self._max_sigma.setToolTip("Maximum blob radius scale after downscaling. Raise this if large particles are missed.")
         form.addRow("Max blob size:", self._max_sigma)
 
+        # Min/Max blob size are in PIXELS of the downscaled image, so what they
+        # mean physically moves with the pixel size, the downscale factor and
+        # analysis binning. Left unstated, binning an image 4x quietly makes
+        # CryoBLOB hunt for objects four times larger. Show the nanometres.
+        self._size_nm_note = QLabel("")
+        self._size_nm_note.setWordWrap(True)
+        self._size_nm_note.setStyleSheet("font-size: 11px; color: #6c7086;")
+        form.addRow(self._size_nm_note)
+        for w in (self._min_sigma, self._max_sigma, self._blob_downscale):
+            w.valueChanged.connect(self._update_size_nm_note)
+
         self._threshold_rel = QDoubleSpinBox()
         self._threshold_rel.setRange(0.001, 20.0)
         self._threshold_rel.setDecimals(3)
@@ -574,6 +585,30 @@ class CryoBlobPanel(QWidget):
     def set_pixel_size(self, pixel_size_nm: float) -> None:
         if pixel_size_nm > 0:
             self._pixel_size.setValue(float(pixel_size_nm))
+        self._update_size_nm_note()
+
+    def _update_size_nm_note(self, *_args) -> None:
+        """State the blob size range in nanometres.
+
+        A LoG response peaks for a blob of radius sigma*sqrt(2), measured in the
+        downscaled grid, so the physical diameter is
+        2 * sigma * sqrt(2) * downscale * pixel_size.
+        """
+        import math
+        try:
+            px = float(self._pixel_size.value())
+            ds = float(self._blob_downscale.value()) or 1.0
+            lo = float(self._min_sigma.value())
+            hi = float(self._max_sigma.value())
+        except (AttributeError, TypeError, ValueError):
+            return
+        if px <= 0:
+            self._size_nm_note.setText("")
+            return
+        scale = 2.0 * math.sqrt(2.0) * ds * px
+        self._size_nm_note.setText(
+            f"Searching for objects roughly {lo * scale:.4g}-{hi * scale:.4g} nm "
+            f"across, at {px:.4g} nm/px. Binning the image changes this.")
 
     def set_running(self, running: bool) -> None:
         self._run_btn.setEnabled(not running)
