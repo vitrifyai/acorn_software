@@ -2135,11 +2135,37 @@ class MainWindow(
         self._canvas_widget.set_nav_enabled(len(self._image_paths) > 1)
         self._statusbar.showMessage(f"Error loading image {idx}: {message}")
 
+    # Every dict keyed by image index. Kept in one place because removing an
+    # image has to shift all of them, and the three that were being shifted were
+    # not the three that mattered -- SAM exclusion zones and crop regions stayed
+    # behind and applied to whatever file inherited the index.
+    _PER_IMAGE_DICTS = (
+        "_image_cache", "_image_cache_fingerprints", "_ann_states",
+        "_contrast_states", "_px_overrides", "_sam_exclude_zones",
+        "_sam_crop_regions_saved",
+    )
+
+    def _reindex_after_removal(self, row: int) -> None:
+        """Drop `row` from every per-image dict and shift the keys above it down."""
+        for name in self._PER_IMAGE_DICTS:
+            current = getattr(self, name, None)
+            if not isinstance(current, dict):
+                continue
+            setattr(self, name, {(k if k < row else k - 1): v
+                                 for k, v in current.items() if k != row})
+
     def _cached_image_is_current(self, idx: int) -> bool:
         if idx not in self._image_cache or idx >= len(self._image_paths):
             return False
         cached = self._image_cache[idx]
-        path = cached.filepath if cached.filepath else self._image_paths[idx]
+        path = self._image_paths[idx]
+        # Fingerprint the file that is at this index NOW, not the one the cached
+        # image happens to remember. Using the cached image's own path let a
+        # stale entry validate itself: after a removal shifted the indices, the
+        # image cached under 4 still matched its own file and was shown for what
+        # was now a different image.
+        if cached.filepath and Path(cached.filepath) != Path(path):
+            return False
         cached_fp = self._image_cache_fingerprints.get(idx)
         current_fp = _image_file_fingerprint(path)
         return cached_fp is not None and cached_fp == current_fp
@@ -2490,18 +2516,9 @@ class MainWindow(
         if row < 0 or row >= len(self._image_paths):
             return
 
-        # Rebuild index-keyed dicts shifting keys above row down by one
         self._image_paths.pop(row)
-        self._ann_states     = {(k if k < row else k - 1): v
-                                 for k, v in self._ann_states.items() if k != row}
-        self._contrast_states = {(k if k < row else k - 1): v
-                                  for k, v in self._contrast_states.items() if k != row}
-        self._px_overrides    = {(k if k < row else k - 1): v
-                                  for k, v in getattr(self, "_px_overrides", {}).items()
-                                  if k != row}
-        if hasattr(self, "_export_queue"):
-            # Remove from export queue if present (queue stores dicts with 'stem' key)
-            pass  # queue is stem-based, not index-based; no action needed
+        self._reindex_after_removal(row)
+        # The export queue is keyed by stem, not by index, so it needs no shift.
 
         self._populate_image_list()
 
