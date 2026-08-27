@@ -47,6 +47,20 @@ PRESETS: dict[str, dict] = {
         detector="ETD", electrons_per_px=300,
         _hint="Almost no atomic-number difference. The hard, honest case for "
               "life-science SEM -- all the signal is surface relief."),
+    "Bacterial spores, coated": dict(
+        scene="spores", E0_kev=5.0, pixel_size_nm=16.0, image_size_px=512,
+        detector="ETD", coating_nm=10.0, coating="gold", substrate="silicon",
+        n_spores=25, electrons_per_px=600,
+        _hint="Sputter-coated for conductivity, as biological SEM specimens "
+              "routinely are. Every secondary comes from the coating, so the "
+              "spores image as gold and are easy to find."),
+    "Bacterial spores, uncoated": dict(
+        scene="spores", E0_kev=2.0, pixel_size_nm=16.0, image_size_px=512,
+        detector="ETD", coating_nm=0.0, substrate="silicon",
+        n_spores=25, electrons_per_px=600,
+        _hint="The hard case. Low-Z biology on silicon gives a spore/substrate "
+              "signal ratio of 0.94 — only the bright rims from the steep sides "
+              "distinguish them, so the task is purely topographic."),
     "Porous ceramic": dict(
         scene="porous", E0_kev=5.0, pixel_size_nm=5.0, image_size_px=512,
         detector="ETD", matrix="alumina", electrons_per_px=600,
@@ -80,6 +94,8 @@ _BASELINE: dict = {
     "relief": True,
     "E0_kev": 5.0, "pixel_size_nm": 4.0, "image_size_px": 512,
     "electrons_per_px": 500.0, "probe_nm": 1.0,
+    "n_spores": 25, "length_nm": 1200.0, "width_nm": 800.0,
+    "coating_nm": 10.0, "coating": "gold",
     "detector": "ETD", "bse_mix": 0.15, "elevation_deg": 25.0,
     "azimuth_deg": 0.0, "asymmetry": 0.30, "read_noise_e": 3.0,
     "scan_jitter_px": 0.0,
@@ -179,6 +195,31 @@ class SemSimPanel(QWidget):
         form.addRow("Diameter nm:", self._diameter)
         self._diameter_sd = _spin(0.0, 1000.0, 12.0, 1.0)
         form.addRow("Diameter spread nm:", self._diameter_sd)
+
+        self._coating = _spin(0.0, 100.0, 10.0, 1.0)
+        self._coating.setToolTip(
+            "Sputter-coating thickness for a biological specimen. 0 leaves it "
+            "uncoated.\n\n"
+            "This is not cosmetic. At ordinary beam energies the secondary "
+            "escape depth in gold is about a nanometre, so a coated spore emits "
+            "essentially all of its secondaries from the coating: it images as "
+            "gold shaped like a spore, with gold's compact interaction volume "
+            "rather than biology's diffuse one. Coated and uncoated are two "
+            "different detection problems.")
+        self._coating.valueChanged.connect(self._refresh_gauge)
+        form.addRow("Coating nm:", self._coating)
+
+        self._coating_material = QComboBox()
+        self._coating_material.addItems(["gold", "platinum", "carbon"])
+        self._coating_material.currentTextChanged.connect(self._refresh_gauge)
+        form.addRow("Coating material:", self._coating_material)
+
+        self._n_spores = _spin_int(1, 2000, 25)
+        form.addRow("Spores:", self._n_spores)
+        self._spore_length = _spin(50.0, 20000.0, 1200.0, 50.0)
+        form.addRow("Spore length nm:", self._spore_length)
+        self._spore_width = _spin(30.0, 20000.0, 800.0, 50.0)
+        form.addRow("Spore width nm:", self._spore_width)
 
         self._relief = QCheckBox("Particles stand proud of the surface")
         self._relief.setChecked(True)
@@ -300,8 +341,12 @@ class SemSimPanel(QWidget):
     def _on_scene_changed(self) -> None:
         kind = self._scene.currentData()
         particles = kind == "nanoparticles"
+        spores = kind == "spores"
         for w in (self._n_particles, self._diameter, self._diameter_sd, self._relief):
             w.setEnabled(particles)
+        for w in (self._coating, self._coating_material, self._n_spores,
+                  self._spore_length, self._spore_width):
+            w.setEnabled(spores)
         self._refresh_gauge()
 
     def _gauge_material(self) -> str:
@@ -321,7 +366,12 @@ class SemSimPanel(QWidget):
         from .materials import get, kanaya_okayama_nm
 
         kind = self._scene.currentData()
-        if kind == "nanoparticles":
+        if kind == "spores":
+            # A coated spore emits from its coating, so that is the material
+            # setting the limit -- not the biology underneath it.
+            candidates = ([self._coating_material.currentText()]
+                          if self._coating.value() > 0 else ["biology"])
+        elif kind == "nanoparticles":
             candidates = [self._particle.currentText()]
         elif kind == "grains":
             candidates = [self._particle.currentText(), self._substrate.currentText()]
@@ -379,6 +429,11 @@ class SemSimPanel(QWidget):
             "phase_b": self._substrate.currentText(),
             "matrix": self._substrate.currentText(),
             "n_particles": self._n_particles.value(),
+            "n_spores": self._n_spores.value(),
+            "length_nm": self._spore_length.value(),
+            "width_nm": self._spore_width.value(),
+            "coating_nm": self._coating.value(),
+            "coating": self._coating_material.currentText(),
             "diameter_nm_mean": self._diameter.value(),
             "diameter_nm_sd": self._diameter_sd.value(),
             "relief": self._relief.isChecked(),
@@ -406,6 +461,8 @@ class SemSimPanel(QWidget):
         widgets = {
             "count": self._count, "n_particles": self._n_particles,
             "diameter_nm_mean": self._diameter, "diameter_nm_sd": self._diameter_sd,
+            "n_spores": self._n_spores, "length_nm": self._spore_length,
+            "width_nm": self._spore_width, "coating_nm": self._coating,
             "E0_kev": self._kv, "pixel_size_nm": self._pixel,
             "image_size_px": self._size, "electrons_per_px": self._electrons,
             "probe_nm": self._probe, "bse_mix": self._bse_mix,
@@ -414,7 +471,8 @@ class SemSimPanel(QWidget):
             "scan_jitter_px": self._jitter,
         }
         blocked = list(widgets.values()) + [self._scene, self._particle,
-                                            self._substrate, self._detector]
+                                            self._substrate, self._detector,
+                                            self._coating_material]
         for w in blocked:
             w.blockSignals(True)
         try:
@@ -434,6 +492,9 @@ class SemSimPanel(QWidget):
                 i = self._detector.findData(str(params["detector"]).upper())
                 if i >= 0:
                     self._detector.setCurrentIndex(i)
+            if params.get("coating") and \
+                    self._coating_material.findText(str(params["coating"])) >= 0:
+                self._coating_material.setCurrentText(str(params["coating"]))
             for key, combo in (("particle", self._particle),
                                ("phase_a", self._particle),
                                ("substrate", self._substrate),

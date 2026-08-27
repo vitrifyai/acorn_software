@@ -691,3 +691,153 @@ def test_plugin_can_actually_build_its_panel():
     finally:
         panel.deleteLater()
         app.processEvents()
+
+
+# ---------------------------------------------------------------------------
+# Bacterial spores
+# ---------------------------------------------------------------------------
+
+def test_spores_are_ovoid_and_not_all_aligned():
+    """Discs on a flat field would make every detection task easier than it is.
+
+    Spores are ovoid and lie at arbitrary orientations, so the footprint has to
+    be an ellipse and the orientations must vary.
+    """
+    from skimage.measure import label, regionprops
+
+    s = SC.build("spores", shape=(512, 512), pixel_size_nm=16.0, n_spores=20,
+                 length_nm=1200.0, width_nm=800.0, clustering=0.0, seed=5)
+    props = [p for p in regionprops(label(s.material_index == 1)) if p.area > 200]
+    assert len(props) >= 8, len(props)
+
+    elongation = [p.axis_major_length / max(p.axis_minor_length, 1e-6) for p in props]
+    assert np.median(elongation) > 1.2, np.median(elongation)
+
+    orientations = np.array([p.orientation for p in props])
+    assert orientations.std() > 0.3, "spores are all aligned"
+
+
+def test_spore_size_follows_the_requested_dimensions():
+    from skimage.measure import label, regionprops
+
+    px = 16.0
+    s = SC.build("spores", shape=(512, 512), pixel_size_nm=px, n_spores=14,
+                 length_nm=1600.0, width_nm=700.0, size_spread=0.0,
+                 clustering=0.0, seed=2)
+    props = [p for p in regionprops(label(s.material_index == 1)) if p.area > 200]
+    major_nm = np.median([p.axis_major_length for p in props]) * px
+    minor_nm = np.median([p.axis_minor_length for p in props]) * px
+    assert major_nm == pytest.approx(1600.0, rel=0.15), major_nm
+    assert minor_nm == pytest.approx(700.0, rel=0.20), minor_nm
+
+
+def test_spores_stand_proud_of_the_substrate():
+    """They sit ON the surface, so relief is real and roughly the short axis."""
+    s = SC.build("spores", shape=(384, 384), pixel_size_nm=16.0, n_spores=12,
+                 width_nm=800.0, seed=1)
+    on = s.material_index == 1
+    assert s.height_nm[on].max() == pytest.approx(400.0, rel=0.3)
+    assert s.height_nm[on].mean() > s.height_nm[~on].mean() * 5
+
+
+@pytest.mark.parametrize("coating,expected", [
+    (10.0, "gold"), (25.0, "gold"), (0.0, "biology"),
+])
+def test_a_coated_spore_images_as_its_coating(coating, expected):
+    """The physically decisive detail.
+
+    At ordinary beam energies the secondary escape depth in gold is about a
+    nanometre, so essentially every secondary from a coated spore comes from the
+    coating rather than from the biology beneath it.
+    """
+    s = SC.build("spores", shape=(256, 256), pixel_size_nm=16.0, n_spores=6,
+                 coating_nm=coating, coating="gold", seed=0)
+    assert s.material_names[1] == expected
+    assert s.meta["coating_nm"] == coating
+
+
+def test_coating_turns_an_invisible_specimen_into_an_obvious_one():
+    """Coated and uncoated are two different detection problems, and the model
+    should say so rather than the difference being an assertion."""
+    kw = dict(shape=(256, 256), pixel_size_nm=16.0, n_spores=10,
+              substrate="silicon", seed=3)
+    beam = IM.Beam(E0_kev=5.0, pixel_size_nm=16.0, electrons_per_px=600.0)
+
+    ratios = {}
+    for tag, coating in (("coated", 10.0), ("uncoated", 0.0)):
+        s = SC.build("spores", coating_nm=coating, **kw)
+        r = IM.simulate(s.material_index, s.material_names, height_nm=s.height_nm,
+                        beam=beam, n_electrons=8000, seed=3)
+        spore, substrate = s.material_index == 1, s.material_index == 0
+        ratios[tag] = float(r.signal[spore].mean() / r.signal[substrate].mean())
+
+    assert ratios["coated"] > 1.8, ratios
+    # uncoated biology on silicon is close to indistinguishable by signal alone
+    assert 0.7 < ratios["uncoated"] < 1.3, ratios
+    assert ratios["coated"] > ratios["uncoated"] * 1.5, ratios
+
+
+def test_uncoated_spores_are_found_by_their_rims_not_their_bodies():
+    """The steep sides have a much higher secondary yield than the flat tops, so
+    an uncoated spore reads as an outline. That emerges from the tilt dependence
+    rather than being drawn in."""
+    s = SC.build("spores", shape=(256, 256), pixel_size_nm=16.0, n_spores=8,
+                 coating_nm=0.0, substrate="silicon", seed=4)
+    r = IM.simulate(s.material_index, s.material_names, height_nm=s.height_nm,
+                    beam=IM.Beam(E0_kev=2.0, pixel_size_nm=16.0,
+                                 electrons_per_px=600.0),
+                    n_electrons=8000, seed=4)
+
+    from scipy.ndimage import binary_erosion
+    body = s.material_index == 1
+    core = binary_erosion(body, iterations=4)
+    rim = body & ~core
+    assert rim.sum() > 50 and core.sum() > 50
+    assert r.signal[rim].mean() > r.signal[core].mean(), "no rim brightening"
+
+
+def test_clustering_changes_how_spores_are_distributed():
+    """Spores dry into clumps rather than scattering evenly.
+
+    Measured as nearest-neighbour spacing between centroids. Counting connected
+    regions does not work: the overlap rejection stops neighbours merging, so a
+    clumped field and a spread one have much the same component count.
+    """
+    from scipy.spatial.distance import pdist, squareform
+    from skimage.measure import label, regionprops
+
+    def median_nn(clustering):
+        s = SC.build("spores", shape=(512, 512), pixel_size_nm=16.0, n_spores=22,
+                     clustering=clustering, seed=7)
+        cents = np.array([p.centroid for p in regionprops(label(s.material_index == 1))
+                          if p.area > 200])
+        d = squareform(pdist(cents))
+        np.fill_diagonal(d, np.inf)
+        return float(np.median(d.min(axis=1)))
+
+    assert median_nn(0.95) < median_nn(0.0)
+
+
+def test_spores_export_ground_truth_under_their_own_name(tmp_path):
+    from acorn_sem_sim.io import generate_sem_dataset
+
+    generate_sem_dataset(tmp_path, 1, {
+        "scene": "spores", "image_size_px": 256, "pixel_size_nm": 16.0,
+        "n_spores": 10, "n_electrons": 4000, "coating_nm": 10.0,
+    }, seed=0)
+    ann = json.loads((tmp_path / "images" / "semsim_00000.annotations.json").read_text())
+    assert ann["annotations"]
+    assert {a["label"] for a in ann["annotations"]} == {"gold"}
+
+
+def test_spore_scene_records_what_it_actually_placed(tmp_path):
+    from acorn_sem_sim.io import generate_sem_dataset
+
+    generate_sem_dataset(tmp_path, 1, {
+        "scene": "spores", "image_size_px": 256, "pixel_size_nm": 16.0,
+        "n_spores": 200, "n_electrons": 4000,
+    }, seed=0)
+    rec = json.loads((tmp_path / "metadata.json").read_text())["images"][0]
+    sp = rec["scene_params"]
+    assert sp["n_spores_requested"] == 200
+    assert 0 < sp["n_spores_placed"] < 200, "crowding was not recorded"

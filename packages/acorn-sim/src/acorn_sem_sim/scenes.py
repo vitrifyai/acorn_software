@@ -227,8 +227,132 @@ def fib_cross_section(shape=(512, 512), pixel_size_nm=5.0, n_layers=4, seed=0) -
                  meta={"layers": names})
 
 
+
+def _ellipse_mask(shape, cy, cx, a_px, b_px, angle_rad):
+    """Rotated-ellipse footprint. Spores are ovoid, not round, and orientation
+    on the substrate is arbitrary -- a circular stand-in would make every
+    detection task easier than it is."""
+    yy, xx = np.ogrid[:shape[0], :shape[1]]
+    dy, dx = yy - cy, xx - cx
+    ca, sa = np.cos(angle_rad), np.sin(angle_rad)
+    u = (dx * ca + dy * sa) / max(a_px, 1e-6)
+    v = (-dx * sa + dy * ca) / max(b_px, 1e-6)
+    return u ** 2 + v ** 2, (u ** 2 + v ** 2) <= 1.0
+
+
+def bacterial_spores(shape=(512, 512), pixel_size_nm=8.0, n_spores=25,
+                     length_nm=1200.0, width_nm=800.0, size_spread=0.15,
+                     coating_nm=10.0, coating="gold", substrate="silicon",
+                     clustering=0.35, seed=0) -> Scene:
+    """Bacterial spores on a substrate, as surface SEM actually sees them.
+
+    Spores are ovoid -- Bacillus subtilis is roughly 1.2 x 0.8 um -- they lie at
+    arbitrary orientations, they aggregate, and they sit ON the substrate rather
+    than in it, so they carry strong topographic relief. All four matter to a
+    detection task and none of them is captured by discs on a flat field.
+
+    The sputter coating is the physically decisive detail. Biological specimens
+    are routinely coated with 5-20 nm of gold or platinum for conductivity, and
+    at ordinary beam energies the secondary-electron escape depth in gold is
+    around a nanometre. Essentially every secondary therefore comes from the
+    coating, not from the spore: a coated spore images as gold-shaped-like-a-
+    spore, with gold's compact interaction volume rather than biology's diffuse
+    one. Uncoated, the same object is low-Z against a low-Z background and far
+    harder to find.
+
+    That is modelled by giving a coated spore the coating's material outright.
+    Exact for secondaries; approximate for backscatters, which sample deeper and
+    would partly see the biology beneath. `coating_nm = 0` leaves the spore
+    uncoated.
+    """
+    rng = np.random.default_rng(seed)
+    idx = np.zeros(shape, dtype=np.int32)
+    h = np.zeros(shape, dtype=np.float32)
+
+    coated = float(coating_nm) > 0
+    spore_material = coating if coated else "biology"
+    names = [substrate, spore_material]
+
+    a_px = 0.5 * float(length_nm) / pixel_size_nm      # semi-major, pixels
+    b_px = 0.5 * float(width_nm) / pixel_size_nm       # semi-minor
+
+    # A spore larger than the field cannot be placed at all, and asking for one
+    # is usually a pixel-size mistake rather than an intention. Scale to fit and
+    # record that it happened, rather than raising or returning an empty frame
+    # that looks like a specimen with no spores on it.
+    fit = min(shape) / 2.4
+    clamped = a_px > fit
+    if clamped:
+        shrink = fit / a_px
+        a_px, b_px = a_px * shrink, b_px * shrink
+        length_nm, width_nm = length_nm * shrink, width_nm * shrink
+
+    placed = []
+
+    # Aggregation: spores are dispensed as suspensions and dry into clumps, so
+    # positions are drawn near existing ones rather than uniformly.
+    for _ in range(int(n_spores) * 12):
+        if len(placed) >= n_spores:
+            break
+        scale = 1.0 + rng.normal(0.0, float(size_spread))
+        if scale < 0.4:
+            continue
+        a, b = a_px * scale, b_px * scale
+        if a < 2 or b < 1:
+            continue
+        reach = a + 2
+        # Guard the draw itself. Clamping the nominal size is not enough because
+        # the spread can push an individual spore back over the limit, and
+        # uniform() with high < low raises rather than returning nothing.
+        if 2 * reach >= min(shape):
+            continue
+
+        if placed and rng.random() < float(clustering):
+            py, px_, pa, _, _ = placed[rng.integers(len(placed))]
+            gap = (pa + a) * rng.uniform(0.9, 1.6)
+            phi = rng.uniform(0, 2 * np.pi)
+            cy = py + gap * np.sin(phi)
+            cx = px_ + gap * np.cos(phi)
+            if not (reach <= cy < shape[0] - reach and reach <= cx < shape[1] - reach):
+                continue
+        else:
+            cy = rng.uniform(reach, shape[0] - reach)
+            cx = rng.uniform(reach, shape[1] - reach)
+
+        angle = rng.uniform(0, np.pi)
+        # Touching is realistic; heavy overlap is not, so reject only deep ones.
+        if any((cy - py) ** 2 + (cx - px_) ** 2 < (0.75 * (a + pa)) ** 2
+               for py, px_, pa, _, _ in placed):
+            continue
+
+        r2, mask = _ellipse_mask(shape, cy, cx, a, b, angle)
+        idx[mask] = 1
+        # Ellipsoid cap: height falls to zero at the rim, so the relief is the
+        # shape of the object rather than a plateau with a cliff edge.
+        cap = np.zeros(shape, np.float32)
+        cap[mask] = (np.sqrt(np.clip(1.0 - r2[mask], 0.0, None))
+                     * (0.5 * float(width_nm) * scale)).astype(np.float32)
+        h = np.maximum(h, cap)
+        placed.append((cy, cx, a, b, angle))
+
+    # Substrate roughness, well below spore height so it does not compete.
+    h = h + _smooth_noise(shape, rng, 6, float(width_nm) * 0.01)
+
+    return Scene(idx, names, h.astype(np.float32), pixel_size_nm,
+                 f"{len(placed)} spores on {substrate}"
+                 + (f", {coating_nm:g} nm {coating} coated" if coated else ", uncoated"),
+                 meta={"n_spores_placed": len(placed),
+                       "n_spores_requested": int(n_spores),
+                       "size_clamped_to_field": bool(clamped),
+                       "length_nm": float(length_nm), "width_nm": float(width_nm),
+                       "coating_nm": float(coating_nm) if coated else 0.0,
+                       "coating": coating if coated else None,
+                       "clustering": float(clustering)})
+
+
 BUILDERS = {
     "nanoparticles": nanoparticles_on_substrate,
+    "spores":        bacterial_spores,
     "grains":        two_phase_grains,
     "porous":        porous_surface,
     "biological":    biological_surface,
@@ -238,6 +362,7 @@ BUILDERS = {
 # Plain-language labels for the UI and for CLU to match against.
 SCENE_LABELS = {
     "nanoparticles": "Nanoparticles on a substrate",
+    "spores":        "Bacterial spores on a substrate",
     "grains":        "Two-phase alloy grains (flat)",
     "porous":        "Porous ceramic",
     "biological":    "Cells in resin (topography only)",

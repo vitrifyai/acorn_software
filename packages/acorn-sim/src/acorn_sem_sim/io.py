@@ -139,6 +139,13 @@ def generate_sem_dataset(output_dir: Path, count: int, params: dict, *,
             matrix=str(params.get("matrix", "alumina")),
             n_cells=int(params.get("n_cells", 14)),
             n_layers=int(params.get("n_layers", 4)),
+            n_spores=int(params.get("n_spores", 25)),
+            length_nm=float(params.get("length_nm", 1200.0)),
+            width_nm=float(params.get("width_nm", 800.0)),
+            size_spread=float(params.get("size_spread", 0.15)),
+            coating_nm=float(params.get("coating_nm", 10.0)),
+            coating=str(params.get("coating", "gold")),
+            clustering=float(params.get("clustering", 0.35)),
         )
 
         result = simulate(scene.material_index, scene.material_names,

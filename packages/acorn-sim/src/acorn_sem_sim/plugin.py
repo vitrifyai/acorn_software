@@ -182,6 +182,13 @@ def _params_from_clu(params: dict) -> dict:
         "n_grains": int(params.get("n_grains", 24)),
         "n_cells": int(params.get("n_cells", 14)),
         "n_layers": int(params.get("n_layers", 4)),
+        "n_spores": int(params.get("n_spores", params.get("spores", 25))),
+        "length_nm": _first_float(params, ("length_nm", "spore_length_nm"), 1200.0),
+        "width_nm": _first_float(params, ("width_nm", "spore_width_nm"), 800.0),
+        "size_spread": _first_float(params, ("size_spread",), 0.15),
+        "coating_nm": _first_float(params, ("coating_nm", "coating_thickness_nm"), 10.0),
+        "coating": str(params.get("coating") or "gold"),
+        "clustering": _first_float(params, ("clustering",), 0.35),
         "E0_kev": kv,
         "pixel_size_nm": _first_float(params, ("pixel_size_nm", "pixel_nm",
                                                "pixel_size"), 4.0),
@@ -220,6 +227,9 @@ def _scene_from_text(value) -> str:
         return "biological"
     if text in {"cross_section", "crosssection", "fib", "lamella", "layers", "stack"}:
         return "cross_section"
+    if text in {"spores", "spore", "endospore", "endospores", "bacterial_spores",
+                "bacillus", "anthrax", "bacteria_spores"}:
+        return "spores"
     return "nanoparticles"
 
 

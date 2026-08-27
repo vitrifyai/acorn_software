@@ -1,5 +1,6 @@
 """LLM agent — runs in a QThread, streams tokens and fires tool signals."""
 from __future__ import annotations
+
 import json
 import threading
 from typing import Optional
@@ -776,13 +777,16 @@ _TOOLS: list[dict] = [
             "count": {"type": "integer", "description": "Number of SEM images to generate."},
             "scene": {
                 "type": "string",
-                "enum": ["nanoparticles", "grains", "porous", "biological", "cross_section"],
+                "enum": ["nanoparticles", "spores", "grains", "porous", "biological", "cross_section"],
                 "description": (
                     "Specimen. 'nanoparticles' = heavy particles on a light support (Z contrast "
                     "plus relief). 'grains' = polished two-phase alloy, flat, so contrast is purely "
                     "compositional. 'porous' = pores in a ceramic. 'biological' = cells in resin, "
                     "almost no Z contrast so all signal is topography -- the hard case. "
-                    "'cross_section' = FIB-milled stack with a Pt cap."
+                    "'cross_section' = FIB-milled stack with a Pt cap. "
+                    "'spores' = bacterial spores on a substrate: ovoid, randomly "
+                    "oriented, clustered, standing proud of the surface, and "
+                    "optionally sputter-coated."
                 ),
             },
             "E0_kev": {"type": "number", "description": "Beam energy in kV (0.2-30). The dominant control on interaction volume and hence resolution."},
@@ -806,6 +810,12 @@ _TOOLS: list[dict] = [
             "n_grains": {"type": "integer", "description": "Grain count for scene=grains."},
             "n_cells": {"type": "integer", "description": "Cell count for scene=biological."},
             "n_layers": {"type": "integer", "description": "Layer count for scene=cross_section."},
+            "n_spores": {"type": "integer", "description": "Spore count for scene=spores."},
+            "length_nm": {"type": "number", "description": "Spore long axis in nm (Bacillus subtilis is roughly 1200)."},
+            "width_nm": {"type": "number", "description": "Spore short axis in nm (roughly 800)."},
+            "coating_nm": {"type": "number", "description": "Sputter-coating thickness in nm; 0 leaves the spore uncoated. A coated spore images as its coating, which changes the task completely."},
+            "coating": {"type": "string", "description": "Sputter-coating material, e.g. gold or platinum."},
+            "clustering": {"type": "number", "description": "0-1 tendency for spores to aggregate rather than scatter evenly."},
             "diameter_nm_mean": {"type": "number", "description": "Mean particle diameter in nm."},
             "diameter_nm_sd": {"type": "number", "description": "Particle diameter spread in nm."},
             "relief": {"type": "boolean", "description": "Particles stand proud of the surface. Set false to flatten them and isolate pure Z contrast."},
@@ -1735,7 +1745,7 @@ class LLMAgent(QThread):
 
     def _run_openai(self) -> None:
         try:
-            from openai import OpenAI, BadRequestError
+            from openai import BadRequestError, OpenAI
         except ImportError:
             self.error.emit("openai package not installed. Run: uv pip install openai")
             return
