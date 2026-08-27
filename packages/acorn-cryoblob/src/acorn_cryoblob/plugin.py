@@ -159,6 +159,10 @@ class CryoBlobPlugin(AcornPlugin):
             files=files,
             output_csv=output_csv,
             pixel_size_nm=params["pixel_size_nm"],
+            # CryoBLOB re-reads files from disk, so it has to be told the
+            # binning the window applied; otherwise it analyses native pixels
+            # while the operator believes 4x is in force.
+            bin_factor=getattr(self._context, "bin_factor", 1),
             run_mode=params["run_mode"],
             detection_mode=params["detection_mode"],
             blob_downscale=params["blob_downscale"],

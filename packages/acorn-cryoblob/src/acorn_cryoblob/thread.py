@@ -215,13 +215,17 @@ def _pil_pixel_size_nm(image) -> tuple[float | None, float | None, str | None]:
     return None, None, None
 
 
-def _load_source_image(file_path: str, pixel_size_nm: float, *, use_cache: bool):
+def _load_source_image(file_path: str, pixel_size_nm: float, *, use_cache: bool,
+                       bin_factor: int = 1):
     import mrcfile
     import tifffile
     from PIL import Image
     from acorn.core.dm4_loader import DM4Image
 
-    cache_key = (_file_signature(file_path), round(float(pixel_size_nm), 6))
+    # The bin factor belongs in the key: the same file at a different binning is
+    # a different image, and serving the cached one would ignore the setting.
+    cache_key = (_file_signature(file_path), round(float(pixel_size_nm), 6),
+                 int(bin_factor))
     if use_cache:
         cached = _cache_get(_SOURCE_IMAGE_CACHE, cache_key)
         if cached is not None:
@@ -263,6 +267,19 @@ def _load_source_image(file_path: str, pixel_size_nm: float, *, use_cache: bool)
         im_np = _coerce_to_grayscale_2d(image)
     else:
         raise ValueError(f"Unsupported CryoBLOB input format: {ext or '<none>'}")
+
+    # Apply analysis binning uniformly, after the format-specific readers, so
+    # every input behaves the same. CryoBLOB reads files itself rather than
+    # taking the image the window already binned, so without this it would
+    # quietly analyse native pixels while the operator had asked for 4x.
+    if int(bin_factor) > 1:
+        from acorn.core.binning import bin_image
+        binned = bin_image(im_np, int(bin_factor))
+        im_np = binned.data
+        # Scale both axes: the pixel size is per-axis here and binning is square.
+        x_nm_per_px *= binned.factor
+        y_nm_per_px *= binned.factor
+        pixel_size_source = f"{pixel_size_source} (x{binned.factor} binned)"
 
     payload = (im_np, y_nm_per_px, x_nm_per_px, pixel_size_source)
     if use_cache:
@@ -1963,6 +1980,7 @@ def _process_single_file(
     file_path: str,
     *,
     pixel_size_nm: float,
+    bin_factor: int = 1,
     run_mode: str,
     detection_mode: str,
     blob_downscale: float,
@@ -1999,6 +2017,7 @@ def _process_single_file(
         file_path,
         pixel_size_nm,
         use_cache=bool(cache_results),
+        bin_factor=int(bin_factor or 1),
     )
 
     im_np, _polarity_used = _apply_contrast_polarity(im_np, contrast_polarity)
@@ -2255,11 +2274,13 @@ class CryoBlobThread(QThread):
         apply_filter: int,
         cache_results: bool,
         contrast_polarity: str = "auto",
+        bin_factor: int = 1,
     ) -> None:
         super().__init__()
         self._files = [str(Path(p)) for p in files]
         self._output_csv = str(Path(output_csv))
         self._pixel_size_nm = float(pixel_size_nm)
+        self._bin_factor = int(bin_factor or 1)
         self._run_mode = str(run_mode)
         self._detection_mode = str(detection_mode)
         self._blob_downscale = float(blob_downscale)
@@ -2314,6 +2335,7 @@ class CryoBlobThread(QThread):
                 file_records = _process_single_file(
                     str(path),
                     pixel_size_nm=self._pixel_size_nm,
+                    bin_factor=getattr(self, "_bin_factor", 1),
                     run_mode=self._run_mode,
                     detection_mode=self._detection_mode,
                     blob_downscale=self._blob_downscale,

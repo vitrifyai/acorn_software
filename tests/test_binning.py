@@ -221,3 +221,48 @@ def test_entering_a_pixel_size_while_binned_round_trips():
         reapplied = stored_native * factor
         assert reapplied == pytest.approx(typed_binned, rel=1e-12)
         assert stored_native == pytest.approx(0.2081, rel=1e-12)
+
+
+def test_tools_that_load_files_themselves_still_honour_binning(tmp_path):
+    """CryoBLOB re-reads the file from disk rather than taking the image the
+    window already binned. Without being told the factor it would quietly
+    analyse native pixels while the operator had asked for 4x -- the numbers
+    would still be right, but the setting would do nothing."""
+    pytest.importorskip("acorn_cryoblob")
+    import tifffile
+
+    from acorn_cryoblob.thread import _load_source_image
+
+    path = tmp_path / "field.tif"
+    tifffile.imwrite(path, np.random.default_rng(0).normal(
+        100, 5, (512, 512)).astype(np.float32))
+
+    sizes = {}
+    for factor in VALID_FACTORS:
+        im, y_nm, x_nm, source = _load_source_image(
+            str(path), 0.2081, use_cache=False, bin_factor=factor)
+        assert im.shape == (512 // factor, 512 // factor), factor
+        sizes[factor] = im.shape[1] * x_nm
+        assert x_nm == pytest.approx(y_nm), "binning is square"
+        if factor > 1:
+            assert f"x{factor} binned" in source
+
+    # the field of view is the same picture however it was reduced
+    assert len(set(round(v, 6) for v in sizes.values())) == 1, sizes
+
+
+def test_the_source_cache_distinguishes_bin_factors(tmp_path):
+    """Same file at a different binning is a different image; serving the cached
+    one would silently ignore the setting."""
+    pytest.importorskip("acorn_cryoblob")
+    import tifffile
+
+    from acorn_cryoblob.thread import _load_source_image
+
+    path = tmp_path / "cached.tif"
+    tifffile.imwrite(path, np.zeros((256, 256), np.float32))
+
+    a, *_ = _load_source_image(str(path), 1.0, use_cache=True, bin_factor=1)
+    b, *_ = _load_source_image(str(path), 1.0, use_cache=True, bin_factor=4)
+    assert a.shape == (256, 256)
+    assert b.shape == (64, 64), "cache returned the unbinned image"

@@ -90,6 +90,19 @@ class AcornContext(QObject):
         return w._engine.pixel_size if w._engine.pixel_size > 0 else 1.0
 
     @property
+    def bin_factor(self) -> int:
+        """Analysis binning currently in force, for tools that load files themselves.
+
+        Anything reading an image straight from disk bypasses the binning the
+        window applied at load, and would silently analyse the native pixels
+        while the operator believed otherwise.
+        """
+        w = self._w()
+        if w is None:
+            return 1
+        return int(getattr(w, "_bin_factor", 1) or 1)
+
+    @property
     def annotation_store(self) -> Optional["AnnotationStore"]:
         w = self._w()
         if w is None:
