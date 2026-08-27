@@ -821,6 +821,13 @@ class MainWindow(
         self._px_btn.clicked.connect(self._on_edit_pixel_size)
         self._statusbar.addPermanentWidget(self._px_btn)
 
+        # Permanent "what is in force" indicator. Every defect worth finding here
+        # has had the same shape -- a setting active, output plausible, nothing
+        # saying so -- and this is the one place that can say so for all of them.
+        self._conditions_label = QLabel("")
+        self._conditions_label.setStyleSheet("font-size: 11px; padding: 0 8px;")
+        self._statusbar.addPermanentWidget(self._conditions_label)
+
         # ── image list dock ───────────────────────────────────────────────────
         self._image_list = QListWidget()
         self._image_list.setMinimumWidth(120)
@@ -2057,6 +2064,7 @@ class MainWindow(
 
         self._bin_factor = factor
         self._statusbar.showMessage(describe(factor), 8000)
+        self._refresh_conditions_indicator()
         # Binning is applied at load, so every cached image is now stale --
         # not just the visible one.
         self._image_cache.clear()
@@ -2170,6 +2178,48 @@ class MainWindow(
         current_fp = _image_file_fingerprint(path)
         return cached_fp is not None and cached_fp == current_fp
 
+    def _refresh_conditions_indicator(self) -> None:
+        """Name everything currently altering a result, in the status bar.
+
+        Amber when a measurement is affected, muted otherwise, blank when
+        nothing is in force -- a badge that is always lit is one nobody reads.
+        """
+        from acorn.core.conditions import evaluate, explain, summarise
+
+        label = getattr(self, "_conditions_label", None)
+        if label is None:
+            return
+        idx = self._img_idx
+        path = self._image_paths[idx] if 0 <= idx < len(self._image_paths) else None
+        is_em = path is not None and path.suffix.lower() in EM_EXTS
+        # Resolve exactly as _switch_to does. Reading the panel's own default
+        # instead reported "percentile in force" on every EM image, whose
+        # effective default is bandpass -- the indicator contradicting itself.
+        params = (self._contrast_states.get(idx)
+                  or (ContrastParams(method=DEFAULT_EM_CONTRAST) if is_em
+                      else self._contrast_panel.params()))
+        img = self._image_cache.get(idx)
+        header_px = None
+        if img is not None and getattr(img.meta, "pixel_size_from_header", False):
+            header_px = img.meta.native_pixel_size
+        default_contrast = DEFAULT_EM_CONTRAST if is_em else "percentile"
+        active = evaluate(
+            bin_factor=getattr(self, "_bin_factor", 1),
+            pixel_size_override=self._px_overrides.get(idx),
+            header_pixel_size=header_px,
+            default_contrast=default_contrast,
+            denoise_method=getattr(params, "denoise_method", "none"),
+            denoise_strength=getattr(params, "denoise_strength", 0.0),
+            crop_region=self._sam_crop_regions_saved.get(idx),
+            exclude_zones=self._sam_exclude_zones.get(idx),
+            contrast_method=getattr(params, "method", "percentile"),
+        )
+        label.setText(summarise(active))
+        label.setToolTip(explain(active))
+        label.setStyleSheet(
+            "font-size: 11px; padding: 0 8px; color: %s;"
+            % ("#d4a24c" if any(a.alters_numbers for a in active) else "#8d959c"))
+
     def _finish_switch(self, idx: int, img: DM4Image, precomputed_norm=None) -> None:
         """Complete the image switch once the DM4Image is available."""
         # Reapply any manually set pixel size for this image (survives cache
@@ -2180,6 +2230,7 @@ class MainWindow(
             img.meta.pixel_size = (self._px_overrides[idx]
                                    * getattr(img.meta, "bin_factor", 1))
         self._engine = MeasurementEngine(pixel_size=img.pixel_size)
+        self._refresh_conditions_indicator()
 
         canvas = self._canvas_widget.canvas
 
@@ -2648,6 +2699,9 @@ class MainWindow(
         self._contrast_states[self._img_idx] = params
         self._pending_contrast = params
         self._contrast_timer.start()  # restarts the timer on every change
+        # Denoising lives in the contrast params and biases measured sizes, so
+        # the indicator has to follow this too, not only image switches.
+        self._refresh_conditions_indicator()
 
     def _apply_contrast_debounced(self) -> None:
         if self._pending_contrast is None:
