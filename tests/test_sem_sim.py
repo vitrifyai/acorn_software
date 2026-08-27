@@ -841,3 +841,67 @@ def test_spore_scene_records_what_it_actually_placed(tmp_path):
     sp = rec["scene_params"]
     assert sp["n_spores_requested"] == 200
     assert 0 < sp["n_spores_placed"] < 200, "crowding was not recorded"
+
+
+def test_whether_an_uncoated_spore_reads_bright_depends_on_its_substrate():
+    """Not a property of the spore.
+
+    Against silicon an uncoated spore is darker than its support; against an
+    organic one -- a filter membrane, carbon tape, a dried debris field -- it is
+    brighter, because the material contrast nearly vanishes and raised
+    topography takes over. Generalising from one substrate gets this backwards.
+    """
+    ratios = {}
+    for substrate in ("silicon", "resin"):
+        s = SC.build("spores", shape=(384, 384), pixel_size_nm=20.0, n_spores=20,
+                     coating_nm=0.0, substrate=substrate, seed=11)
+        r = IM.simulate(s.material_index, s.material_names, height_nm=s.height_nm,
+                        beam=IM.Beam(E0_kev=1.0, pixel_size_nm=20.0,
+                                     electrons_per_px=800.0),
+                        detector=IM.Detector("TLD"), n_electrons=10000, seed=11)
+        spore, bg = s.material_index == 1, s.material_index == 0
+        ratios[substrate] = float(r.signal[spore].mean() / r.signal[bg].mean())
+
+    assert ratios["silicon"] < 1.0 < ratios["resin"], ratios
+
+
+def test_coat_texture_fills_the_spore_instead_of_outlining_it():
+    """A smooth ellipsoid has zero tilt at its apex, so it images as a bright rim
+    around a dark centre. Real spore coats are ridged, which lifts the tilt
+    across the whole body -- which is why real uncoated spores appear filled."""
+    from scipy.ndimage import binary_erosion
+
+    def core_ratio(texture_nm):
+        s = SC.build("spores", shape=(384, 384), pixel_size_nm=20.0, n_spores=18,
+                     coating_nm=0.0, substrate="resin",
+                     surface_texture_nm=texture_nm, seed=11)
+        r = IM.simulate(s.material_index, s.material_names, height_nm=s.height_nm,
+                        beam=IM.Beam(E0_kev=1.0, pixel_size_nm=20.0,
+                                     electrons_per_px=800.0),
+                        detector=IM.Detector("TLD"), n_electrons=10000, seed=11)
+        body = s.material_index == 1
+        core = binary_erosion(body, iterations=5)
+        return float(r.signal[core].mean() / r.signal[~body].mean())
+
+    smooth, ridged = core_ratio(0.0), core_ratio(50.0)
+    # The claim is the differential, not an absolute. A smooth spore is not
+    # necessarily darker than its background here: the bright rims bleed inward
+    # through the interaction-volume convolution, which lifts the core on its
+    # own. What texture must do is lift it further.
+    assert ridged > smooth, (smooth, ridged)
+    assert ridged / smooth > 1.10, (smooth, ridged)   # measured ~1.15
+
+
+def test_the_charging_crossover_is_predicted_for_biology():
+    """Uncoated organics are imaged near 1 kV because that is where the total
+    yield is close to unity and the specimen barely charges. The engine predicts
+    the crossover rather than being told it."""
+    total = {}
+    for kv in (0.5, 1.0, 2.0, 5.0):
+        r = T.trace(M.get("biology"), kv, n_electrons=8000, seed=1)
+        total[kv] = r.delta + r.eta
+
+    assert total[0.5] > 1.0, "no positive-charging regime at low kV"
+    assert total[5.0] < 0.5, "yield did not fall away"
+    # published crossover for organic material is roughly 0.5-2 kV
+    assert 0.4 < max(k for k, v in total.items() if v >= 1.0) < 2.0, total

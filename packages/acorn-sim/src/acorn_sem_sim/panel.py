@@ -55,12 +55,13 @@ PRESETS: dict[str, dict] = {
               "routinely are. Every secondary comes from the coating, so the "
               "spores image as gold and are easy to find."),
     "Bacterial spores, uncoated": dict(
-        scene="spores", E0_kev=2.0, pixel_size_nm=16.0, image_size_px=512,
-        detector="ETD", coating_nm=0.0, substrate="silicon",
-        n_spores=25, electrons_per_px=600,
-        _hint="The hard case. Low-Z biology on silicon gives a spore/substrate "
-              "signal ratio of 0.94 — only the bright rims from the steep sides "
-              "distinguish them, so the task is purely topographic."),
+        scene="spores", E0_kev=1.0, pixel_size_nm=20.0, image_size_px=512,
+        detector="TLD", coating_nm=0.0, substrate="resin",
+        n_spores=45, clustering=0.8, electrons_per_px=800,
+        _hint="Matched to real practice: 1 kV in-lens on an uncoated, clustered "
+              "preparation. Low kV because biology's charging crossover is near "
+              "0.7 kV. Spores read bright against an organic support because the "
+              "material contrast nearly vanishes and topography takes over."),
     "Porous ceramic": dict(
         scene="porous", E0_kev=5.0, pixel_size_nm=5.0, image_size_px=512,
         detector="ETD", matrix="alumina", electrons_per_px=600,
