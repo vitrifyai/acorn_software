@@ -285,3 +285,87 @@ touching spores, which understated precision until §6.3 checked it directly.
 - Charging: `acorn_sem_sim.imaging.Detector(charging=...)`, off by default
 - SAM 3: `Sam3Processor.set_text_prompt` directly, bypassing
   `acorn.core.vocabulary`, so the phrases above are the raw strings
+
+---
+
+## 7. Training on simulated data — the closed loop, measured properly
+
+Recorded 2026-09-02. Section 4 demonstrated the annotate-export-train chain on
+8 tiles from 2 images for 3 epochs, which proved the plumbing and nothing else.
+This is the same loop run at a size that supports a claim, and it is scoped to
+the SOFTWARE rather than to model comparison: the question is whether ACORN can
+generate data and train a working detector, not which model is best.
+
+Full data, models, figures and tables:
+`/nas-158/Alexis/ACORN_methods_paper/`
+
+### 7.1 What was done
+
+Two simulated datasets with exact ground truth, 400 images each at 640x640,
+split 280/60/60 by disjoint seed range. YOLO11s-seg trained on each from an
+ImageNet-pretrained start. No real data in training, no hand annotation.
+
+| | Nanoparticles | Spores |
+|---|---|---|
+| Forward model | multislice + CTF + DQE | Monte Carlo electron transport |
+| Instances | 14,261 | 10,192 |
+| Varied per image | dose, defocus, detector, pixel size, ice thickness, count, size | kV, coating, substrate, charging, clustering, dimensions, electron budget |
+
+### 7.2 Held-out test performance
+
+| Dataset | Epochs | Box mAP@50 | Box mAP@50-95 | Mask mAP@50 | Mask mAP@50-95 | Mask P | Mask R |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| Nanoparticles | 47 | 0.985 | 0.814 | 0.936 | 0.457 | 0.957 | 0.938 |
+| Spores | 100 | 0.990 | 0.988 | 0.994 | 0.909 | 0.994 | 0.996 |
+
+~7 ms per image on one V100. Nanoparticle training stopped early on patience 25.
+
+The nanoparticle mask mAP@50-95 of 0.457 is an object-size effect, not a
+segmentation failure: particles are ~17 px across, so a one-pixel boundary error
+is a large fraction of the object. Detection is essentially perfect on the same
+images (box mAP@50 0.985, counting error under 3%), and the spore set -- same
+recipe, ~50 px objects -- reaches 0.909.
+
+### 7.3 Accuracy attributed to acquisition physics
+
+The simulator recorded the parameters behind every image, so performance can be
+broken down rather than averaged.
+
+| Dataset | Condition | Images | Exact-count rate | MAE |
+|---|---|---:|---:|---:|
+| Spores | coated | 33 | 82% | 0.6% |
+| Spores | uncoated | 14 | 86% | 0.4% |
+| Spores | uncoated + charging | 13 | 77% | 1.5% |
+| Nanoparticles | dose 20 e/A2 | 20 | — | 2.0% |
+| Nanoparticles | dose 40 e/A2 | 26 | — | 1.8% |
+| Nanoparticles | dose 60 e/A2 | 14 | — | 3.1% |
+
+Charging costs about nine points of exact-count rate and triples the mean
+absolute error, while still counting most charged fields exactly. For contrast,
+`acorn.core.conditions` measures the same artefact changing object area by 2.2x
+for an intensity threshold. Dose shows no monotonic effect over 20-60 e/A2.
+
+### 7.4 A defect the figures caught and the metrics did not
+
+The first nanoparticle dataset was generated with `pixel_size_a` of 1.5-2.2 when
+the engine expects angstroms -- a 115 nm field of view with 30 nm particles
+packed into it. The ground truth was exactly correct for the scene, and training
+produced healthy-looking curves reaching box mAP@50 0.95 on data that was
+physical nonsense.
+
+Nothing in the metrics indicated a problem. It was caught by plotting ground
+truth over the images and looking. That is the reason Figure 1 exists: a dataset
+that trains well is not the same as a dataset that is right.
+
+### 7.5 Limits
+
+Simulated data only. Transfer to real micrographs is untested and is the next
+measurement; `code/eval_real.py` in the archive runs it once annotated real
+images are in place.
+
+### Reproducing §7
+
+- `code/gen_nano.py`, `code/gen_spores.py` — datasets with ground truth
+- `code/train.py`, `code/evaluate.py` — training and held-out evaluation
+- `code/figures.py`, `code/tables.py` — figures (PDF+PNG) and tables (CSV+LaTeX)
+- Environment: Python 3.12, torch 2.6.0+cu126, ultralytics, Tesla V100-SXM3-32GB
