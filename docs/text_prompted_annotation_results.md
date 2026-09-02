@@ -166,3 +166,122 @@ per-image cost.
 
 Environment: Python 3.12.13, torch 2.6.0+cu126, ultralytics 8.4.41,
 Tesla V100-SXM3-32GB.
+
+---
+
+## 6. Replication on a second specimen and modality — SEM bacterial spores
+
+Recorded 2026-09-02. §2 established the vocabulary effect on one image, one
+specimen, one modality. A single instance is an anecdote, so this repeats it on
+simulated SEM spores: different physics engine (Monte Carlo electron transport,
+not multislice), different specimen, different contrast mechanism, bright
+objects rather than dark.
+
+### 6.1 Test data
+
+Four conditions from `acorn_sem_sim`, 512 x 512 at 20 nm/px, 30 spores placed
+per field, seed 11. Ground truth is exact because the scene knows where it put
+them.
+
+| Case | Coating | kV | Charging | Clustering | Truth components |
+|---|---|---:|---:|---:|---:|
+| `coated` | 12 nm gold on silicon | 5.0 | 0.0 | 0.40 | 24 |
+| `uncoated_clean` | none, on resin | 1.0 | 0.0 | 0.40 | 24 |
+| `uncoated_charged` | none, on resin | 1.0 | 1.2 | 0.40 | 24 |
+| `uncoated_dense` | none, on resin | 1.0 | 0.5 | 0.85 | 26 |
+
+Note the gap between 30 placed and 24 components: touching spores merge under
+connected-component labelling. This matters below.
+
+### 6.2 The vocabulary effect replicates, and more sharply
+
+Thirteen phrases, confidence 0.5. Two worked. Eleven returned nothing.
+
+| Prompt | Masks (all four cases) |
+|---|---:|
+| `oval object` | **30** |
+| `oval cell` | **30** |
+| `bacterial spore` | 0 |
+| `spore` | 0 |
+| `bacteria` | 0 |
+| `rod shaped cell` | 0 |
+| `bright oval blob` | 0 |
+| `bright blob` | 0 |
+| `white oval object` | 0 |
+| `bright ellipse` | 0 |
+| `grain of rice` | 0 |
+| `peanut` | 0 |
+| `bean` | 0 |
+
+The §2 findings hold, and the second is now stronger:
+
+1. **The discipline's own vocabulary returns nothing.** "spore", "bacterial
+   spore" and "bacteria" find zero objects; "oval object" finds every one.
+2. **The phrasing is not guessable, and not even consistent with §2.** There the
+   working phrase was `dark round blob` and `dark blob` failed. Here `bright
+   oval blob` fails and the bare `oval object` succeeds — so the "<adjective>
+   <shape> blob" pattern that worked on nanoparticles does not transfer. There
+   is no rule to learn, only a lookup to build.
+
+### 6.3 Where it works, it is close to exact
+
+`oval object`, confidence 0.5, evaluated against the label map:
+
+| Case | Masks | Recall @ IoU>=0.5 | Precision @ IoU>=0.5 |
+|---|---:|---:|---:|
+| `coated` | 30 | 1.00 | — |
+| `uncoated_clean` | 30 | 1.00 | — |
+| `uncoated_charged` | 30 | 0.96 | 0.77 |
+| `uncoated_dense` | 30 | 1.00 | — |
+
+Median IoU of the best-matching prediction per truth object: **0.90**.
+At the stricter IoU >= 0.75 on `uncoated_charged`: TP 18, FP 12, FN 6.
+
+**The apparent false positives are a ground-truth artefact, not model error.**
+Measuring what fraction of each predicted mask lands on true spore material:
+
+- 25 masks at > 90%
+- 5 masks at 50-90%
+- **0 masks below 50%**
+
+SAM 3 returned exactly 30 masks for exactly 30 placed spores. The five partial
+matches are touching spores it separated correctly and the connected-component
+truth had merged. On instance boundaries the model was more correct than the
+labels it was being scored against — which is worth remembering whenever a
+segmentation metric is computed against component labelling.
+
+### 6.4 Simulated charging does not perturb it
+
+`uncoated_clean` and `uncoated_charged` returned identical mask counts and
+near-identical recall, despite charging raising mean spore/substrate contrast
+from 1.84 to 2.47 and blowing out individual spores (see
+`acorn_sem_sim.charging`). The artefact that defeats intensity thresholding —
+it changes measured object area by 2.2x, per `acorn.core.conditions` — does not
+measurably affect SAM 3.
+
+### 6.5 What this means for fine-tuning
+
+There is no accuracy headroom to train for: recall is 0.96-1.00 with a median
+IoU of 0.90, zero-shot, including on the hardest condition. Fine-tuning SAM 3
+or micro-SAM to segment these better would be optimising a solved problem.
+
+The reproducible defect is the vocabulary mapping, not the segmentation. That
+is the case for fine-tuning SAM 3 specifically — grounding "spore" and
+"vesicle" in real images so the model answers to the terms the field uses —
+and it is a different objective from the usual reason for fine-tuning a
+segmenter.
+
+### 6.6 Limits of this measurement
+
+Simulated data only: clean backgrounds, no debris, no contamination, no focus
+variation, no stage drift. Whether recall near 1.00 survives a real micrograph
+is untested and is the obvious next measurement. The ground truth merges
+touching spores, which understated precision until §6.3 checked it directly.
+
+### Reproducing §6
+
+- Scenes: `acorn_sem_sim.scenes.build("spores", ...)`, seed 11, parameters in §6.1
+- Imaging: `acorn_sem_sim.imaging.simulate`, TLD detector, 800 e-/px, 12000 trajectories
+- Charging: `acorn_sem_sim.imaging.Detector(charging=...)`, off by default
+- SAM 3: `Sam3Processor.set_text_prompt` directly, bypassing
+  `acorn.core.vocabulary`, so the phrases above are the raw strings
