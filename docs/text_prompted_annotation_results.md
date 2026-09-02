@@ -288,84 +288,96 @@ touching spores, which understated precision until §6.3 checked it directly.
 
 ---
 
-## 7. Training on simulated data — the closed loop, measured properly
+## 7. Training on simulated data, and testing on real micrographs
 
 Recorded 2026-09-02. Section 4 demonstrated the annotate-export-train chain on
 8 tiles from 2 images for 3 epochs, which proved the plumbing and nothing else.
-This is the same loop run at a size that supports a claim, and it is scoped to
-the SOFTWARE rather than to model comparison: the question is whether ACORN can
-generate data and train a working detector, not which model is best.
+This is the same loop at a size that supports a claim, and then run against real
+data of the same specimens.
 
-Full data, models, figures and tables:
-`/nas-158/Alexis/ACORN_methods_paper/`
+Full archive: `/nas-158/Alexis/ACORN_methods_paper/`
 
-### 7.1 What was done
+### 7.1 Setup
 
-Two simulated datasets with exact ground truth, 400 images each at 640x640,
-split 280/60/60 by disjoint seed range. YOLO11s-seg trained on each from an
-ImageNet-pretrained start. No real data in training, no hand annotation.
+400 simulated images per specimen at 640x640, split 280/60/60 by disjoint seed
+range, YOLO11s-seg trained from an ImageNet-pretrained start. No real data in
+training, no hand annotation.
 
-| | Nanoparticles | Spores |
-|---|---|---|
-| Forward model | multislice + CTF + DQE | Monte Carlo electron transport |
-| Instances | 14,261 | 10,192 |
-| Varied per image | dose, defocus, detector, pixel size, ice thickness, count, size | kV, coating, substrate, charging, clustering, dimensions, electron budget |
+### 7.2 The headline: simulated is near-perfect, real is not
 
-### 7.2 Held-out test performance
+| Dataset | Evaluated on | Box mAP@50 | Mask mAP@50 | Mask P | Mask R |
+|---|---|---:|---:|---:|---:|
+| Nanoparticles | simulated test | 0.985 | 0.943 | 0.950 | 0.932 |
+| Nanoparticles | REAL PLGA | — | — | — | 16.0 det/image, no ground truth |
+| Spores | simulated test | 0.987 | 0.990 | 0.990 | 0.986 |
+| Spores | REAL micrographs | 0.091 | 0.079 | 0.213 | 0.127 |
 
-| Dataset | Epochs | Box mAP@50 | Box mAP@50-95 | Mask mAP@50 | Mask mAP@50-95 | Mask P | Mask R |
-|---|---:|---:|---:|---:|---:|---:|---:|
-| Nanoparticles | 47 | 0.985 | 0.814 | 0.936 | 0.457 | 0.957 | 0.938 |
-| Spores | 100 | 0.990 | 0.988 | 0.994 | 0.909 | 0.994 | 0.996 |
+Real cryo-TEM: 24 PLGA micrographs from `Atlas/ARM/PLGA_LA`, 4096 px at 2.23
+A/px, binned 8x to the training scale. Real SEM: 26 micrographs with 1085
+annotated spores from `SEM_Imaging`.
 
-~7 ms per image on one V100. Nanoparticle training stopped early on patience 25.
+**Transfer held for cryo-TEM and failed for SEM.** That contrast is the result.
 
-The nanoparticle mask mAP@50-95 of 0.457 is an object-size effect, not a
-segmentation failure: particles are ~17 px across, so a one-pixel boundary error
-is a large fraction of the object. Detection is essentially perfect on the same
-images (box mAP@50 0.985, counting error under 3%), and the spore set -- same
-recipe, ~50 px objects -- reaches 0.909.
+### 7.3 Three measured domain gaps in the SEM case
 
-### 7.3 Accuracy attributed to acquisition physics
+Each was measured from the real data before being closed, not guessed.
 
-The simulator recorded the parameters behind every image, so performance can be
-broken down rather than averaged.
+1. **Size.** Simulated spores were 900-1600 nm long; measured from 1087
+   annotations at correct per-image scale, real spores are 942/1267/2413 nm
+   (p10/median/p90).
+2. **Magnification.** The real set spans 3.6-19.3 nm/px (5.8k-31k x) against a
+   single simulated 20 nm/px. Spore count also had to become an areal density
+   (0.35-0.95 per um^2), or a 2.5 um field holds a hundred 1.3 um spores.
+3. **Substrate.** The largest gap. Simulated spores sat bright on near-black
+   smooth substrate (background mean 20, std 24); real spores sit on rough
+   organic debris BRIGHTER than they are (mean 100, std 62).
 
-| Dataset | Condition | Images | Exact-count rate | MAE |
-|---|---|---:|---:|---:|
-| Spores | coated | 33 | 82% | 0.6% |
-| Spores | uncoated | 14 | 86% | 0.4% |
-| Spores | uncoated + charging | 13 | 77% | 1.5% |
-| Nanoparticles | dose 20 e/A2 | 20 | — | 2.0% |
-| Nanoparticles | dose 40 e/A2 | 26 | — | 1.8% |
-| Nanoparticles | dose 60 e/A2 | 14 | — | 3.1% |
+Closing all three moved real mask mAP@50 from 0.008 to 0.079 and recall from
+0.13 to 0.16 -- five-fold, and still a failure. Where the detector fires on real
+data it is correct; it simply misses most spores.
 
-Charging costs about nine points of exact-count rate and triples the mean
-absolute error, while still counting most charged fields exactly. For contrast,
-`acorn.core.conditions` measures the same artefact changing object area by 2.2x
-for an intensity threshold. Dose shows no monotonic effect over 20-60 e/A2.
+### 7.4 Why cryo-TEM works and SEM does not
 
-### 7.4 A defect the figures caught and the metrics did not
+Cryo-TEM contrast is dominated by physics the simulator models -- projected
+potential, CTF, dose, detector DQE -- over uniform vitreous ice. SEM contrast is
+dominated by specimen preparation: what the spores sit on, how they were
+mounted, what debris came with them. The simulator models electron transport
+correctly and the specimen mount not at all.
 
-The first nanoparticle dataset was generated with `pixel_size_a` of 1.5-2.2 when
-the engine expects angstroms -- a 115 nm field of view with 30 nm particles
-packed into it. The ground truth was exactly correct for the scene, and training
-produced healthy-looking curves reaching box mAP@50 0.95 on data that was
-physical nonsense.
+The reading: **simulation-trained models transfer when imaging physics dominates
+appearance, and fail when preparation does.**
 
-Nothing in the metrics indicated a problem. It was caught by plotting ground
-truth over the images and looking. That is the reason Figure 1 exists: a dataset
-that trains well is not the same as a dataset that is right.
+### 7.5 A distractor class that backfired
 
-### 7.5 Limits
+Adding the engine's `Contamination` component to teach the detector to ignore
+debris made the cryo-TEM result much worse: mean detections on real micrographs
+fell from 16.9 to 3.8 per image, and what remained fired on debris rather than
+particles. The engine renders contamination as large flat polygonal slabs, which
+overlay the particles while carrying no label, so training taught suppression in
+exactly those regions. Removed. A distractor class only helps when it resembles
+the real distractor.
 
-Simulated data only. Transfer to real micrographs is untested and is the next
-measurement; `code/eval_real.py` in the archive runs it once annotated real
-images are in place.
+### 7.6 A defect the metrics did not catch
+
+The first nanoparticle dataset used `pixel_size_a` of 1.5-2.2 where the engine
+expects angstroms: a 115 nm field with 30 nm particles packed into it. Ground
+truth was exactly right for that scene and training reached box mAP@50 0.95 on
+physically impossible images. No metric flagged it; plotting labels over images
+did.
+
+### 7.7 Data-quality findings in the real SEM set
+
+- ACORN sidecars record `pixel_size_nm` 1.867 for every image; the true value is
+  in the Zeiss `CZ_SEM` tag and ranges 3.6-19.3 nm/px. Any physical measurement
+  taken from those sidecars is wrong by a per-image factor. Worth fixing at
+  source.
+- Of 1085 annotations, 793 (73%) are spore-like by size and convexity; the rest
+  are debris contours. Scoring against the clean subset does not change the
+  conclusion.
 
 ### Reproducing §7
 
-- `code/gen_nano.py`, `code/gen_spores.py` — datasets with ground truth
-- `code/train.py`, `code/evaluate.py` — training and held-out evaluation
-- `code/figures.py`, `code/tables.py` — figures (PDF+PNG) and tables (CSV+LaTeX)
-- Environment: Python 3.12, torch 2.6.0+cu126, ultralytics, Tesla V100-SXM3-32GB
+`code/` in the archive: `gen_nano.py`, `gen_spores.py`, `train.py`,
+`evaluate.py`, `build_real_sem.py`, `eval_real_sem.py`, `real_plga.py`,
+`figures.py`, `tables.py`. Environment: Python 3.12, torch 2.6.0+cu126,
+ultralytics, Tesla V100-SXM3-32GB.
