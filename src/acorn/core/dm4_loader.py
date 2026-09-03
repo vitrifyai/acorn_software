@@ -73,6 +73,61 @@ class DM4Metadata:
 
 # ── main image class ──────────────────────────────────────────────────────────
 
+
+
+_UNIT_TO_NM = {"nm": 1.0, "um": 1e3, "µm": 1e3, "\u00b5m": 1e3, "mm": 1e6,
+               "m": 1e9, "a": 0.1, "\u00c5": 0.1, "angstrom": 0.1, "pm": 1e-3}
+
+
+def _vendor_pixel_size_nm(tf) -> float | None:
+    """Pixel size in nm from a vendor tag, or None.
+
+    Zeiss (CZ_SEM) and Thermo/FEI (FEI_HELIOS, FEI_SFEG) both record the true
+    scale here while leaving the standard TIFF resolution fields blank. Reading
+    them is the difference between a calibrated measurement and a guess.
+    """
+    try:
+        page = tf.pages[0]
+        tags = {t.name: t.value for t in page.tags.values()}
+    except Exception:
+        return None
+
+    cz = tags.get("CZ_SEM")
+    if isinstance(cz, dict):
+        # Preferred: a labelled ("Image Pixel Size", value, unit) triple.
+        entry = cz.get("ap_image_pixel_size") or cz.get("ap_pixel_size")
+        if isinstance(entry, (tuple, list)) and len(entry) >= 2:
+            try:
+                value = float(entry[1])
+                unit = str(entry[2]).strip().lower() if len(entry) > 2 else "nm"
+                factor = _UNIT_TO_NM.get(unit)
+                if factor and value > 0:
+                    return value * factor
+            except (TypeError, ValueError):
+                pass
+        # Fallback: the unnamed numeric block, where index 3 is metres/pixel.
+        raw = cz.get("")
+        if isinstance(raw, (tuple, list)) and len(raw) > 3:
+            try:
+                m = float(raw[3])
+                if m > 0:
+                    return m * 1e9
+            except (TypeError, ValueError):
+                pass
+
+    for key in ("FEI_HELIOS", "FEI_SFEG", "FEI_TITAN"):
+        fei = tags.get(key)
+        if isinstance(fei, dict):
+            scan = fei.get("Scan") or {}
+            try:
+                m = float(scan.get("PixelWidth", 0))
+                if m > 0:
+                    return m * 1e9          # FEI writes metres
+            except (TypeError, ValueError):
+                pass
+    return None
+
+
 class DM4Image:
     """
     Container for a loaded cryo-EM image with calibrated metadata.
@@ -307,7 +362,28 @@ class DM4Image:
         self.meta.filename = filepath.stem
         self.meta.raw_dtype = str(data.dtype)
 
-        # Try to read pixel size from ImageJ / OME-TIFF metadata
+        # Try to read pixel size, vendor tags first.
+        #
+        # Electron microscopes write their own calibration and leave the
+        # standard TIFF resolution fields empty: a Zeiss SEM stores
+        # XResolution (1,1) with ResolutionUnit 1 ("no absolute unit"), so a
+        # reader that only understands ImageJ/OME sees no calibration at all
+        # and silently falls back to whatever value was last entered by hand.
+        # That is how a whole SEM dataset came to carry one wrong pixel size:
+        # 1.867 nm/px stamped on 26 micrographs whose true scales ranged over
+        # 3.6-19.3 nm/px, making every measurement in physical units wrong by
+        # a different factor per image.
+        try:
+            with tifffile.TiffFile(str(filepath)) as tf:
+                px_nm = _vendor_pixel_size_nm(tf)
+            if px_nm and px_nm > 0:
+                self.meta.pixel_size = px_nm
+                self.meta.pixel_size_from_header = True
+        except Exception:
+            pass
+
+        # Then ImageJ / OME-TIFF metadata, which does not overwrite a vendor
+        # value if one was found.
         try:
             with tifffile.TiffFile(str(filepath)) as tf:
                 pages = tf.pages
@@ -316,7 +392,7 @@ class DM4Image:
                     tags  = {t.name: t.value for t in page.tags.values()}
                     xres  = tags.get("XResolution")
                     unit  = tags.get("ResolutionUnit", 1)
-                    if xres and xres[0] != 0:
+                    if xres and xres[0] != 0 and not self.meta.pixel_size_from_header:
                         px_per_unit = xres[0] / xres[1] if isinstance(xres, tuple) else float(xres)
                         # TIFF units: 1=no absolute, 2=inch, 3=cm
                         if unit == 2:   # px/inch → nm/px
@@ -328,7 +404,7 @@ class DM4Image:
                 # ImageJ metadata override — spacing is in ij["unit"], not nm.
                 # Convert by unit; treat pixel/unknown units as uncalibrated.
                 ij = getattr(tf, "imagej_metadata", None) or {}
-                if "spacing" in ij:
+                if "spacing" in ij and not self.meta.pixel_size_from_header:
                     ij_unit = (str(ij.get("unit", "nm")).strip().lower()
                                .replace("\x00", "").replace(" ", ""))
                     factor = self.UNIT_TO_NM.get(ij_unit)
