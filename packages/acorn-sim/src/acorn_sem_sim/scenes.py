@@ -244,7 +244,9 @@ def bacterial_spores(shape=(512, 512), pixel_size_nm=8.0, n_spores=25,
                      length_nm=1200.0, width_nm=800.0, size_spread=0.15,
                      coating_nm=10.0, coating="gold", substrate="silicon",
                      clustering=0.35, surface_texture_nm=50.0,
-                     substrate_texture_nm=40.0, seed=0) -> Scene:
+                     substrate_texture_nm=40.0, debris_clumps=0,
+                     debris_grain_nm=70.0, debris_spread_nm=1200.0,
+                     seed=0) -> Scene:
     """Bacterial spores on a substrate, as surface SEM actually sees them.
 
     Spores are ovoid -- Bacillus subtilis is roughly 1.2 x 0.8 um -- they lie at
@@ -359,6 +361,45 @@ def bacterial_spores(shape=(512, 512), pixel_size_nm=8.0, n_spores=25,
                                        float(substrate_texture_nm)),
                          0.0).astype(np.float32)
 
+    # Granular debris: dried medium, salt and cell fragments left by the
+    # suspension. Measured on real spore mounts, it is the dominant non-spore
+    # feature -- bright irregular clumps of small granules, roughly as bright as
+    # the spores themselves, half a micron to a few microns across.
+    #
+    # It is given its own label rather than being folded into the substrate.
+    # Leaving a distractor unlabelled teaches a detector to SUPPRESS whatever
+    # resembles it, and a debris granule resembles a small spore; on the
+    # cryo-TEM side the same mistake pushed the smallest detectable object from
+    # 24 nm to 54 nm. Labelled instead, the model is asked to tell them apart.
+    n_debris = 0
+    if int(debris_clumps) > 0:
+        grain_px = max(1.0, float(debris_grain_nm) / pixel_size_nm)
+        spread_px = max(grain_px * 2.0, float(debris_spread_nm) / pixel_size_nm)
+        yy, xx = np.mgrid[0:shape[0], 0:shape[1]]
+        for _ in range(int(debris_clumps)):
+            cy = rng.uniform(0, shape[0])
+            cx = rng.uniform(0, shape[1])
+            n_grains = int(rng.integers(25, 110))
+            for _g in range(n_grains):
+                gy = cy + rng.normal(0.0, spread_px * 0.35)
+                gx = cx + rng.normal(0.0, spread_px * 0.35)
+                r = grain_px * rng.uniform(0.5, 1.6)
+                if not (0 <= gy < shape[0] and 0 <= gx < shape[1]):
+                    continue
+                blob = ((yy - gy) ** 2 + (xx - gx) ** 2) < r * r
+                blob &= ~spore_pixels          # debris does not overwrite a spore
+                if not blob.any():
+                    continue
+                idx[blob] = 2
+                # Rounded granule, so it carries edge relief like a real grain
+                # rather than reading as a flat bright patch.
+                d2 = ((yy - gy) ** 2 + (xx - gx) ** 2) / (r * r)
+                cap = np.where(blob, np.sqrt(np.clip(1.0 - d2, 0.0, None))
+                               * float(debris_grain_nm) * 0.9, 0.0)
+                h = np.maximum(h, cap.astype(np.float32))
+            n_debris += 1
+        names = names + [spore_material]
+
     return Scene(idx, names, h.astype(np.float32), pixel_size_nm,
                  f"{len(placed)} spores on {substrate}"
                  + (f", {coating_nm:g} nm {coating} coated" if coated else ", uncoated"),
@@ -370,7 +411,11 @@ def bacterial_spores(shape=(512, 512), pixel_size_nm=8.0, n_spores=25,
                        "coating": coating if coated else None,
                        "clustering": float(clustering),
                        "surface_texture_nm": float(surface_texture_nm),
-                       "substrate_texture_nm": float(substrate_texture_nm)})
+                       "substrate_texture_nm": float(substrate_texture_nm),
+                       "debris_clumps": n_debris,
+                       "debris_grain_nm": float(debris_grain_nm)},
+                 label_names=([substrate, "spore", "debris"] if n_debris
+                              else [substrate, "spore"]))
 
 
 BUILDERS = {
