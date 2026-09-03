@@ -367,10 +367,15 @@ did.
 
 ### 7.7 Data-quality findings in the real SEM set
 
-- ACORN sidecars record `pixel_size_nm` 1.867 for every image; the true value is
-  in the Zeiss `CZ_SEM` tag and ranges 3.6-19.3 nm/px. Any physical measurement
-  taken from those sidecars is wrong by a per-image factor. Worth fixing at
-  source.
+- The TIFF loader did not read vendor calibration tags, so sidecars fell back
+  to hand-entered values. Across all 48 sidecars in that directory: 8 are within
+  0.5% of the vendor value, 20 within 5%, 17 carry no pixel size at all, and 3
+  are wrong by more than 5% -- `10A5_009` worst at 1.867 nm/px stored against
+  19.290 true, so every physical measurement from that micrograph is off by a
+  factor of ten. Fixed at source: ACORN now reads Zeiss `CZ_SEM` and Thermo/FEI
+  `FEI_HELIOS`. Existing sidecars are repaired by `code/repair_pixel_size.py`.
+  (An earlier draft of this section said every sidecar carried 1.867; that was
+  generalised from the first file opened and is wrong.)
 - Of 1085 annotations, 793 (73%) are spore-like by size and convexity; the rest
   are debris contours. Scoring against the clean subset does not change the
   conclusion.
