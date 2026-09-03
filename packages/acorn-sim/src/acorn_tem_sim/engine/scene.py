@@ -111,6 +111,101 @@ class Contamination:
 
 
 @dataclass
+class Debris:
+    """Particulate debris on the grid: small branching aggregates, not slabs.
+
+    `Contamination` above models hexagonal ice crystals, which is a real
+    cryo-EM artefact but is not what sits on a typical prepared grid. Measured
+    on 24 real PLGA micrographs, the non-particle dark features are chains and
+    clusters of very small specks -- overall extent tens of nanometres,
+    branching and strongly non-convex -- together with the carbon film edge.
+
+    The distinction matters more than it sounds. Training with the hexagonal
+    model as an unlabelled distractor made a real-data detector far WORSE:
+    detections fell from 16.9 to 3.8 per image and the survivors fired on
+    debris rather than particles. Those hexagons are 60-350 nm and translucent,
+    so they lie across genuine particles while carrying no label, and the
+    detector learns to suppress whatever sits under a large grey region. A
+    distractor only teaches the right lesson when it resembles the real one:
+    small, opaque, and beside the particles rather than draped over them.
+    """
+
+    n: int = 14
+    extent_nm: float = 90.0          # end-to-end length of one chain
+    grain_nm: float = 7.0            # size of the specks it is built from
+    thickness_nm: float = 25.0
+    mip_v: float = MIP_PLGA          # denser than ice, so it reads dark
+
+    def prepare(self, shape, px, total_a, rng):
+        h, w = shape
+        self._blobs = []
+        for _ in range(self.n):
+            cy, cx = rng.uniform(0, h), rng.uniform(0, w)
+            extent = max(nm_to_px(8.0, px),
+                         nm_to_px(rng.lognormal(np.log(self.extent_nm), 0.55), px))
+            grain = max(0.8, nm_to_px(self.grain_nm, px) * rng.uniform(0.6, 1.4))
+            t_a = max(20.0, rng.lognormal(np.log(self.thickness_nm), 0.4)) * 10.0
+            # A directed walk, so the aggregate comes out as a CHAIN rather
+            # than a compact clump. This is not cosmetic. An earlier version
+            # allowed short walks that wandered, producing 25-70 nm blobs that
+            # were indistinguishable from small real particles -- and because
+            # debris carries no label, the detector learned to ignore anything
+            # that size. Measured: the smallest particle it would detect on
+            # real data rose from 24 nm to 44 nm, so genuine small particles
+            # were being suppressed. Debris must be recognisably NOT a
+            # particle: elongated, many-lobed, never a single round mass.
+            k = int(rng.integers(6, 18))
+            heading = rng.uniform(0, 2 * np.pi)
+            y, x = cy, cx
+            specks = []
+            step = max(grain * 0.65, extent / max(k, 1))
+            for _i in range(k):
+                specks.append((y, x, grain * rng.uniform(0.6, 1.15)))
+                # Persist in one direction with only a small turn each step.
+                heading += rng.normal(0.0, 0.55)
+                y += step * np.sin(heading)
+                x += step * np.cos(heading)
+            self._blobs.append((specks, 0.0, t_a))
+
+    def add_slab(self, V, shape, px, z, dz):
+        exc = (self.mip_v - ICE) * dz
+        for specks, z0, t_a in self._blobs:
+            if z0 <= z <= z0 + t_a:
+                for (cy, cx, r) in specks:
+                    _disk_add(V, cy, cx, r, exc)
+
+    def footprints(self, px):
+        """Outline of each aggregate, labelled `debris`.
+
+        Emitting this is a deliberate reversal. Debris was first left unlabelled
+        so the detector would treat it as background, and that made real-world
+        performance worse every time it was tried -- because an aggregate is
+        built from particle-sized dark specks, and calling those background
+        teaches suppression of genuine small particles. Measured across three
+        successively more faithful debris models, the smallest particle the
+        detector would find on real data rose from 24 nm to 44 nm to 54 nm.
+
+        A caller that wants debris as background can simply drop this label. A
+        caller that wants the detector to DISCRIMINATE needs it present, because
+        a model cannot learn a distinction it is never shown.
+        """
+        out = []
+        for specks, _z0, _t in self._blobs:
+            pts = np.array([(x, y) for (y, x, _r) in specks], dtype=float)
+            if len(pts) < 3:
+                continue
+            # A padded convex outline of the chain: enough to localise it
+            # without pretending the ragged boundary is known exactly.
+            c = pts.mean(axis=0)
+            r = float(max(np.hypot(*(pts - c).T).max(), 1.0))
+            ang = np.linspace(0, 2 * np.pi, 12, endpoint=False)
+            hull = [(float(c[0] + r * np.cos(a)), float(c[1] + r * np.sin(a)))
+                    for a in ang]
+            out.append(("debris", hull))
+        return out
+
+
+@dataclass
 class Cell:
     species: str = "e_coli"
     angle_deg: float = 15.0

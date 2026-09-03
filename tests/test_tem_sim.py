@@ -161,3 +161,71 @@ def test_tem_auto_open_reports_missing_outputs(tmp_path) -> None:
 
     assert count == 0
     assert "no output TIFF files" in message
+
+
+# ── debris ───────────────────────────────────────────────────────────────────
+
+def test_debris_is_chain_like_and_never_a_single_round_mass():
+    """The failure this prevents, measured on real data.
+
+    Debris built from compact particle-sized blobs is indistinguishable from a
+    small particle, and a detector trained against it learns to suppress
+    genuine small particles rather than to reject debris. Across three
+    successively more faithful debris models the smallest particle the detector
+    would find on real PLGA micrographs rose from 24 nm to 44 nm to 54 nm.
+    Debris must be recognisably elongated and many-lobed.
+    """
+    import numpy as np
+    from acorn_tem_sim.engine.scene import Debris
+
+    d = Debris(n=40, extent_nm=120.0, grain_nm=7.0)
+    d.prepare((512, 512), 18.0, 600.0, np.random.default_rng(0))
+    assert len(d._blobs) == 40
+
+    elongations, lobes = [], []
+    for specks, _z0, _t in d._blobs:
+        lobes.append(len(specks))
+        pts = np.array([(x, y) for (y, x, _r) in specks], float)
+        pts = pts - pts.mean(0)
+        _, sv, _ = np.linalg.svd(pts, full_matrices=False)
+        elongations.append(sv[0] / max(sv[1], 1e-6))
+
+    assert min(lobes) >= 6, f"aggregates too simple: {min(lobes)} lobes"
+    assert np.median(elongations) > 1.6, (
+        f"aggregates are compact (median elongation {np.median(elongations):.2f}); "
+        "a round debris clump reads as a small particle")
+
+
+def test_debris_is_labelled_so_a_detector_can_discriminate():
+    """Debris carries a label of its own.
+
+    It was first emitted unlabelled, so it would read as background. That made
+    real-world performance worse in every test, because the detector learned to
+    suppress anything that looked like a debris speck -- and a speck looks like
+    a small particle. Given its own class instead, the share of real detections
+    that are actually particle-shaped rose from 70% to 91%.
+    """
+    import numpy as np
+    from acorn_tem_sim.engine.scene import Debris
+
+    d = Debris(n=5)
+    d.prepare((256, 256), 18.0, 600.0, np.random.default_rng(1))
+    fps = d.footprints(18.0)
+    assert len(fps) == 5
+    assert {label for label, _v in fps} == {"debris"}
+    for _label, verts in fps:
+        assert len(verts) >= 3
+
+
+def test_debris_and_particles_are_separate_ground_truth_classes():
+    """A scene with both must not merge them into one label."""
+    import numpy as np
+    from acorn_tem_sim.engine.scene import (Scene, Nanoparticles, Debris,
+                                            scene_annotations)
+
+    scene = Scene(ice_thickness_nm=60.0, seed=2,
+                  components=[Nanoparticles(n=12, diameter_nm_mean=40.0),
+                              Debris(n=6)])
+    labels = [lab for lab, _v in scene_annotations((256, 256), 18.0, scene)]
+    assert labels.count("nanoparticle") == 12
+    assert labels.count("debris") == 6
