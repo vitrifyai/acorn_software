@@ -246,7 +246,7 @@ def bacterial_spores(shape=(512, 512), pixel_size_nm=8.0, n_spores=25,
                      clustering=0.35, surface_texture_nm=50.0,
                      substrate_texture_nm=40.0, debris_clumps=0,
                      debris_grain_nm=70.0, debris_spread_nm=1200.0,
-                     seed=0) -> Scene:
+                     max_tilt_deg=0.0, stacking=0.0, seed=0) -> Scene:
     """Bacterial spores on a substrate, as surface SEM actually sees them.
 
     Spores are ovoid -- Bacillus subtilis is roughly 1.2 x 0.8 um -- they lie at
@@ -329,16 +329,47 @@ def bacterial_spores(shape=(512, 512), pixel_size_nm=8.0, n_spores=25,
                for py, px_, pa, _, _ in placed):
             continue
 
-        r2, mask = _ellipse_mask(shape, cy, cx, a, b, angle)
+        # Out-of-plane tilt. A dried suspension does not leave every spore lying
+        # flat: they prop against each other and against debris, and a tilted
+        # spore projects as a shorter ellipse with one end raised. Rendered flat
+        # and face-on, a simulated field reads more uniform than any real one.
+        tilt = np.radians(rng.uniform(0.0, float(max_tilt_deg))) if max_tilt_deg > 0 else 0.0
+        a_proj = a * float(np.cos(tilt))
+        if a_proj < 2:
+            continue
+
+        r2, mask = _ellipse_mask(shape, cy, cx, a_proj, b, angle)
         idx[mask] = 1
+
         # Ellipsoid cap: height falls to zero at the rim, so the relief is the
         # shape of the object rather than a plateau with a cliff edge.
         cap = np.zeros(shape, np.float32)
         cap[mask] = (np.sqrt(np.clip(1.0 - r2[mask], 0.0, None))
                      * (0.5 * float(width_nm) * scale)).astype(np.float32)
-        h = np.maximum(h, cap)
+
+        if tilt > 0:
+            # One end lifted: a ramp along the projected major axis, of the
+            # height the tilted body actually reaches.
+            yy_, xx_ = np.mgrid[0:shape[0], 0:shape[1]]
+            u = ((xx_ - cx) * np.cos(angle) + (yy_ - cy) * np.sin(angle)) / max(a_proj, 1e-6)
+            lift = (np.clip(u, -1.0, 1.0) * float(np.sin(tilt))
+                    * 0.5 * float(length_nm) * scale)
+            cap = np.where(mask, cap + lift.astype(np.float32) , cap).astype(np.float32)
+            cap = np.clip(cap, 0.0, None)
+
+        # Stacking. A spore coming to rest on top of another starts from the
+        # surface it lands on, not from the mount. Without this every object in
+        # a dense field sits at the same base height and a pile reads as a
+        # single merged blob rather than as separate spores at different levels.
+        base = 0.0
+        if float(stacking) > 0 and spore_pixels[mask].any():
+            overlap = float(spore_pixels[mask].mean())
+            if overlap > 0.05:
+                base = float(np.median(h[mask])) * float(stacking) * min(overlap * 2.0, 1.0)
+
+        h = np.maximum(h, cap + base)
         spore_pixels |= mask
-        placed.append((cy, cx, a, b, angle))
+        placed.append((cy, cx, a_proj, b, angle))
 
     # Coat texture on the spores only. Without it every spore has a flat apex
     # and images as an outline rather than a filled object.
@@ -412,6 +443,8 @@ def bacterial_spores(shape=(512, 512), pixel_size_nm=8.0, n_spores=25,
                        "clustering": float(clustering),
                        "surface_texture_nm": float(surface_texture_nm),
                        "substrate_texture_nm": float(substrate_texture_nm),
+                       "max_tilt_deg": float(max_tilt_deg),
+                       "stacking": float(stacking),
                        "debris_clumps": n_debris,
                        "debris_grain_nm": float(debris_grain_nm)},
                  label_names=([substrate, "spore", "debris"] if n_debris

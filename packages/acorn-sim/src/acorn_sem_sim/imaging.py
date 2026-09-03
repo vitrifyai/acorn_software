@@ -64,6 +64,7 @@ class Detector:
     read_noise_e:  float = 3.0
     scan_jitter_px: float = 0.0
     charging:      float = 0.0     # 0 = off. See charging.py before raising it.
+    shadowing:     float = 0.0     # 0 = off. Occlusion of the detector by relief.
 
 
 @dataclass
@@ -105,6 +106,63 @@ def _shading(height_nm: np.ndarray, pixel_size_nm: float, det: Detector) -> np.n
 
     cos_nd = np.clip(nx * dx + ny * dy + nz * dz, 0.0, None)
     return 1.0 + det.asymmetry * cos_nd
+
+
+def _visibility(height_nm: np.ndarray, pixel_size_nm: float, det: "Detector",
+                max_reach_px: int = 64) -> np.ndarray:
+    """How much of the detector each point can actually see, 0..1.
+
+    The shading term above asks only which way a surface faces. That is enough
+    on an open field and wrong the moment the specimen has relief: a facet
+    tipped towards the detector still reads bright when a neighbouring spore
+    stands between it and the detector, because nothing in the model knows the
+    neighbour is there. Real SEM images of piled specimens are full of deep
+    shadow for exactly that reason, and its absence is a large part of why a
+    simulated field of spores looks flatter and cleaner than a real one.
+
+    This is a horizon check. Walking from each pixel towards the detector in
+    plan view, the terrain subtends some maximum elevation angle; where that
+    exceeds the detector's own elevation, the line of sight is blocked. The
+    transition is softened over a few degrees rather than made binary, because
+    a hard edge reads as a rendering artefact and real shadow boundaries are
+    blurred by the secondaries that escape sideways anyway.
+    """
+    if det.shadowing <= 0:
+        return np.ones_like(height_nm, dtype=np.float64)
+
+    h = height_nm.astype(np.float64)
+    el = np.radians(det.elevation_deg)
+    az = np.radians(det.azimuth_deg)
+    ux, uy = np.cos(az), np.sin(az)          # plan-view step towards detector
+
+    horizon = np.full(h.shape, -np.inf)
+    reach = max(2, int(max_reach_px))
+    for step in range(1, reach + 1):
+        sy, sx = int(round(step * uy)), int(round(step * ux))
+        if sy == 0 and sx == 0:
+            continue
+        # np.roll wraps, which would let one edge of the frame shadow the other.
+        # Shift and hold the border instead: the specimen continues beyond the
+        # frame, but it does not continue from the opposite side of it.
+        shifted = np.roll(np.roll(h, -sy, axis=0), -sx, axis=1)
+        if sy > 0:
+            shifted[-sy:, :] = h[-1:, :]
+        elif sy < 0:
+            shifted[:-sy, :] = h[:1, :]
+        if sx > 0:
+            shifted[:, -sx:] = h[:, -1:]
+        elif sx < 0:
+            shifted[:, :-sx] = h[:, :1]
+
+        dist_nm = np.hypot(sy, sx) * pixel_size_nm
+        ang = np.arctan2(shifted - h, dist_nm)
+        np.maximum(horizon, ang, out=horizon)
+
+    # Soft edge: fully lit a few degrees below the horizon, fully shadowed a few
+    # above it.
+    soft = np.radians(4.0)
+    t = np.clip((horizon - el) / soft, 0.0, 1.0)
+    return 1.0 - float(det.shadowing) * t
 
 
 def _fftconvolve_same(image: np.ndarray, kernel: np.ndarray) -> np.ndarray:
@@ -250,6 +308,9 @@ def simulate(material_index: np.ndarray,
             seed=seed)
 
     kind = detector.kind.upper()
+    # Occlusion applies to whatever the detector collects, including
+    # backscatters: a solid neighbour blocks both.
+    vis = _visibility(h, beam.pixel_size_nm, detector)
     if kind == "BSE":
         signal = bse_total.copy()
         shade = np.ones_like(signal)
@@ -259,7 +320,7 @@ def simulate(material_index: np.ndarray,
         mix = 0.02 if kind == "TLD" else detector.bse_mix
         signal = se_total + mix * bse_total
         shade = _shading(h, beam.pixel_size_nm, detector)
-    signal = signal * shade
+    signal = signal * shade * vis
 
     rng = np.random.default_rng(seed)
     image = _acquire(signal, beam, detector, rng)
