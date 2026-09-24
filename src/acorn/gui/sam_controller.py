@@ -39,8 +39,34 @@ def _sample_path(pts: list, spacing: float = 20.0) -> list:
     return result
 
 
+def _offset_vertices(vertices: list, ox: float, oy: float) -> list:
+    """Map vertices from SAM crop-space back into full-image coordinates."""
+    if ox == 0 and oy == 0:
+        return vertices
+    return [(vx + ox, vy + oy) for vx, vy in vertices]
+
+
+def _predict_point_preview(predictor, img8, points, labels, ox: float, oy: float) -> dict:
+    """Run point-prompt prediction and contour extraction off the GUI thread."""
+    masks = predictor.predict_points(img8, points, labels=labels)
+    if not masks:
+        return {"has_mask": False, "vertices": []}
+    vertices = predictor.mask_to_polygon(masks[0])
+    return {"has_mask": True, "vertices": _offset_vertices(vertices, ox, oy)}
+
+
 class SAMControllerMixin:
     """SAM prompting, previewing and committing. Mixed into MainWindow."""
+
+    def _remove_sam_preview(self) -> None:
+        """Remove only the live SAM preview annotation, leaving other edits alone."""
+        if self._sam_current_preview is None:
+            return
+        store = self._canvas_widget.canvas.store
+        store.remove(self._sam_current_preview)
+        if self._sam_current_preview in self._pending_sam_masks:
+            self._pending_sam_masks.remove(self._sam_current_preview)
+        self._sam_current_preview = None
 
     def _on_sam_scribble_commit(self, pts: list, positive: bool = True) -> None:
         """Convert a freehand scribble stroke into SAM point prompts.
@@ -73,30 +99,21 @@ class SAMControllerMixin:
         self._sam_panel.set_sam_status(f"Running SAM with {len(points_snap)} point(s)…")
 
         def _run():
-            return self._sam_predictor.predict_points(img8, points_for_sam, labels=labels_snap)
+            return _predict_point_preview(
+                self._sam_predictor, img8, points_for_sam, labels_snap, ox, oy
+            )
 
-        def _done(masks):
-            if not masks:
+        def _done(result):
+            if not result["has_mask"]:
                 self._sam_panel.set_sam_status(
                     "No mask returned — try adding more strokes or a positive point."
                 )
                 return
             store = self._canvas_widget.canvas.store
-            if self._sam_current_preview is not None:
-                store.undo()
-                if self._sam_current_preview in self._pending_sam_masks:
-                    self._pending_sam_masks.remove(self._sam_current_preview)
-                self._sam_current_preview = None
-            vertices = self._sam_predictor.mask_to_polygon(masks[0])
-            if ox != 0 or oy != 0:
-                vertices = [(vx + ox, vy + oy) for vx, vy in vertices]
+            self._remove_sam_preview()
+            vertices = result["vertices"]
             if len(vertices) >= 3:
-                from acorn.core.annotations import ROIAnnotation
-                roi = ROIAnnotation(
-                    vertices=vertices, area_nm2=0.0, stats={},
-                    color=self._sam_color_for_label(point_label), linewidth=1.5,
-                    label=point_label,
-                )
+                roi = self._roi_from_sam(vertices, point_label)
                 store.add(roi)
                 self._pending_sam_masks.append(roi)
                 self._sam_current_preview = roi
@@ -564,11 +581,7 @@ class SAMControllerMixin:
                 self._canvas_widget.remove_artist(a)
 
         # Remove the current preview mask from the store
-        if self._sam_current_preview is not None:
-            self._canvas_widget.canvas.store.undo()
-            if self._sam_current_preview in self._pending_sam_masks:
-                self._pending_sam_masks.remove(self._sam_current_preview)
-            self._sam_current_preview = None
+        self._remove_sam_preview()
 
         # No points left — just report and stop
         if not self._sam_prompt_points:
@@ -585,22 +598,18 @@ class SAMControllerMixin:
         self._sam_panel.set_sam_status("Re-running SAM…")
 
         def _run():
-            return self._sam_predictor.predict_points(img8, points_for_sam, labels=labels_snap)
+            return _predict_point_preview(
+                self._sam_predictor, img8, points_for_sam, labels_snap, ox, oy
+            )
 
-        def _done(masks):
-            if not masks:
+        def _done(result):
+            if not result["has_mask"]:
                 self._sam_panel.set_sam_status("SAM returned no mask — add more points.")
                 return
             store = self._canvas_widget.canvas.store
-            vertices = self._sam_predictor.mask_to_polygon(masks[0])
-            if ox != 0 or oy != 0:
-                vertices = [(vx + ox, vy + oy) for vx, vy in vertices]
+            vertices = result["vertices"]
             if len(vertices) >= 3:
-                from acorn.core.annotations import ROIAnnotation
-                roi = ROIAnnotation(
-                    vertices=vertices, area_nm2=0.0, stats={},
-                    color=self._sam_color_for_label(point_label), linewidth=1.5, label=point_label,
-                )
+                roi = self._roi_from_sam(vertices, point_label)
                 store.add(roi)
                 self._pending_sam_masks.append(roi)
                 self._sam_current_preview = roi
@@ -617,11 +626,7 @@ class SAMControllerMixin:
         self._sam_thread.start()
     def _on_sam_clear_points(self) -> None:
         """Discard accumulated point prompts and remove the current preview mask."""
-        if self._sam_current_preview is not None:
-            self._canvas_widget.canvas.store.undo()
-            if self._sam_current_preview in self._pending_sam_masks:
-                self._pending_sam_masks.remove(self._sam_current_preview)
-            self._sam_current_preview = None
+        self._remove_sam_preview()
         self._sam_prompt_points.clear()
         self._sam_prompt_labels.clear()
         self._clear_sam_point_artists()
@@ -686,6 +691,33 @@ class SAMControllerMixin:
         self._sam_thread.error.connect(_err)
         self._sam_thread.start()
 
+    def _roi_from_sam(self, vertices, label):
+        """Build an ROIAnnotation from SAM vertices, carrying its measurements.
+
+        Every SAM path used to store `area_nm2=0.0, stats={}`, so a mask you
+        accepted had no size attached — the outline was saved to the sidecar and
+        the measurement had to be recomputed elsewhere to get a diameter out of
+        it. `polygon_metrics` is the same function the Measure tools use, so a
+        SAM region and a hand-drawn one now report size the same way.
+
+        Shape metrics go in `stats`, which is a free dict already serialised with
+        the annotation; intensity stats (mean/std/min/max) are added separately
+        by the ROI tools and are not overwritten here.
+        """
+        from acorn.core.annotations import ROIAnnotation
+        from acorn.core.measurements import polygon_metrics
+
+        px_nm = getattr(self._engine, "pixel_size", 0.0) or 0.0
+        metrics = polygon_metrics(vertices, px_nm) if px_nm > 0 else {}
+        return ROIAnnotation(
+            vertices  = vertices,
+            area_nm2  = float(metrics.get("area_nm2", 0.0)),
+            stats     = dict(metrics),
+            color     = self._sam_color_for_label(label),
+            linewidth = 1.5,
+            label     = label,
+        )
+
     def _add_sam_masks_to_store(self, masks, offset: tuple = (0, 0)) -> None:
         """Convert SAM masks to ROIAnnotations and add to the store.
 
@@ -720,16 +752,7 @@ class SAMControllerMixin:
                     cy = sum(v[1] for v in vertices) / len(vertices)
                     if ex0 <= cx <= ex1 and ey0 <= cy <= ey1:
                         continue
-                from acorn.core.annotations import ROIAnnotation
-                from acorn.core.measurements import polygon_area_nm2 as _poly_area
-                roi = ROIAnnotation(
-                    vertices  = vertices,
-                    area_nm2  = _poly_area(vertices, self._engine.pixel_size),
-                    stats     = {},
-                    color     = self._sam_color_for_label(label),
-                    linewidth = 1.5,
-                    label     = label,
-                )
+                roi = self._roi_from_sam(vertices, label)
                 store.add(roi)
                 self._pending_sam_masks.append(roi)
         finally:
@@ -770,10 +793,12 @@ class SAMControllerMixin:
         self._sam_panel.set_sam_status("Running SAM…")
 
         def _run():
-            return self._sam_predictor.predict_points(img8, points_for_sam, labels=labels_snap)
+            return _predict_point_preview(
+                self._sam_predictor, img8, points_for_sam, labels_snap, ox, oy
+            )
 
-        def _done(masks):
-            if not masks:
+        def _done(result):
+            if not result["has_mask"]:
                 n_pos = labels_snap.count(1)
                 n_neg = labels_snap.count(0)
                 if n_pos == 0:
@@ -787,20 +812,10 @@ class SAMControllerMixin:
                     )
                 return
             store = self._canvas_widget.canvas.store
-            if self._sam_current_preview is not None:
-                store.undo()
-                if self._sam_current_preview in self._pending_sam_masks:
-                    self._pending_sam_masks.remove(self._sam_current_preview)
-                self._sam_current_preview = None
-            vertices = self._sam_predictor.mask_to_polygon(masks[0])
-            if ox != 0 or oy != 0:
-                vertices = [(vx + ox, vy + oy) for vx, vy in vertices]
+            self._remove_sam_preview()
+            vertices = result["vertices"]
             if len(vertices) >= 3:
-                from acorn.core.annotations import ROIAnnotation
-                roi = ROIAnnotation(
-                    vertices=vertices, area_nm2=0.0, stats={},
-                    color=self._sam_color_for_label(point_label), linewidth=1.5, label=point_label,
-                )
+                roi = self._roi_from_sam(vertices, point_label)
                 store.add(roi)
                 self._pending_sam_masks.append(roi)
                 self._sam_current_preview = roi
@@ -913,30 +928,20 @@ class SAMControllerMixin:
                     self._sam_panel.set_sam_status("Running SAM with negative box point…")
 
                     def _run_nb():
-                        return self._sam_predictor.predict_points(
-                            img8, points_for_sam, labels=labels_snap
+                        return _predict_point_preview(
+                            self._sam_predictor, img8, points_for_sam, labels_snap, ox, oy
                         )
 
-                    def _done_nb(masks):
-                        if not masks:
+                    def _done_nb(result):
+                        if not result["has_mask"]:
                             self._sam_panel.set_sam_status("No mask — add a positive point first.")
                             return
                         store = self._canvas_widget.canvas.store
-                        if self._sam_current_preview is not None:
-                            store.undo()
-                            if self._sam_current_preview in self._pending_sam_masks:
-                                self._pending_sam_masks.remove(self._sam_current_preview)
-                            self._sam_current_preview = None
-                        vertices = self._sam_predictor.mask_to_polygon(masks[0])
-                        if ox != 0 or oy != 0:
-                            vertices = [(vx + ox, vy + oy) for vx, vy in vertices]
+                        self._remove_sam_preview()
+                        vertices = result["vertices"]
                         if len(vertices) >= 3:
                             point_label = self._sam_panel.point_label
-                            roi = ROIAnnotation(
-                                vertices=vertices, area_nm2=0.0, stats={},
-                                color=self._sam_color_for_label(point_label), linewidth=1.5,
-                                label=point_label,
-                            )
+                            roi = self._roi_from_sam(vertices, point_label)
                             store.add(roi)
                             self._pending_sam_masks.append(roi)
                             self._sam_current_preview = roi

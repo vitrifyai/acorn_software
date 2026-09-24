@@ -560,6 +560,15 @@ class MainWindow(
         # would silently invalidate the override the moment the bin factor
         # changed, and every measurement would be wrong by that factor.
         self._px_overrides: dict[int, float] = {}
+        # The pixel size actually in force for each image that has been loaded,
+        # on the grid the annotations were drawn on -- override or header, after
+        # binning. The cache holds only three images, so an export that walked
+        # the annotations of a fourth had nothing left to ask and fell back to
+        # 1.0 nm/px: a header-calibrated micrograph exported its measurements
+        # in pixels while the column said nanometres. Recorded once at load and
+        # never evicted, because it is two floats and the calibration is the
+        # one thing a measurement cannot be reconstructed without.
+        self._px_effective: dict[int, float] = {}
         self._last_distance_px: float = 0.0        # last measured distance in pixels
         self._contrast_states: dict[int, ContrastParams] = {}
         self._ann_states: dict[int, list] = {}   # per-image annotation snapshots
@@ -909,6 +918,15 @@ class MainWindow(
         self._live_profile_dlg = None
         self._ann_panel.delete_selected_requested.connect(self._on_delete_selected)
         self._ann_panel.relabel_requested.connect(self._on_relabel_selected)
+        self._ann_panel.accept_selected_requested.connect(self._on_accept_selected_prediction)
+        self._ann_panel.reject_selected_requested.connect(self._on_reject_selected_prediction)
+        self._ann_panel.accept_remaining_requested.connect(
+            lambda: self._on_review_remaining_predictions(accepted=True)
+        )
+        self._ann_panel.reject_remaining_requested.connect(
+            lambda: self._on_review_remaining_predictions(accepted=False)
+        )
+        self._ann_panel.show_annotations_requested.connect(self._on_show_annotations)
         self._ann_panel.tool_changed.connect(self._canvas_widget.set_tool)
         self._ann_panel.tool_changed.connect(self._on_tool_changed)
         self._canvas_widget.click_event.connect(self._on_canvas_click)
@@ -1261,6 +1279,18 @@ class MainWindow(
         self._statusbar.showMessage(
             "Annotations hidden (Ctrl+H to show)" if self._annotations_hidden
             else "Annotations shown", 2500)
+
+    def _on_show_annotations(self) -> None:
+        """Force annotations visible regardless of the shortcut's current state."""
+        self._annotations_hidden = False
+        renderer = getattr(self._canvas_widget.canvas, "renderer", None)
+        if renderer is None or not hasattr(renderer, "set_visible"):
+            self._statusbar.showMessage("Load an image before showing annotations", 2500)
+            return
+        renderer.set_visible(True)
+        self._canvas_widget.force_redraw()
+        count = len(self._canvas_widget.canvas.store)
+        self._statusbar.showMessage(f"Showing {count} annotation(s)", 3000)
 
     def reset_view(self) -> None:
         """Back to the whole image, undoing any zoom or pan."""
@@ -2149,8 +2179,8 @@ class MainWindow(
     # behind and applied to whatever file inherited the index.
     _PER_IMAGE_DICTS = (
         "_image_cache", "_image_cache_fingerprints", "_ann_states",
-        "_contrast_states", "_px_overrides", "_sam_exclude_zones",
-        "_sam_crop_regions_saved",
+        "_contrast_states", "_px_overrides", "_px_effective",
+        "_sam_exclude_zones", "_sam_crop_regions_saved",
     )
 
     def _reindex_after_removal(self, row: int) -> None:
@@ -2230,6 +2260,7 @@ class MainWindow(
             img.meta.pixel_size = (self._px_overrides[idx]
                                    * getattr(img.meta, "bin_factor", 1))
         self._engine = MeasurementEngine(pixel_size=img.pixel_size)
+        self._px_effective[idx] = float(img.pixel_size)
         self._refresh_conditions_indicator()
 
         canvas = self._canvas_widget.canvas
@@ -2246,9 +2277,18 @@ class MainWindow(
                     saved_anns, px_nm, ez, cr = sidecar
                     self._ann_states[idx] = saved_anns
                     if px_nm is not None and idx not in self._px_overrides:
+                        # The sidecar stores the override on the file's own grid
+                        # (it is divided by the bin factor when set), so it has
+                        # to be scaled back up here exactly as the branch at the
+                        # top of this method does. Assigning it unscaled made a
+                        # restored calibration wrong by the bin factor -- a 4x
+                        # bin reported a quarter of the true pixel size, and
+                        # every measurement in nm with it.
                         self._px_overrides[idx] = px_nm
-                        img.meta.pixel_size = px_nm
-                        self._engine = MeasurementEngine(pixel_size=px_nm)
+                        scaled = px_nm * getattr(img.meta, "bin_factor", 1)
+                        img.meta.pixel_size = scaled
+                        self._engine = MeasurementEngine(pixel_size=scaled)
+                        self._px_effective[idx] = float(scaled)
                     if ez is not None:
                         self._sam_exclude_zones[idx] = ez
                     if cr is not None:
@@ -2469,6 +2509,7 @@ class MainWindow(
         # pixel size of the image in front of them, which is the binned one, so
         # store it back on the native grid.
         self._px_overrides[img_idx] = ps_nm / getattr(img.meta, "bin_factor", 1)
+        self._px_effective[img_idx] = float(ps_nm)
         self._autosave_timer.start()
 
         img.meta.pixel_size = ps_nm
@@ -2696,6 +2737,71 @@ class MainWindow(
             ann.label = new_label
             self._canvas_widget.canvas.store._notify()
             self._statusbar.showMessage(f"Renamed to: {new_label}")
+
+    def _on_accept_selected_prediction(self) -> None:
+        """Mark the selected model prediction as expert-accepted."""
+        renderer = self._canvas_widget.canvas.renderer
+        ann = renderer.selected_annotation() if renderer is not None else None
+        if ann is None:
+            return
+        from acorn.core import provenance as _prov
+        if not _prov.is_model_output(ann):
+            return
+        _prov.mark_reviewed(ann, True)
+        self._canvas_widget.canvas.store.update(ann, event="annotation_review_accept")
+        self._ann_panel.set_selected_annotation(ann)
+        self._statusbar.showMessage("Prediction marked Good and saved as expert-reviewed.")
+
+    def _on_reject_selected_prediction(self) -> None:
+        """Keep an auditable rejection by relabeling the prediction as Ignore."""
+        renderer = self._canvas_widget.canvas.renderer
+        ann = renderer.selected_annotation() if renderer is not None else None
+        if ann is None:
+            return
+        from acorn.core import provenance as _prov
+        if not _prov.is_model_output(ann):
+            return
+        if hasattr(ann, "label"):
+            ann.label = "Ignore"
+        if hasattr(ann, "color"):
+            ann.color = "#777777"
+        _prov.mark_reviewed(ann, True)
+        self._canvas_widget.canvas.store.update(ann, event="annotation_review_reject")
+        self._ann_panel.set_selected_annotation(ann)
+        self._statusbar.showMessage("Prediction marked Bad and retained as Ignore.")
+
+    def _on_review_remaining_predictions(self, *, accepted: bool) -> None:
+        """Apply one expert decision to all unreviewed predictions on this image."""
+        from acorn.core import provenance as _prov
+
+        store = self._canvas_widget.canvas.store
+        changed = 0
+        for ann in list(store):
+            provenance = getattr(ann, "provenance", None)
+            if not _prov.is_model_output(ann) or bool(getattr(provenance, "reviewed", False)):
+                continue
+            if not accepted:
+                if hasattr(ann, "label"):
+                    ann.label = "Ignore"
+                if hasattr(ann, "color"):
+                    ann.color = "#777777"
+            _prov.mark_reviewed(ann, True)
+            _prov.on_update(
+                ann,
+                event=("annotation_review_accept_bulk" if accepted else "annotation_review_reject_bulk"),
+            )
+            changed += 1
+
+        if changed == 0:
+            self._statusbar.showMessage("No unreviewed model predictions remain on this image.", 3000)
+            return
+
+        store._notify()
+        self._do_autosave()
+        decision = "Good" if accepted else "Bad"
+        self._statusbar.showMessage(
+            f"Marked {changed} remaining prediction(s) {decision} and saved.", 4000
+        )
 
     # ── movie bar ─────────────────────────────────────────────────────────────
 
@@ -4256,7 +4362,13 @@ class MainWindow(
                     if idx >= len(self._image_paths):
                         continue
                     img_path = self._image_paths[idx]
-                    px_nm = self._px_overrides.get(idx) or 1.0
+                    # Effective pixel size first: it is recorded for every image
+                    # that has been loaded and outlives the three-image cache,
+                    # so a header-calibrated micrograph that has since been
+                    # evicted still exports in nanometres instead of silently
+                    # falling back to 1.0 nm/px.
+                    px_nm = (self._px_effective.get(idx)
+                             or self._px_overrides.get(idx) or 1.0)
                     if idx == self._img_idx:
                         loaded = self._canvas_widget.canvas.dm4
                         if loaded and loaded.pixel_size > 0:

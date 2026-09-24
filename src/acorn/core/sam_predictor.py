@@ -450,7 +450,7 @@ class SAMPredictor:
         word: str,
         confidence: float = 0.5,
         polarity: Optional[str] = None,
-        max_phrases: int = 3,
+        max_phrases: int = 8,
     ) -> tuple[list["np.ndarray"], str]:
         """
         Segment everything matching *word*, using SAM 3's text prompt.
@@ -461,6 +461,23 @@ class SAMPredictor:
         blob" finds almost every particle. Phrases are tried best-first and the
         first one that finds anything wins, so a term whose usual phrasing does
         not suit this image still has alternatives.
+
+        `max_phrases` bounds how many are tried, and therefore the worst-case
+        cost: each one is a forward pass, though the image is encoded once and
+        every phrase after the first reuses it. It only bites when the earlier
+        phrases find nothing, which is exactly the case it exists for — the
+        vocabulary tuples run to six or seven for the round-object terms, so a
+        limit of three used to leave the deeper fallbacks unreachable.
+
+        Note the stopping rule: FIRST non-empty phrase wins, not best. A phrase
+        that returns a single spurious mask will beat a later one that would have
+        found ninety, so lengthening the list is only safe while the tuples stay
+        ordered best-first. Resist the temptation to "improve" this by picking the
+        phrase with the most masks — measured on real cryo-TEM vesicles that rule
+        chose a worse phrase every time (recall 0.85 against 0.92, 0.97 against
+        1.00), because mask count cannot tell finding more objects from finding
+        more noise. Use `compare_text_phrases` to choose a phrase for a new sample
+        type, then fix the order in the vocabulary.
 
         Raises RuntimeError on a backend that has no text input, naming what to
         use instead rather than silently returning nothing.
@@ -493,6 +510,61 @@ class SAMPredictor:
             ]
             return found, phrase
         return [], phrases[0]
+
+    def compare_text_phrases(
+        self,
+        img8: "np.ndarray",
+        word: str,
+        confidence: float = 0.5,
+        polarity: Optional[str] = None,
+        max_phrases: int = 8,
+    ) -> list[tuple[str, int]]:
+        """
+        How many masks each phrase for *word* returns on this image, in order.
+
+        A diagnostic for a new sample type, not something to run per image. The
+        vocabulary's phrase order is what actually decides `predict_text`, and it
+        was set from measurements on one kind of sample; on a new one the ordering
+        may be wrong. Run this on a representative image, look at the spread, and
+        reorder the term in acorn.core.vocabulary — that is how the vesicle result
+        was found ("grey" phrasings returned 124-170 masks where "dark circle"
+        returned 2).
+
+        Returns [(phrase, n_masks), ...] in the order tried.
+
+        DO NOT use this to auto-select the phrase with the most masks. Measured
+        against a microscopist's outlines on real cryo-TEM vesicles, that rule
+        picked a worse phrase in every case tested (recall 0.85 against 0.92 and
+        0.97 against 1.00): more masks can mean more noise just as easily as more
+        objects, and mask count cannot tell the two apart. Judge the shortlist by
+        eye, or score it against annotations.
+
+        Costs one text pass per phrase. The image is encoded once and reused, so
+        the encoder does not run repeatedly.
+        """
+        from acorn.core import vocabulary
+
+        self._ensure_loaded()
+        backend = self._active_backend or self._backend
+        if not vocabulary.backend_uses_text(backend):
+            raise RuntimeError(vocabulary.backend_note(backend))
+
+        if polarity is None:
+            polarity = self.image_polarity(img8)
+        phrases = vocabulary.prompts_for(word, polarity)[:max_phrases]
+        if not phrases:
+            return []
+
+        rgb = self._to_rgb(img8)
+        state = self._sam3_processor.set_image(self._to_pil(rgb))
+        self._sam3_processor.set_confidence_threshold(confidence)
+
+        scoreboard: list[tuple[str, int]] = []
+        for phrase in phrases:
+            out = self._sam3_processor.set_text_prompt(phrase, state)
+            masks = out.get("masks")
+            scoreboard.append((phrase, 0 if masks is None else int(masks.shape[0])))
+        return scoreboard
 
     def predict_points(
         self,

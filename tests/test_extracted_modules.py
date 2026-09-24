@@ -138,6 +138,36 @@ def test_worker_threads_construct(app):
     assert LoadThread([]) is not None
 
 
+def test_sam_point_preview_builds_offset_polygon_off_callback_path():
+    from acorn.gui.sam_controller import _predict_point_preview
+
+    class Predictor:
+        def __init__(self):
+            self.points = None
+            self.labels = None
+
+        def predict_points(self, img8, points, labels=None):
+            self.points = points
+            self.labels = labels
+            return [np.ones((4, 4), dtype=bool)]
+
+        def mask_to_polygon(self, mask):
+            assert mask.shape == (4, 4)
+            return [(0.0, 1.0), (2.0, 1.0), (2.0, 3.0)]
+
+    predictor = Predictor()
+    result = _predict_point_preview(
+        predictor, np.zeros((4, 4), dtype=np.uint8), [(1.0, 2.0)], [1], 10, 20
+    )
+
+    assert predictor.points == [(1.0, 2.0)]
+    assert predictor.labels == [1]
+    assert result == {
+        "has_mask": True,
+        "vertices": [(10.0, 21.0), (12.0, 21.0), (12.0, 23.0)],
+    }
+
+
 def test_mainwindow_still_composes_every_mixin():
     from acorn.gui.main_window import MainWindow
     names = [c.__name__ for c in MainWindow.__mro__]

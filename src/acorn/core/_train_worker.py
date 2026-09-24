@@ -52,6 +52,8 @@ def main() -> None:
             dataset_dir=config["dataset_dir"],
             arch=config.get("arch", "Unet"),
             encoder=config.get("encoder", "resnet34"),
+            encoder_weights=config.get("encoder_weights", "imagenet"),
+            class_weights=config.get("class_weights"),
             lr=config.get("lr", 1e-4),
             epochs=config["epochs"],
             batch=config["batch"],

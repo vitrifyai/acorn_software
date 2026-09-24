@@ -41,6 +41,11 @@ class AnnotationPanel(QWidget):
     clear_profiles_requested  = pyqtSignal()
     delete_selected_requested = pyqtSignal()
     relabel_requested         = pyqtSignal(str)   # new label for selected annotation
+    accept_selected_requested = pyqtSignal()
+    reject_selected_requested = pyqtSignal()
+    accept_remaining_requested = pyqtSignal()
+    reject_remaining_requested = pyqtSignal()
+    show_annotations_requested = pyqtSignal()
     crop_region_mode_set      = pyqtSignal()      # drag on the canvas to set a work region
     crop_region_cleared       = pyqtSignal()      # work on the whole image again
 
@@ -49,6 +54,56 @@ class AnnotationPanel(QWidget):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(6, 6, 6, 6)
         layout.setSpacing(6)
+
+        # Keep review actions above the drawing controls so they remain visible
+        # on laptop-sized displays and narrow remote-desktop sessions.
+        review_box = QGroupBox("Review Model Predictions")
+        review_layout = QVBoxLayout(review_box)
+        review_layout.setSpacing(4)
+
+        self._sel_type_label = QLabel("Select a prediction on the image")
+        self._sel_type_label.setStyleSheet("font-size: 11px; color: #888888;")
+        self._sel_type_label.setWordWrap(True)
+        review_layout.addWidget(self._sel_type_label)
+
+        show_btn = QPushButton("Show annotations")
+        show_btn.setToolTip("Force all loaded annotation outlines to be visible")
+        buttons.secondary(show_btn)
+        show_btn.clicked.connect(self.show_annotations_requested)
+        review_layout.addWidget(show_btn)
+
+        review_row = QHBoxLayout()
+        self._accept_selected_btn = QPushButton("Good")
+        self._accept_selected_btn.setToolTip("Accept this model prediction and mark it reviewed")
+        buttons.primary(self._accept_selected_btn)
+        self._accept_selected_btn.clicked.connect(self.accept_selected_requested)
+        self._reject_selected_btn = QPushButton("Bad")
+        self._reject_selected_btn.setToolTip("Reject this model prediction by marking it Ignore")
+        buttons.danger(self._reject_selected_btn)
+        self._reject_selected_btn.clicked.connect(self.reject_selected_requested)
+        self._accept_selected_btn.setEnabled(False)
+        self._reject_selected_btn.setEnabled(False)
+        review_row.addWidget(self._accept_selected_btn)
+        review_row.addWidget(self._reject_selected_btn)
+        review_layout.addLayout(review_row)
+
+        remaining_row = QHBoxLayout()
+        accept_remaining_btn = QPushButton("Remaining Good")
+        accept_remaining_btn.setToolTip(
+            "Mark every unreviewed model prediction on this image as Good"
+        )
+        buttons.primary(accept_remaining_btn)
+        accept_remaining_btn.clicked.connect(self.accept_remaining_requested)
+        reject_remaining_btn = QPushButton("Remaining Bad")
+        reject_remaining_btn.setToolTip(
+            "Mark every unreviewed model prediction on this image as Bad"
+        )
+        buttons.danger(reject_remaining_btn)
+        reject_remaining_btn.clicked.connect(self.reject_remaining_requested)
+        remaining_row.addWidget(accept_remaining_btn)
+        remaining_row.addWidget(reject_remaining_btn)
+        review_layout.addLayout(remaining_row)
+        layout.addWidget(review_box)
 
         # ── tool selector (dropdown) ───────────────────────────────────────────
         tool_form = QFormLayout()
@@ -164,10 +219,6 @@ class AnnotationPanel(QWidget):
         sel_layout = QVBoxLayout(self._selected_box)
         sel_layout.setSpacing(4)
 
-        self._sel_type_label = QLabel("None selected")
-        self._sel_type_label.setStyleSheet("font-size: 11px; color: #888888;")
-        sel_layout.addWidget(self._sel_type_label)
-
         label_row = QHBoxLayout()
         self._sel_label_edit = QLineEdit()
         self._sel_label_edit.setPlaceholderText("annotation label…")
@@ -216,13 +267,22 @@ class AnnotationPanel(QWidget):
     def set_selected_annotation(self, ann) -> None:
         """Update the Selected Annotation section when user clicks an annotation."""
         if ann is None:
-            self._sel_type_label.setText("None selected")
+            self._sel_type_label.setText("Select a prediction on the image")
             self._sel_label_edit.setText("")
             self._sel_label_edit.setEnabled(False)
+            self._accept_selected_btn.setEnabled(False)
+            self._reject_selected_btn.setEnabled(False)
             return
         t = ann.type
         label = getattr(ann, "label", None)
-        self._sel_type_label.setText(f"Type: {t}")
+        provenance = getattr(ann, "provenance", None)
+        origin = getattr(provenance, "origin", "unknown")
+        reviewed = bool(getattr(provenance, "reviewed", False))
+        review_text = "reviewed" if reviewed else "unreviewed"
+        self._sel_type_label.setText(f"Type: {t} | {origin} | {review_text}")
+        is_model = origin in {"sam", "yolo", "unet", "cryoblob", "simulator_pretrained"}
+        self._accept_selected_btn.setEnabled(is_model and not reviewed)
+        self._reject_selected_btn.setEnabled(is_model and not reviewed)
         if label is not None:
             self._sel_label_edit.setText(label)
             self._sel_label_edit.setEnabled(True)

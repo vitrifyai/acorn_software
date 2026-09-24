@@ -37,6 +37,18 @@ def _is_hdf5_dataset(dataset_dir: Path) -> bool:
     return (dataset_dir / "dataset.h5").exists()
 
 
+def _limit_polygon_points(flat: list[float], max_points: int = 80) -> list[float]:
+    """Uniformly downsample long segmentation polygons for YOLO label caching."""
+    n_points = len(flat) // 2
+    if n_points <= max_points:
+        return flat
+    idx = np.linspace(0, n_points - 1, max_points, dtype=int)
+    out: list[float] = []
+    for i in idx:
+        out.extend([flat[2 * i], flat[2 * i + 1]])
+    return out
+
+
 def convert_to_yolo(dataset_dir: Path, out_dir: Path) -> tuple[Path, list[str]]:
     """Convert an ACORN COCO export to YOLO segmentation format.
 
@@ -90,7 +102,13 @@ def convert_to_yolo(dataset_dir: Path, out_dir: Path) -> tuple[Path, list[str]]:
     splits_written: set[str] = set()
 
     try:
-        for split in ("train", "val"):
+        # The test split is converted here as well. It was left in
+        # splits/test.json, and the separate test-set builder further down
+        # reads `file_name` as a path -- which is "hdf5:<key>" for an HDF5
+        # dataset, so it copied nothing and scored the model on an empty
+        # directory. Doing it here means one code path, HDF5 included, and it
+        # is the path that clamps out-of-tile coordinates.
+        for split in ("train", "val", "test"):
             split_file = splits_dir / f"{split}.json"
             if not split_file.exists():
                 continue
@@ -138,7 +156,7 @@ def convert_to_yolo(dataset_dir: Path, out_dir: Path) -> tuple[Path, list[str]]:
 
                     seg = ann.get("segmentation", [])
                     if seg and seg[0] and len(seg[0]) >= 6:
-                        flat = seg[0]
+                        flat = _limit_polygon_points(seg[0])
                     else:
                         # Fall back to bbox corners
                         bx, by, bw, bh = ann["bbox"]
@@ -183,10 +201,12 @@ def convert_to_yolo(dataset_dir: Path, out_dir: Path) -> tuple[Path, list[str]]:
     val_dir = "images/val" if "val" in splits_written else "images/train"
 
     yaml_path = out_dir / "dataset.yaml"
+    test_line = "test: images/test\n" if "test" in splits_written else ""
     yaml_path.write_text(
         f"path: {out_dir.resolve()}\n"
         f"train: images/train\n"
         f"val: {val_dir}\n"
+        f"{test_line}"
         f"nc: {len(class_names)}\n"
         f"names: {class_names}\n"
     )
@@ -253,6 +273,7 @@ class YOLOTrainer:
         batch: int = 8,
         imgsz: int = 640,
         devices: list[int] | str = "cpu",
+        seed: int = 0,
         project_dir: str | Path | None = None,
         log_cb: Callable[[str], None] | None = None,
         progress_cb: Callable[[int, int], None] | None = None,
@@ -264,9 +285,16 @@ class YOLOTrainer:
         self.batch = batch
         self.imgsz = imgsz
         self.devices = devices
+        # Recorded and passed to the trainer. Without it a run cannot be
+        # repeated, nor repeated under a different seed to see how much of a
+        # reported number is initialisation rather than data.
+        self.seed = int(seed)
+        # Resolved to an absolute path: Ultralytics treats a relative `project`
+        # as relative to its own runs_dir, so a relative one sent the run
+        # somewhere else entirely and the weights were then looked for here.
         self.project_dir = (
-            Path(project_dir) if project_dir
-            else self.dataset_dir / "training" / "yolo"
+            Path(project_dir).resolve() if project_dir
+            else (self.dataset_dir / "training" / "yolo").resolve()
         )
         self.log_cb = log_cb or (lambda m: None)
         self.progress_cb = progress_cb or (lambda e, t: None)
@@ -375,6 +403,7 @@ class YOLOTrainer:
             f"  Epochs      : {self.epochs}\n"
             f"  Batch size  : {self.batch}\n"
             f"  Image size  : {self.imgsz}px\n"
+            f"  Seed        : {self.seed}\n"
             f"  Device      : {device_str}\n"
             f"  Progress log: {metrics_csv_path}\n"
             f"Training will continue in the background — the GUI will remain responsive.\n"
@@ -475,6 +504,7 @@ class YOLOTrainer:
                 exist_ok=False,
                 resume=False,
                 verbose=False,
+                seed=self.seed,
             )
         finally:
             sys.stdout = _orig_stdout
@@ -513,9 +543,10 @@ class YOLOTrainer:
                 p  = _safe(prec_arr, i)
                 r  = _safe(rec_arr, i)
                 f1 = _safe(f1_arr, i)
-                iou = _safe(ap50_arr, i)   # mAP@50 ≈ IoU@50 for segmentation
+                map50 = _safe(ap50_arr, i)
                 per_class[name] = {
-                    "precision": p, "recall": r, "f1": f1, "iou": iou
+                    "precision": p, "recall": r, "f1": f1,
+                    "map50": map50, "iou": map50,
                 }
 
             fg_vals = list(per_class.values())
@@ -527,7 +558,10 @@ class YOLOTrainer:
                 "mean_precision": _mean("precision"),
                 "mean_recall":    _mean("recall"),
                 "mean_f1":        _mean("f1"),
-                "mean_iou":       _mean("iou"),
+                "mean_map50":     _mean("map50"),
+                "mean_iou":       _mean("iou"),  # legacy compatibility only
+                "metric_basis":   "instance segmentation",
+                "overlap_label":  "mask mAP50",
                 "per_class":      per_class,
             }
 
@@ -555,6 +589,7 @@ class YOLOTrainer:
             "epochs":       self.epochs,
             "batch":        self.batch,
             "imgsz":        self.imgsz,
+            "seed":         self.seed,
             "best_weights": str(best_pt),
             "best_metrics": best_metrics,
         }
@@ -573,6 +608,9 @@ class YOLOTrainer:
         if test_coco_path.exists():
             self.log_cb("Preparing test split for YOLO evaluation...")
             test_coco = json.loads(test_coco_path.read_text())
+            already = (test_img_dir.exists()
+                       and any(test_img_dir.glob("*.png"))
+                       and test_lbl_dir.exists())
             test_img_dir.mkdir(parents=True, exist_ok=True)
             test_lbl_dir.mkdir(parents=True, exist_ok=True)
 
@@ -587,7 +625,7 @@ class YOLOTrainer:
             for ann in test_coco.get("annotations", []):
                 img_anns_t.setdefault(ann["image_id"], []).append(ann)
 
-            for img_rec in test_coco.get("images", []):
+            for img_rec in ([] if already else test_coco.get("images", [])):
                 src = self.dataset_dir / img_rec["file_name"]
                 dst = test_img_dir / src.name
                 if src.exists():
@@ -600,7 +638,7 @@ class YOLOTrainer:
                         continue
                     cls_idx = c2i[ann["category_id"]]
                     seg = ann.get("segmentation", [])
-                    flat = seg[0] if seg and seg[0] and len(seg[0]) >= 6 else []
+                    flat = _limit_polygon_points(seg[0]) if seg and seg[0] and len(seg[0]) >= 6 else []
                     if not flat:
                         bx, by, bw, bh = ann["bbox"]
                         flat = [bx, by, bx+bw, by, bx+bw, by+bh, bx, by+bh]
@@ -638,7 +676,8 @@ class YOLOTrainer:
 
                 per_class_t = {
                     name: {"precision": _s(prec_t,i), "recall": _s(rec_t,i),
-                           "f1": _s(f1_t,i), "iou": _s(ap50_t,i)}
+                           "f1": _s(f1_t,i), "map50": _s(ap50_t,i),
+                           "iou": _s(ap50_t,i)}
                     for i, name in names_t.items()
                 }
                 fg_t = list(per_class_t.values())
@@ -650,12 +689,30 @@ class YOLOTrainer:
                     "mean_precision": _mn("precision"),
                     "mean_recall":    _mn("recall"),
                     "mean_f1":        _mn("f1"),
+                    # Kept for compatibility, and it is NOT an IoU: the value is
+                    # average precision at IoU 0.5. The properly named keys are
+                    # below; nothing should report this one as an IoU.
                     "mean_iou":       _mn("iou"),
+                    "mean_map50":     _mn("map50"),
+                    "metric_basis":   "instance segmentation",
+                    "overlap_label":  "mask mAP50",
+                    "mask_map50":     _mn("iou"),
+                    "mask_map50_95":  (float(test_results.seg.map)
+                                       if hasattr(test_results.seg, "map") else float("nan")),
+                    "box_map50":      (float(test_results.box.map50)
+                                       if hasattr(test_results, "box")
+                                       and hasattr(test_results.box, "map50")
+                                       else float("nan")),
+                    "box_map50_95":   (float(test_results.box.map)
+                                       if hasattr(test_results, "box")
+                                       and hasattr(test_results.box, "map")
+                                       else float("nan")),
                     "per_class":      per_class_t,
                 }
                 self.log_cb(
                     f"Test set ({test_metrics['n_images']} images):  "
-                    f"mF1={test_metrics['mean_f1']:.3f}  mIoU={test_metrics['mean_iou']:.3f}"
+                    f"mF1={test_metrics['mean_f1']:.3f}  "
+                    f"mask mAP50={test_metrics['mean_map50']:.3f}"
                 )
             except Exception as exc:
                 self.log_cb(f"Test evaluation failed: {exc}")
@@ -681,6 +738,7 @@ class YOLOTrainer:
             "epochs":       self.epochs,
             "batch":        self.batch,
             "imgsz":        self.imgsz,
+            "seed":         self.seed,
             "best_weights": str(best_pt),
             "best_metrics": best_metrics,
             "test_metrics": test_metrics,

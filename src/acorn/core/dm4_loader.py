@@ -79,6 +79,48 @@ _UNIT_TO_NM = {"nm": 1.0, "um": 1e3, "µm": 1e3, "\u00b5m": 1e3, "mm": 1e6,
                "m": 1e9, "a": 0.1, "\u00c5": 0.1, "angstrom": 0.1, "pm": 1e-3}
 
 
+def _ome_pixel_size_nm(filepath) -> float | None:
+    """Pixel size in nm from an OME-TIFF's PhysicalSizeX, or None.
+
+    OME keeps the calibration in an XML block rather than in the TIFF
+    resolution fields, and writes the unit alongside it (micrometre by
+    default, which is a factor of a thousand away from what an EM image
+    usually wants).
+    """
+    import xml.etree.ElementTree as ET
+
+    import tifffile
+
+    try:
+        with tifffile.TiffFile(str(filepath)) as tf:
+            xml = tf.ome_metadata
+    except Exception:
+        return None
+    if not xml:
+        return None
+    try:
+        root = ET.fromstring(xml)
+    except ET.ParseError:
+        return None
+    for el in root.iter():
+        if not el.tag.endswith("Pixels"):
+            continue
+        value = el.get("PhysicalSizeX")
+        if not value:
+            continue
+        unit = (el.get("PhysicalSizeXUnit") or "um").strip().lower()
+        unit = unit.replace("µ", "u").replace("μ", "u")
+        factor = {"nm": 1.0, "um": 1e3, "micron": 1e3, "mm": 1e6, "m": 1e9,
+                  "a": 0.1, "å": 0.1, "angstrom": 0.1, "pm": 1e-3}.get(unit)
+        try:
+            v = float(value)
+        except (TypeError, ValueError):
+            continue
+        if factor and v > 0:
+            return v * factor
+    return None
+
+
 def _vendor_pixel_size_nm(tf) -> float | None:
     """Pixel size in nm from a vendor tag, or None.
 
@@ -381,6 +423,17 @@ class DM4Image:
                 self.meta.pixel_size_from_header = True
         except Exception:
             pass
+
+        # Then the OME-XML PhysicalSize, which is where an OME-TIFF keeps its
+        # calibration. tifffile's OME writer puts it in the XML block and does
+        # not fill the standard resolution fields, so a reader that checks only
+        # those sees an OME-TIFF as uncalibrated -- the same failure mode as the
+        # vendor tags above, one format along.
+        if not self.meta.pixel_size_from_header:
+            px_nm = _ome_pixel_size_nm(filepath)
+            if px_nm and px_nm > 0:
+                self.meta.pixel_size = px_nm
+                self.meta.pixel_size_from_header = True
 
         # Then ImageJ / OME-TIFF metadata, which does not overwrite a vendor
         # value if one was found.

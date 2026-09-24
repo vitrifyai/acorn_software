@@ -27,7 +27,9 @@ def test_expected_path_is_where_sam3_actually_looks():
     import os.path as op
     sam3_path = op.normpath(op.join(op.dirname(model_builder.__file__), "..",
                                     "assets", A.VOCAB_NAME))
-    assert str(expected) == sam3_path, "we would install it where sam3 does not look"
+    # Resolve both sides: a venv reached through a symlink reports different spellings.
+    assert op.realpath(expected) == op.realpath(sam3_path), \
+        "we would install it where sam3 does not look"
 
 
 def test_the_installed_vocabulary_is_the_real_thing():

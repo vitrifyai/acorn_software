@@ -203,7 +203,11 @@ class AcornContext(QObject):
             cached = w._image_cache[idx]
             if cached is not None and cached.pixel_size > 0:
                 return float(cached.pixel_size)
-        # 5. Sidecar file (for unloaded images that were previously opened)
+        # 5. Pixel size recorded when the image was loaded -- survives eviction
+        eff = getattr(w, "_px_effective", {}).get(idx)
+        if eff and eff > 0:
+            return float(eff)
+        # 6. Sidecar file (for unloaded images that were previously opened)
         if 0 <= idx < len(w._image_paths):
             sidecar = self.sidecar_path_for_index(idx)
             if sidecar is not None and sidecar.exists():

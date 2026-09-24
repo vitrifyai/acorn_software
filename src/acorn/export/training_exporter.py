@@ -72,6 +72,14 @@ class TrainingConfig:
     n_neg_prompts: int = 3          # random negative SAM points per instance
     skip_empty_tiles: bool = True   # discard tiles that contain no mask pixels
     encode_rle: bool = True         # store RLE in COCO (alongside polygon)
+    # Smallest fraction of an object that has to fall inside a tile for that
+    # tile to carry it as an instance. A tile boundary cutting through an object
+    # otherwise leaves a sliver behind -- at the default of 0.0 a single pixel
+    # is enough -- and a sliver is a label that says "this is what the object
+    # looks like" about something that is not the object. Left at 0.0 so
+    # existing datasets rebuild identically; set it when tiling with overlap,
+    # where the whole object is present in a neighbouring tile anyway.
+    min_instance_area_frac: float = 0.0
 
 
 # ── default COCO categories ───────────────────────────────────────────────────
@@ -437,8 +445,17 @@ def add_image(
             y0, x0     = tile["y0"], tile["x0"]
             tile["tile_idx"]
 
-            # Identify which instances have any pixels in this tile
-            active = [i for i, m in enumerate(tile_masks) if m.max() > 0]
+            # Identify which instances have enough of themselves in this tile
+            frac = max(0.0, min(1.0, float(config.min_instance_area_frac)))
+            active = []
+            for i, m in enumerate(tile_masks):
+                if m.max() <= 0:
+                    continue
+                if frac > 0.0:
+                    whole = float((inst_masks[i] > 0).sum())
+                    if whole > 0 and float((m > 0).sum()) / whole < frac:
+                        continue
+                active.append(i)
 
             if config.skip_empty_tiles and len(active) == 0:
                 n_skipped += 1

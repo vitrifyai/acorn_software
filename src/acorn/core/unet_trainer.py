@@ -152,6 +152,8 @@ class UNetTrainer:
         dataset_dir: str | Path,
         arch: str = "Unet",
         encoder: str = "resnet34",
+        encoder_weights: str | None = "imagenet",
+        class_weights: list[float] | None = None,
         epochs: int = 50,
         batch: int = 8,
         lr: float = 1e-4,
@@ -165,6 +167,8 @@ class UNetTrainer:
         self.dataset_dir = Path(dataset_dir)
         self.arch = arch
         self.encoder = encoder
+        self.encoder_weights = encoder_weights
+        self.class_weights = class_weights
         self.epochs = epochs
         self.batch = batch
         self.lr = lr
@@ -198,7 +202,12 @@ class UNetTrainer:
         # Determine ordered class list (exclude Background / Ignore)
         _skip = {"background", "ignore"}
         all_cats = train_coco.get("categories", [])
-        class_names = [c["name"] for c in all_cats if c["name"].lower() not in _skip]
+        used_cat_ids = {a.get("category_id") for a in train_coco.get("annotations", [])}
+        valid_cats = [c for c in all_cats if c["name"].lower() not in _skip]
+        populated_cats = [c for c in valid_cats if c["id"] in used_cat_ids]
+        if populated_cats:
+            valid_cats = populated_cats
+        class_names = [c["name"] for c in valid_cats]
         n_classes = len(class_names) + 1   # +1 for background
 
         self.log_cb(
@@ -232,7 +241,7 @@ class UNetTrainer:
         model_cls = getattr(smp, self.arch)
         model = model_cls(
             encoder_name=self.encoder,
-            encoder_weights="imagenet",
+            encoder_weights=self.encoder_weights,
             in_channels=1,
             classes=n_classes,
         )
@@ -251,7 +260,15 @@ class UNetTrainer:
         scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
             optimizer, T_max=self.epochs, eta_min=self.lr * 0.01
         )
-        criterion = nn.CrossEntropyLoss()
+        weight_tensor = None
+        if self.class_weights is not None:
+            if len(self.class_weights) != n_classes:
+                raise ValueError(
+                    f"class_weights has {len(self.class_weights)} values, "
+                    f"but this dataset has {n_classes} classes."
+                )
+            weight_tensor = torch.tensor(self.class_weights, dtype=torch.float32, device=primary)
+        criterion = nn.CrossEntropyLoss(weight=weight_tensor)
 
         self.project_dir.mkdir(parents=True, exist_ok=True)
         best_val_dice = -1.0
@@ -387,6 +404,8 @@ class UNetTrainer:
                     "mean_recall":    mean_rec,
                     "mean_f1":        mean_f1,
                     "mean_iou":       mean_iou,
+                    "metric_basis":   "pixelwise semantic segmentation",
+                    "overlap_label":  "pixel IoU",
                     "per_class": {
                         name: {
                             "precision": prec_per[i+1],
@@ -452,6 +471,8 @@ class UNetTrainer:
                     "mean_recall":    float(np.mean(rec_t[1:])),
                     "mean_f1":        float(np.mean(f1_t[1:])),
                     "mean_iou":       float(np.mean(iou_t[1:])),
+                    "metric_basis":   "pixelwise semantic segmentation",
+                    "overlap_label":  "pixel IoU",
                     "per_class": {
                         name: {
                             "precision": prec_t[i+1],
@@ -486,6 +507,8 @@ class UNetTrainer:
             "model_type": "unet",
             "arch": self.arch,
             "encoder": self.encoder,
+            "encoder_weights": self.encoder_weights,
+            "class_weights": self.class_weights,
             "in_channels": 1,
             "n_classes": n_classes,
             "class_names": ["background"] + class_names,
@@ -536,9 +559,11 @@ def _format_summary_report(
         mprec = metrics.get("mean_precision", float("nan"))
         mrec  = metrics.get("mean_recall",    float("nan"))
         mf1   = metrics.get("mean_f1",        float("nan"))
-        miou  = metrics.get("mean_iou",       float("nan"))
+        overlap_label = metrics.get("overlap_label", "pixel IoU")
+        overlap_key = "mean_map50" if "mAP50" in overlap_label else "mean_iou"
+        miou  = metrics.get(overlap_key, metrics.get("mean_iou", float("nan")))
         rows = [
-            f"  {'Class':<{col_w}}  {'Precision':>9}  {'Recall':>6}  {'F1':>6}  {'IoU@50':>7}",
+            f"  {'Class':<{col_w}}  {'Precision':>9}  {'Recall':>6}  {'F1':>6}  {overlap_label:>10}",
             "  " + "-" * (col_w + 38),
         ]
         per = metrics.get("per_class", {})
@@ -548,12 +573,12 @@ def _format_summary_report(
                 f"  {name:<{col_w}}  {v.get('precision', float('nan')):>9.3f}  "
                 f"{v.get('recall', float('nan')):>6.3f}  "
                 f"{v.get('f1', float('nan')):>6.3f}  "
-                f"{v.get('iou', float('nan')):>7.3f}"
+                f"{v.get('map50', v.get('iou', float('nan'))):>10.3f}"
             )
         rows += [
             "  " + "-" * (col_w + 38),
             f"  {'Mean (foreground)':<{col_w}}  {mprec:>9.3f}  {mrec:>6.3f}  "
-            f"{mf1:>6.3f}  {miou:>7.3f}",
+            f"{mf1:>6.3f}  {miou:>10.3f}",
         ]
         return rows
 
@@ -582,8 +607,9 @@ def _format_summary_report(
 
     lines += [
         "",
-        "  NOTE: F1 = Dice coefficient.  IoU@50 = Jaccard index.",
-        "  Comparable across UNet and YOLO via these two metrics.",
+        "  NOTE: metric definitions are model-family specific. YOLO reports instance",
+        "  precision/recall/F1 and mask mAP50; UNet reports pixelwise Dice/F1 and IoU.",
+        "  Do not compare YOLO mask mAP50 directly with UNet pixel IoU.",
         f"  Full per-epoch metrics: {metrics_csv}",
         "=" * 62,
     ]
