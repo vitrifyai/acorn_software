@@ -15,13 +15,36 @@ if [ "$(id -u)" -ne 0 ]; then
 fi
 
 SRC="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-DST="/opt/acorn"
+DST="${ACORN_PREFIX:-/opt/acorn}"
 VENV="$DST/.venv"
-OWNER="vnw"                          # user who owns /opt/acorn and can deploy
-# System Python — prefers the shared conda install; falls back to any python3 >= 3.10
-PYTHON="${ACORN_PYTHON:-$(command -v /opt/conda/bin/python3 2>/dev/null || command -v python3)}"
-UV="$(command -v uv || echo /home/vnw/.local/bin/uv)"
-SAM3_SRC="/home/vnw/repos/sam3"      # editable sam3 dev source — install as regular package
+OWNER="${ACORN_OWNER:-${SUDO_USER:-}}"
+if [ -z "$OWNER" ] || [ "$OWNER" = "root" ]; then
+    echo "ERROR: set ACORN_OWNER to the non-root user who should own $DST" >&2
+    exit 1
+fi
+if ! id "$OWNER" >/dev/null 2>&1; then
+    echo "ERROR: ACORN_OWNER user '$OWNER' does not exist" >&2
+    exit 1
+fi
+GROUP="${ACORN_GROUP:-$(id -gn "$OWNER")}"
+OWNER_HOME="$(getent passwd "$OWNER" | cut -d: -f6)"
+INSTALL_EXTRA="${ACORN_INSTALL_EXTRA:-full}"
+# System Python — prefers an explicit ACORN_PYTHON, otherwise asks uv for 3.12.
+PYTHON="${ACORN_PYTHON:-3.12}"
+UV="${UV:-}"
+if [ -z "$UV" ]; then
+    for candidate in "$OWNER_HOME/.local/bin/uv" "$OWNER_HOME/.cargo/bin/uv" "$(command -v uv 2>/dev/null || true)"; do
+        if [ -n "$candidate" ] && [ -x "$candidate" ] && "$candidate" --version >/dev/null 2>&1; then
+            UV="$candidate"
+            break
+        fi
+    done
+fi
+if [ -z "$UV" ]; then
+    echo "ERROR: uv is not installed or is not runnable. Install it with: curl -LsSf https://astral.sh/uv/install.sh | sh" >&2
+    exit 1
+fi
+SAM3_SRC="${ACORN_SAM3_SRC:-}"
 
 BOLD="\033[1m"; GREEN="\033[1;32m"; YELLOW="\033[1;33m"; RESET="\033[0m"
 info()    { echo -e "${BOLD}[setup]${RESET} $*"; }
@@ -36,8 +59,8 @@ echo ""
 
 # ── 1. Create directory structure ─────────────────────────────────────────────
 info "Creating $DST..."
-mkdir -p "$DST"/{src,models/micro_sam,models/yolo}
-chown -R "$OWNER":users "$DST"
+mkdir -p "$DST"/{src,packages,models/micro_sam,models/yolo}
+chown -R "$OWNER":"$GROUP" "$DST"
 chmod 755 "$DST"
 chmod -R 755 "$DST/models"   # readable by all, writable by owner
 
@@ -50,13 +73,21 @@ rsync -a --delete \
     --exclude=".git" \
     --exclude="models" \
     "$SRC/src/"            "$DST/src/"
+rsync -a --delete \
+    --exclude="__pycache__" \
+    --exclude="*.pyc" \
+    "$SRC/packages/"       "$DST/packages/"
 rsync -a "$SRC/pyproject.toml"      "$DST/pyproject.toml"
+rsync -a "$SRC/.python-version"     "$DST/.python-version"
+rsync -a "$SRC/uv.lock"             "$DST/uv.lock"
 rsync -a "$SRC/README.md"           "$DST/README.md"
+rsync -a "$SRC/QUICKSTART.md"       "$DST/QUICKSTART.md"
 rsync -a "$SRC/download_models.py"  "$DST/download_models.py"
 rsync -a "$SRC/deploy.sh"           "$DST/deploy.sh"
 rsync -a "$SRC/install.sh"          "$DST/install.sh"
 chmod a+rX -R "$DST/src"
-chown -R "$OWNER":users "$DST"
+chmod a+rX -R "$DST/packages"
+chown -R "$OWNER":"$GROUP" "$DST"
 
 # ── 3. Create virtual environment ─────────────────────────────────────────────
 info "Creating Python environment at $VENV..."
@@ -64,52 +95,40 @@ if [ -d "$VENV" ]; then
     warn "  Existing venv found — removing and rebuilding."
     rm -rf "$VENV"
 fi
+"$UV" python install "$PYTHON"
 "$UV" venv "$VENV" --python "$PYTHON"
-chown -R "$OWNER":users "$VENV"
+chown -R "$OWNER":"$GROUP" "$VENV"
 chmod -R a+rX "$VENV"
 
 VENV_PY="$VENV/bin/python"
+"$VENV_PY" - <<'PY'
+import sys
+if sys.version_info < (3, 12):
+    raise SystemExit("ACORN requires Python 3.12 or newer for the full install")
+PY
 
 # ── 4. Install packages ───────────────────────────────────────────────────────
-info "Installing ACORN and dependencies..."
-# setuptools provides pkg_resources, which some packages (e.g. sam3) still use
-"$UV" pip install --python "$VENV_PY" setuptools --quiet
-"$UV" pip install --python "$VENV_PY" -e "$DST[gui,mrc]" --quiet
+info "Installing ACORN [$INSTALL_EXTRA] from locked dependencies..."
+cd "$DST"
+UV_PROJECT_ENVIRONMENT="$VENV" "$UV" sync --frozen --extra "$INSTALL_EXTRA" --quiet
 
-info "Installing AI tools (SAM, YOLO, UNet)..."
-# segment-anything (Meta SAM1) and micro-sam are not on PyPI — install from GitHub.
-# segment-anything is required by usam_predictor; micro-sam provides fine-tuned checkpoints.
-"$UV" pip install --python "$VENV_PY" \
-    "git+https://github.com/facebookresearch/segment-anything.git" \
-    "git+https://github.com/computational-cell-analytics/micro-sam.git" \
-    "ultralytics>=8.0" "segmentation-models-pytorch>=0.3" --quiet \
-    || warn "Some AI packages failed — optional features may be limited."
-
-# Install sam3 from source as a regular (non-editable) package.
-# Use --no-deps to skip sam3's numpy==1.26 pin (incompatible with Python 3.13);
-# numpy is already installed by the acorn[gui,mrc] step above.
-if [ -d "$SAM3_SRC" ]; then
+if [ -n "$SAM3_SRC" ] && [ -d "$SAM3_SRC" ]; then
     info "Installing sam3 from $SAM3_SRC..."
     "$UV" pip install --python "$VENV_PY" "$SAM3_SRC" --no-deps --quiet \
-        && "$UV" pip install --python "$VENV_PY" \
-            "timm>=1.0.17" "tqdm" "ftfy==6.1.1" "regex" \
-            "iopath>=0.1.10" "typing_extensions" "huggingface_hub" --quiet \
         || warn "sam3 install failed — SAM3 backend will be unavailable."
-else
-    warn "sam3 source not found at $SAM3_SRC — SAM3 backend will be unavailable."
 fi
 
 # Ensure permissions are open after install
 chmod -R a+rX "$VENV"
-chown -R "$OWNER":users "$VENV"
+chown -R "$OWNER":"$GROUP" "$VENV"
 
 # ── 5. System-wide environment variables ──────────────────────────────────────
 info "Writing /etc/profile.d/acorn.sh..."
-cat > /etc/profile.d/acorn.sh << 'EOF'
+cat > /etc/profile.d/acorn.sh << EOF
 # ACORN shared model cache — set for all users
-if [ -d /opt/acorn/models ]; then
-    export MICROSAM_CACHEDIR=/opt/acorn/models/micro_sam
-    export ACORN_MODELS_DIR=/opt/acorn/models
+if [ -d "$DST/models" ]; then
+    export MICROSAM_CACHEDIR="$DST/models/micro_sam"
+    export ACORN_MODELS_DIR="$DST/models"
 fi
 EOF
 chmod 644 /etc/profile.d/acorn.sh
@@ -119,25 +138,25 @@ info "Creating CLI commands: acorn, acorn-gui..."
 
 cat > /usr/local/bin/acorn << EOF
 #!/usr/bin/env bash
-export MICROSAM_CACHEDIR=/opt/acorn/models/micro_sam
-export ACORN_MODELS_DIR=/opt/acorn/models
-source /opt/acorn/.venv/bin/activate
-exec /opt/acorn/.venv/bin/acorn "\$@"
+export MICROSAM_CACHEDIR="$DST/models/micro_sam"
+export ACORN_MODELS_DIR="$DST/models"
+source "$DST/.venv/bin/activate"
+exec "$DST/.venv/bin/acorn" "\$@"
 EOF
 
 cat > /usr/local/bin/acorn-gui << EOF
 #!/usr/bin/env bash
-export MICROSAM_CACHEDIR=/opt/acorn/models/micro_sam
-export ACORN_MODELS_DIR=/opt/acorn/models
-source /opt/acorn/.venv/bin/activate
-exec /opt/acorn/.venv/bin/acorn-gui "\$@"
+export MICROSAM_CACHEDIR="$DST/models/micro_sam"
+export ACORN_MODELS_DIR="$DST/models"
+source "$DST/.venv/bin/activate"
+exec "$DST/.venv/bin/acorn-gui" "\$@"
 EOF
 
 chmod 755 /usr/local/bin/acorn /usr/local/bin/acorn-gui
 
 # ── 7. Desktop entry (ThinLinc / GNOME / KDE) ─────────────────────────────────
 info "Creating desktop entry for all users..."
-ICON="/opt/acorn/src/acorn/gui/acorn.png"
+ICON="$DST/src/acorn/gui/acorn.png"
 
 cat > /usr/share/applications/acorn.desktop << EOF
 [Desktop Entry]
@@ -165,7 +184,7 @@ info "Downloading shared model checkpoints to $DST/models/..."
 info "  (All users will share these — no per-user downloads needed)"
 echo ""
 
-# Run as the owner so files are owned by vnw, not root
+# Run as the owner so files are not owned by root
 sudo -u "$OWNER" \
     env MICROSAM_CACHEDIR="$DST/models/micro_sam" \
         ACORN_MODELS_DIR="$DST/models" \
@@ -186,5 +205,5 @@ echo -e "    Run the CLI:  ${BOLD}acorn${RESET}"
 echo -e "    Or click the ${BOLD}ACORN${RESET} icon in the application menu"
 echo ""
 echo "  To push future updates (no sudo needed):"
-echo -e "    cd /home/$OWNER/cryoem-tools && ${BOLD}bash deploy.sh${RESET}"
+echo -e "    cd $SRC && ${BOLD}bash deploy.sh${RESET}"
 echo ""

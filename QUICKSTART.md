@@ -53,7 +53,8 @@ bash install.sh
 ```
 
 This sets up everything automatically. It takes a few minutes and needs an internet connection.
-You do not need to install Python or anything else first — the installer handles it.
+You do not need to install Python or anything else first — the installer uses `uv`
+to create the required Python 3.12 environment.
 
 ### Step 2 — Open ACORN
 

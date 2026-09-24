@@ -6,7 +6,7 @@ build-backend = "hatchling.build"
 name = "acorn-tracking"
 version = "0.3.0"
 description = "Particle tracking across image series for ACORN"
-requires-python = ">=3.10"
+requires-python = ">=3.12"
 authors = [{ name = "CNMS Low-Dose CryoEM Lab" }]
 dependencies = [
     "acorn>=0.3",

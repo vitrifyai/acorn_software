@@ -6,7 +6,7 @@ build-backend = "hatchling.build"
 name = "acorn-analysis"
 version = "0.3.0"
 description = "Particle and surface-area measurements for ACORN"
-requires-python = ">=3.10"
+requires-python = ">=3.12"
 authors = [{ name = "CNMS Low-Dose CryoEM Lab" }]
 dependencies = [
     "acorn>=0.3",
@@ -18,7 +18,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-unet = ["torch>=2.0", "segmentation-models-pytorch>=0.3"]
+unet = ["torch==2.12.1", "torchvision==0.27.1", "segmentation-models-pytorch>=0.3"]
 
 [project.entry-points."acorn.plugins"]
 acorn_analysis = "acorn_analysis.plugin:AnalysisPlugin"

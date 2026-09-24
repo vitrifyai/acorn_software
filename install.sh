@@ -26,82 +26,56 @@ echo -e "${BOLD}========================================${RESET}"
 echo ""
 
 # ── 1. Ensure uv is available ─────────────────────────────────────────────────
-if ! command -v uv &>/dev/null; then
+UV="${UV:-}"
+if [ -z "$UV" ]; then
+    for candidate in "$HOME/.local/bin/uv" "$HOME/.cargo/bin/uv" "$(command -v uv 2>/dev/null || true)"; do
+        if [ -n "$candidate" ] && [ -x "$candidate" ] && "$candidate" --version >/dev/null 2>&1; then
+            UV="$candidate"
+            break
+        fi
+    done
+fi
+
+if [ -z "$UV" ]; then
     info "Installing uv (fast Python package manager)..."
     curl -LsSf https://astral.sh/uv/install.sh | sh
     # Add uv to PATH for the rest of this script
     export PATH="$HOME/.local/bin:$HOME/.cargo/bin:$PATH"
-    command -v uv &>/dev/null || die "uv install failed.  Please install it manually:\n  curl -LsSf https://astral.sh/uv/install.sh | sh"
+    UV="$(command -v uv 2>/dev/null || true)"
+    [ -n "$UV" ] || die "uv install failed.  Please install it manually:\n  curl -LsSf https://astral.sh/uv/install.sh | sh"
 fi
 
-UV_VERSION=$(uv --version)
+UV_VERSION=$("$UV" --version)
 info "Using $UV_VERSION"
 
 # ── 2. Create (or update) the virtual environment ────────────────────────────
 VENV_DIR="$SCRIPT_DIR/.venv"
+PYTHON_VERSION="${ACORN_PYTHON_VERSION:-3.12}"
+INSTALL_EXTRA="${ACORN_INSTALL_EXTRA:-full}"
 
 if [ -d "$VENV_DIR" ]; then
-    warn "Existing environment found — updating it."
-else
-    info "Creating isolated Python environment..."
-    uv venv "$VENV_DIR" --python 3.10 2>/dev/null \
-        || uv venv "$VENV_DIR"   # fall back to any available Python >= 3.10
+    if "$VENV_DIR/bin/python" -c 'import sys; raise SystemExit(0 if sys.version_info >= (3, 12) else 1)' 2>/dev/null; then
+        warn "Existing Python 3.12+ environment found — updating it."
+    else
+        warn "Existing environment uses Python older than 3.12 — rebuilding it."
+        rm -rf "$VENV_DIR"
+    fi
+fi
+
+if [ ! -d "$VENV_DIR" ]; then
+    info "Creating isolated Python $PYTHON_VERSION environment..."
+    "$UV" python install "$PYTHON_VERSION"
+    "$UV" venv "$VENV_DIR" --python "$PYTHON_VERSION"
 fi
 
 VENV_PYTHON="$VENV_DIR/bin/python"
 
-# ── 3. Install ACORN core + GUI ───────────────────────────────────────────────
-info "Installing ACORN (this may take a couple of minutes)..."
-uv pip install --python "$VENV_PYTHON" -e ".[gui,mrc]"
-success "Core installation complete."
+# ── 3. Install ACORN full application ─────────────────────────────────────────
+info "Installing ACORN [$INSTALL_EXTRA] from uv.lock..."
+UV_PROJECT_ENVIRONMENT="$VENV_DIR" "$UV" sync --frozen --extra "$INSTALL_EXTRA"
+success "ACORN [$INSTALL_EXTRA] installation complete from locked dependencies."
 
-# ── 4. Install AI annotation tools ───────────────────────────────────────────
-echo ""
-info "Installing AI-assisted annotation tools (SAM, YOLO, UNet)..."
-
-# Ensure git is available (required for git+ source installs)
-if ! command -v git &>/dev/null; then
-    die "git is not installed. Please ask your system administrator to run:\n  sudo apt install git\nthen re-run this installer."
-fi
-
-info "  SAM3 (Segment Anything Model 3)..."
-if uv pip install --python "$VENV_PYTHON" "git+https://github.com/facebookresearch/sam3.git"; then
-    success "  SAM3 installed."
-else
-    warn "  SAM3 install failed.  To retry: uv pip install --python .venv/bin/python git+https://github.com/facebookresearch/sam3.git"
-fi
-
-info "  micro-SAM (biomedical checkpoints)..."
-if uv pip install --python "$VENV_PYTHON" "git+https://github.com/computational-cell-analytics/micro-sam.git"; then
-    success "  micro-SAM installed."
-else
-    warn "  micro-SAM install failed.  To retry: uv pip install --python .venv/bin/python git+https://github.com/computational-cell-analytics/micro-sam.git"
-fi
-
-info "  YOLO — object detection..."
-if uv pip install --python "$VENV_PYTHON" "ultralytics>=8.0"; then
-    success "  YOLO installed."
-else
-    warn "  YOLO install failed.  To retry: uv pip install --python .venv/bin/python ultralytics"
-fi
-
-info "  UNet — semantic segmentation..."
-if uv pip install --python "$VENV_PYTHON" "segmentation-models-pytorch>=0.3"; then
-    success "  UNet installed."
-else
-    warn "  UNet install failed.  To retry: uv pip install --python .venv/bin/python segmentation-models-pytorch"
-fi
-
-info "  CLU AI assistant (Anthropic + OpenAI-compatible providers)..."
-if uv pip install --python "$VENV_PYTHON" "anthropic>=0.30" "openai>=1.0"; then
-    success "  CLU installed."
-else
-    warn "  CLU install failed.  To retry: uv pip install --python .venv/bin/python anthropic openai"
-fi
-
-success "AI tools installation complete."
-
-# ── 5. Pre-download model checkpoints ────────────────────────────────────────
+# ── 4. Pre-download model checkpoints ────────────────────────────────────────
 echo ""
 info "Downloading recommended AI model checkpoints..."
 info "  SAM EM organelles checkpoint  (~375 MB)"
@@ -112,7 +86,7 @@ echo ""
 "$VENV_PYTHON" "$SCRIPT_DIR/download_models.py" --preset recommended \
     || warn "Some models failed to download.  Run 'python download_models.py' after connecting to the internet."
 
-# ── 6. Write the launch script ────────────────────────────────────────────────
+# ── 5. Write the launch script ────────────────────────────────────────────────
 LAUNCHER="$SCRIPT_DIR/acorn.sh"
 cat > "$LAUNCHER" << EOF
 #!/usr/bin/env bash
@@ -122,7 +96,7 @@ exec acorn-gui "\$@"
 EOF
 chmod +x "$LAUNCHER"
 
-# ── 7. Create desktop shortcut (Linux) ────────────────────────────────────────
+# ── 6. Create desktop shortcut (Linux) ────────────────────────────────────────
 ICON_PATH="$SCRIPT_DIR/src/acorn/gui/acorn.png"
 DESKTOP_DIR="$HOME/Desktop"
 DESKTOP_FILE="$DESKTOP_DIR/ACORN.desktop"

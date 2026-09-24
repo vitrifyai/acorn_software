@@ -59,3 +59,7 @@ paper_draft.md
 
 # Second venv used by the launchers
 .venv-py312/
+
+# .venv is a symlink to a venv on /raid, which ".venv/" does not match
+.venv
+*.bak

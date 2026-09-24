@@ -1,0 +1,29 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  locked-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          version: "0.12.9"
+          enable-cache: true
+      - name: Check lockfile
+        run: uv lock --check
+      - name: Sync locked simulation environment
+        run: uv sync --frozen --extra sim
+      - name: Run focused simulator tests
+        run: uv run --frozen --extra sim pytest tests/test_tem_sim.py tests/test_sem_sim.py -q
+
+  scripts:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check shell syntax
+        run: bash -n install.sh setup_system.sh deploy.sh

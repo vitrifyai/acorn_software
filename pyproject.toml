@@ -7,7 +7,7 @@ name = "acorn"
 version = "0.3.0"
 description = "Annotate, Curate, Observe, Review, Navigate — microscopy image analysis and annotation suite"
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.12"
 authors = [{ name = "CNMS Low-Dose CryoEM Lab" }]
 keywords = ["cryo-em", "dm4", "electron-microscopy", "image-processing", "ncempy"]
 classifiers = [
@@ -59,7 +59,8 @@ annotate = [
     "micro-sam>=1.7",                         # checkpoints tuned for microscopy
     "ultralytics>=8.0",                       # YOLO 11 / v8 / v9 / v10
     "segmentation-models-pytorch>=0.3",       # UNet family
-    "torch>=2.0",
+    "torch==2.12.1",
+    "torchvision==0.27.1",
 ]
 
 # — the Analyze and Dataset workspaces —
@@ -79,7 +80,10 @@ sim = ["acorn[viewer]", "acorn-sim"]
 clu = ["acorn-clu"]
 
 # — CryoBLOB blob detection (JAX/GPU) —
-cryoblob = ["acorn-cryoblob"]
+cryoblob = [
+    "acorn-cryoblob[cuda]; platform_system == 'Linux'",
+    "acorn-cryoblob; platform_system != 'Linux'",
+]
 
 # — publishing datasets —
 hub = ["datasets>=2.18", "huggingface_hub>=0.22"]
@@ -91,7 +95,7 @@ sam   = ["sam3>=0.1", "micro-sam>=1.7"]
 sam2  = ["sam2>=1.0"]                         # fallback if sam3 is unavailable
 usam  = ["micro-sam>=1.7"]
 yolo  = ["ultralytics>=8.0"]
-unet  = ["segmentation-models-pytorch>=0.3", "torch>=2.0"]
+unet  = ["segmentation-models-pytorch>=0.3", "torch==2.12.1", "torchvision==0.27.1"]
 
 dev  = ["pytest>=8.0", "pytest-cov", "ruff"]
 full = ["acorn[viewer,annotate,lab,sim,clu,cryoblob,hub]"]
@@ -120,13 +124,24 @@ acorn-3d       = { path = "packages/acorn-3d",       editable = true }
 acorn-clu      = { path = "packages/acorn-clu",      editable = true }
 acorn-sim      = { path = "packages/acorn-sim",      editable = true }
 acorn-cryoblob = { path = "packages/acorn-cryoblob", editable = true }
+torch = [
+    { index = "pytorch-cu126", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
+]
+torchvision = [
+    { index = "pytorch-cu126", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
+]
+
+[[tool.uv.index]]
+name = "pytorch-cu126"
+url = "https://download.pytorch.org/whl/cu126"
+explicit = true
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/acorn"]
 
 [tool.ruff]
 line-length = 100
-target-version = "py310"
+target-version = "py312"
 src = ["src", "packages"]
 
 [tool.pytest.ini_options]

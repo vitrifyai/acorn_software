@@ -6,7 +6,7 @@ build-backend = "hatchling.build"
 name = "acorn-clu"
 version = "0.3.0"
 description = "CLU — the natural-language assistant built into ACORN"
-requires-python = ">=3.10"
+requires-python = ">=3.12"
 authors = [{ name = "CNMS Low-Dose CryoEM Lab" }]
 dependencies = [
     "acorn>=0.3",

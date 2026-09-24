@@ -6,7 +6,7 @@ build-backend = "hatchling.build"
 name = "acorn-spatial"
 version = "0.3.0"
 description = "Clustering, hotspots and nearest-neighbour statistics for ACORN"
-requires-python = ">=3.10"
+requires-python = ">=3.12"
 authors = [{ name = "CNMS Low-Dose CryoEM Lab" }]
 dependencies = [
     "acorn>=0.3",

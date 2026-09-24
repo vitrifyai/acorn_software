@@ -7,15 +7,18 @@ name = "acorn-cryoblob"
 version = "0.3.0"
 description = "CryoBLOB blob detection for ACORN (JAX/GPU)"
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.12"
 authors = [{ name = "CNMS Low-Dose CryoEM Lab" }]
 dependencies = [
     "acorn>=0.3",
     "cryoblob>=2025.8.2",
-    "jax[cuda12]==0.4.38",
+    "jax==0.4.38",
     "pandas>=1.5",
     "numpy>=1.24",
 ]
+
+[project.optional-dependencies]
+cuda = ["jax[cuda12]==0.4.38"]
 
 [project.entry-points."acorn.plugins"]
 acorn_cryoblob = "acorn_cryoblob.plugin:CryoBlobPlugin"

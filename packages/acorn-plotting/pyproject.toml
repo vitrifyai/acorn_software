@@ -6,7 +6,7 @@ build-backend = "hatchling.build"
 name = "acorn-plotting"
 version = "0.3.0"
 description = "Publication figures and statistics for ACORN"
-requires-python = ">=3.10"
+requires-python = ">=3.12"
 authors = [{ name = "CNMS Low-Dose CryoEM Lab" }]
 dependencies = [
     "acorn>=0.3",

@@ -386,8 +386,11 @@ bash install.sh
 ```
 
 Uses [uv](https://github.com/astral-sh/uv) (installed automatically if not present).
-Creates a self-contained `.venv`, installs all dependencies, downloads the recommended
+Creates a self-contained Python 3.12 `.venv`, installs the locked dependency set, downloads the recommended
 model checkpoints (~380 MB), and creates a desktop shortcut.
+
+By default the installer uses the `full` profile. Set `ACORN_INSTALL_EXTRA=viewer`,
+`sim`, `lab`, or another install profile for a lighter locked environment.
 
 ### Shared workstation (Linux, requires sudo)
 
@@ -396,7 +399,8 @@ sudo bash setup_system.sh
 ```
 
 Installs ACORN to `/opt/acorn` with a shared model cache at `/opt/acorn/models/`.
-Writes `/etc/profile.d/acorn.sh` (shared env vars), creates `/usr/local/bin/acorn` and
+Copies the core app plus plugin packages, installs the full profile, writes
+`/etc/profile.d/acorn.sh` (shared env vars), creates `/usr/local/bin/acorn` and
 `/usr/local/bin/acorn-gui` wrappers, and registers a desktop entry for ThinLinc / GNOME / KDE.
 No per-user install needed; any user on the machine can run `acorn-gui` immediately.
 
@@ -406,8 +410,14 @@ After the initial system setup, push updates from the dev copy without sudo:
 bash deploy.sh
 ```
 
-`deploy.sh` syncs source files and only reinstalls Python dependencies if `pyproject.toml`
-has changed (sha256 hash check), keeping deploys fast.
+`deploy.sh` syncs source files and only reinstalls Python dependencies if `uv.lock` or the root/plugin
+`pyproject.toml` files have changed (sha256 hash check), keeping deploys fast.
+
+System installs are configurable:
+
+```bash
+sudo ACORN_PREFIX=/opt/acorn ACORN_OWNER="$USER" ACORN_INSTALL_EXTRA=full bash setup_system.sh
+```
 
 ### Migrating to a new machine
 
@@ -423,11 +433,16 @@ then rsync the models over. The setup script skips downloads for files that alre
 
 ## Python environment
 
+Use Python 3.12 or newer for a full ACORN checkout. The repository includes
+`.python-version` set to `3.12`, and `install.sh` asks `uv` to create that
+environment automatically. CryoBLOB requires Python 3.12+, so older Python
+versions are not supported for the full install.
+
 | Deployment | Python | Venv location |
 |------------|--------|---------------|
-| Personal install | 3.10+ (uv-managed) | `<repo>/.venv` |
+| Personal install | 3.12+ (uv-managed) | `<repo>/.venv` |
 | Shared /opt | `/opt/conda/bin/python3` (3.13) | `/opt/acorn/.venv` |
-| Dev (vnw) | 3.10 (uv-managed) | `/home/vnw/cryoem-tools/.venv` |
+| Dev checkout | 3.12+ (uv-managed) | `<repo>/.venv` |
 
 The editable dev install means changes to `.py` files are live immediately with no reinstall needed.
 
@@ -574,18 +589,22 @@ Run these **from a checkout of this repository, with uv** — the plugin package
 live in `packages/` and are not published to any index:
 
 ```bash
-uv pip install ".[viewer]"     # open, contrast, navigate, measure
-uv pip install ".[annotate]"   # the above + SAM / YOLO / UNet   (pulls torch)
-uv pip install ".[lab]"        # the above + measurements, stats, plots, 3D
-uv pip install ".[sim]"        # the above + TEM / FIB / 4D-STEM simulation
-uv pip install ".[clu]"        # CLU, the assistant
-uv pip install ".[cryoblob]"   # CryoBLOB blob detection (JAX/GPU)
-uv pip install ".[full]"       # everything (no dev tools)
-uv pip install ".[all]"        # everything including dev tools
+uv python install 3.12
+uv venv --python 3.12
+uv sync --frozen --extra viewer     # open, contrast, navigate, measure
+uv sync --frozen --extra annotate   # the above + SAM / YOLO / UNet   (uses PyTorch cu126 on Linux)
+uv sync --frozen --extra lab        # the above + measurements, stats, plots, 3D
+uv sync --frozen --extra sim        # the above + TEM / FIB / 4D-STEM simulation
+uv sync --frozen --extra clu        # CLU, the assistant
+uv sync --frozen --extra cryoblob   # CryoBLOB blob detection (CUDA on Linux, CPU JAX elsewhere)
+uv sync --frozen --extra full       # everything (no dev tools)
+uv sync --frozen --extra all        # everything including dev tools
 ```
 
-`[tool.uv.sources]` in `pyproject.toml` is what points those names at `packages/`.
-Plain pip ignores that table, so with pip name the paths yourself:
+`uv.lock` pins the full dependency graph for reproducible installs. Update it intentionally
+with `uv lock` after changing dependency metadata. `[tool.uv.sources]` in `pyproject.toml`
+is what points plugin package names at `packages/`. Plain pip ignores that table, so with pip
+name the paths yourself:
 
 ```bash
 pip install -e . -e packages/acorn-analysis -e packages/acorn-plotting \

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ─────────────────────────────────────────────────────────────────────────────
-# ACORN updater — run this after 'git pull' to pick up any new dependencies.
+# ACORN updater - run this after pulling new code to sync locked dependencies.
 # ─────────────────────────────────────────────────────────────────────────────
 set -euo pipefail
 
@@ -16,8 +16,9 @@ info()    { echo -e "${BOLD}[ACORN]${RESET} $*"; }
 success() { echo -e "${GREEN}[ACORN]${RESET} $*"; }
 warn()    { echo -e "${YELLOW}[ACORN]${RESET} $*"; }
 
-VENV_DIR="$SCRIPT_DIR/.venv"
+VENV_DIR="${ACORN_VENV_DIR:-$SCRIPT_DIR/.venv}"
 VENV_PYTHON="$VENV_DIR/bin/python"
+INSTALL_EXTRA="${ACORN_INSTALL_EXTRA:-full}"
 
 if [ ! -f "$VENV_PYTHON" ]; then
     echo "No virtual environment found — run bash install.sh first."
@@ -32,96 +33,42 @@ if ! command -v git &>/dev/null; then
     exit 1
 fi
 
-# Ensure uv is available
-export PATH="$HOME/.local/bin:$HOME/.cargo/bin:$PATH"
-if ! command -v uv &>/dev/null; then
+find_uv() {
+    for candidate in "$HOME/.local/bin/uv" "$HOME/.cargo/bin/uv" "$(command -v uv 2>/dev/null || true)"; do
+        [ -n "$candidate" ] || continue
+        if [ -x "$candidate" ] && "$candidate" --version >/dev/null 2>&1; then
+            printf '%s\n' "$candidate"
+            return 0
+        fi
+    done
+    return 1
+}
+
+UV="$(find_uv || true)"
+if [ -z "$UV" ]; then
     info "Installing uv..."
     curl -LsSf https://astral.sh/uv/install.sh | sh
+    UV="$(find_uv || true)"
+fi
+if [ -z "$UV" ]; then
+    echo "uv could not be installed or found on PATH." >&2
+    exit 1
 fi
 
 echo ""
 echo -e "${BOLD}========================================${RESET}"
-echo -e "${BOLD}   ACORN — Updating dependencies        ${RESET}"
+echo -e "${BOLD}   ACORN - Updating dependencies        ${RESET}"
 echo -e "${BOLD}========================================${RESET}"
 echo ""
 
-info "Updating ACORN core..."
-uv pip install --python "$VENV_PYTHON" -e ".[gui,mrc]" --quiet
-success "Core updated."
+info "Syncing locked environment: .[$INSTALL_EXTRA]"
+UV_PROJECT_ENVIRONMENT="$VENV_DIR" "$UV" sync --frozen --extra "$INSTALL_EXTRA"
+success "Environment synced."
 
-info "Checking SAM3..."
-if ! "$VENV_PYTHON" -c "import sam3" 2>/dev/null; then
-    info "  SAM3 not found — installing..."
-    uv pip install --python "$VENV_PYTHON" "git+https://github.com/facebookresearch/sam3.git" \
-        && success "  SAM3 installed." \
-        || warn "  SAM3 install failed. Run: uv pip install --python .venv/bin/python git+https://github.com/facebookresearch/sam3.git"
-else
-    success "  SAM3 already installed."
-fi
-
-info "Checking micro-SAM..."
-if ! "$VENV_PYTHON" -c "import micro_sam" 2>/dev/null; then
-    info "  micro-SAM not found — installing..."
-    uv pip install --python "$VENV_PYTHON" "git+https://github.com/computational-cell-analytics/micro-sam.git" \
-        && success "  micro-SAM installed." \
-        || warn "  micro-SAM install failed. Run: uv pip install --python .venv/bin/python git+https://github.com/computational-cell-analytics/micro-sam.git"
-else
-    success "  micro-SAM already installed."
-fi
-
-info "Checking YOLO..."
-if ! "$VENV_PYTHON" -c "import ultralytics" 2>/dev/null; then
-    uv pip install --python "$VENV_PYTHON" "ultralytics>=8.0" \
-        && success "  YOLO installed." \
-        || warn "  YOLO install failed."
-else
-    success "  YOLO already installed."
-fi
-
-info "Checking UNet..."
-if ! "$VENV_PYTHON" -c "import segmentation_models_pytorch" 2>/dev/null; then
-    uv pip install --python "$VENV_PYTHON" "segmentation-models-pytorch>=0.3" \
-        && success "  UNet installed." \
-        || warn "  UNet install failed."
-else
-    success "  UNet already installed."
-fi
-
-info "Checking analysis tools (opencv, pandas)..."
-if ! "$VENV_PYTHON" -c "import cv2; import pandas" 2>/dev/null; then
-    uv pip install --python "$VENV_PYTHON" "opencv-python>=4.8" "pandas>=1.5" \
-        && success "  Analysis tools installed." \
-        || warn "  Analysis tools install failed."
-else
-    success "  Analysis tools already installed."
-fi
-
-info "Checking CLU assistant (anthropic, openai)..."
-if ! "$VENV_PYTHON" -c "import anthropic" 2>/dev/null; then
-    uv pip install --python "$VENV_PYTHON" "anthropic>=0.52" "openai>=1.0" \
-        && success "  CLU assistant installed." \
-        || warn "  CLU assistant install failed."
-else
-    success "  CLU assistant already installed."
-fi
-
-# ── sync extras into .venv-py312 (used by acorn2.sh) ─────────────────────────
-VENV312="$SCRIPT_DIR/.venv-py312/bin/python"
-if [ -f "$VENV312" ]; then
-    info "Syncing core + entry points to .venv-py312..."
-    uv pip install --python "$VENV312" -e "$SCRIPT_DIR[gui,mrc]" --quiet
-
-    if ! "$VENV312" -c "import micro_sam" 2>/dev/null; then
-        uv pip install --python "$VENV312" "git+https://github.com/computational-cell-analytics/micro-sam.git" \
-            && success "  micro-SAM synced to .venv-py312." \
-            || warn "  micro-SAM sync to .venv-py312 failed."
-    fi
-
-    if ! "$VENV312" -c "import anthropic" 2>/dev/null; then
-        uv pip install --python "$VENV312" "anthropic>=0.52" "openai>=1.0" \
-            && success "  CLU assistant synced to .venv-py312." \
-            || warn "  CLU assistant sync to .venv-py312 failed."
-    fi
+if [ -f "$SCRIPT_DIR/download_models.py" ]; then
+    info "Checking recommended model cache..."
+    "$VENV_PYTHON" "$SCRIPT_DIR/download_models.py" --preset recommended \
+        || warn "Model download skipped or incomplete; ACORN can still start."
 fi
 
 echo ""

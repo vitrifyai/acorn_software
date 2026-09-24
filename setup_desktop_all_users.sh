@@ -5,7 +5,7 @@
 # Puts an ACORN desktop icon on every user's Desktop and updates the
 # system application menu entry.
 #
-# Run with:   sudo bash /home/vnw/acorn/setup_desktop_all_users.sh
+# Run with:   sudo ACORN_PREFIX=/opt/acorn bash setup_desktop_all_users.sh
 # ─────────────────────────────────────────────────────────────────────────────
 set -euo pipefail
 
@@ -13,14 +13,15 @@ if [ "$(id -u)" -ne 0 ]; then
     echo "ERROR: run with sudo" >&2; exit 1
 fi
 
-ACORN_LAUNCH="/home/vnw/acorn/acorn2.sh"
-ACORN_ICON="/home/vnw/acorn/src/acorn/gui/acorn.png"
+ACORN_PREFIX="${ACORN_PREFIX:-/opt/acorn}"
+ACORN_LAUNCH="${ACORN_LAUNCH:-/usr/local/bin/acorn-gui}"
+ACORN_ICON="${ACORN_ICON:-$ACORN_PREFIX/src/acorn/gui/acorn.png}"
 DESKTOP_CONTENT="[Desktop Entry]
 Version=1.0
 Type=Application
 Name=ACORN
 Comment=Microscopy image analysis with AI-assisted annotation
-Exec=bash ${ACORN_LAUNCH}
+Exec=${ACORN_LAUNCH}
 Icon=${ACORN_ICON}
 Terminal=false
 Categories=Science;Education;
