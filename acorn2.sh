@@ -10,7 +10,11 @@ if [ ! -x "$VENV_DIR/bin/acorn-gui" ]; then
 fi
 
 cd "$SCRIPT_DIR"
-export ACORN_MODELS_DIR="/opt/models/acorn/models"
+# Use this workstation's shared model folder when it exists and the user has not
+# chosen one. Otherwise ACORN falls back to /opt/acorn/models, then ~/.acorn/models.
+if [ -z "${ACORN_MODELS_DIR:-}" ] && [ -d /opt/models/acorn/models ]; then
+    export ACORN_MODELS_DIR="/opt/models/acorn/models"
+fi
 export JAX_PLATFORM_NAME=gpu
 export XLA_PYTHON_CLIENT_PREALLOCATE=false
 unset XLA_PYTHON_CLIENT_ALLOCATOR
