@@ -3,7 +3,7 @@ from __future__ import annotations
 import tifffile
 
 from acorn_tem_sim.io import generate_tem_dataset
-from acorn_tem_sim.plugin import _params_from_clu
+from acorn_tem_sim.plugin import TemSimulationPlugin, _params_from_clu
 from acorn_sim_common import fresh_run_dir, open_paths_in_acorn
 from acorn_tem_sim.simulator import Specimen, make_potential, resolve, simulate_micrograph
 
@@ -62,6 +62,27 @@ def test_clu_params_map_tem_specimen_kind() -> None:
     assert _params_from_clu({"sample": "multilamellar vesicle"})["specimen_kind"] == "lipid_multi"
     assert _params_from_clu({"sample": "bacteria"})["specimen_kind"] == "bacteria"
     assert _params_from_clu({"sample": "protein from pdb"})["specimen_kind"] == "pdb"
+
+
+def test_tem_routing_uses_normalised_specimen_kind(monkeypatch) -> None:
+    plugin = object.__new__(TemSimulationPlugin)
+    plugin._panel = None
+    calls = []
+
+    def engine(action, params):
+        calls.append(("engine", action, params))
+
+    def legacy(params):
+        calls.append(("legacy", params))
+
+    monkeypatch.setattr(plugin, "_run_engine_action", engine)
+    monkeypatch.setattr(plugin, "_on_generate_requested", legacy)
+
+    plugin._run_tem({"sample": "single lipid vesicle"})
+
+    assert len(calls) == 1
+    assert calls[0][0] == "legacy"
+    assert calls[0][1]["specimen_kind"] == "lipid_single"
 
 
 def test_tem_specimen_kinds_generate_nonblank_potentials() -> None:

@@ -150,6 +150,15 @@ class PotentialResult:
     v_proj: np.ndarray
     label: np.ndarray
     specimen: Specimen
+    objects: tuple = ()
+    """Specified geometry of every placed object, recorded before rasterisation.
+
+    Each entry gives the value the generator was asked for, not one traced back
+    out of the projected potential. A boundary recovered from the label map
+    carries the rasterisation error of the disc it was drawn as, and merges
+    objects that touch, so anything measuring boundary bias has to compare
+    against these values rather than against a traced reference.
+    """
 
 
 @dataclass(frozen=True)
@@ -192,9 +201,10 @@ def _capsule_mask(shape: tuple[int, int], cy: float, cx: float, length_px: float
     return core | cap1 | cap2
 
 
-def _place_solid_particles(v_proj: np.ndarray, label: np.ndarray, pixel_size_a: float, specimen: Specimen, rng) -> None:
+def _place_solid_particles(v_proj: np.ndarray, label: np.ndarray, pixel_size_a: float, specimen: Specimen, rng) -> list[dict]:
     d_excess = specimen.plga_mip_v - specimen.ice_mip_v
     placed: list[tuple[float, float, float]] = []
+    records: list[dict] = []
     tries = 0
     while len(placed) < specimen.n_particles and tries < max(1, specimen.n_particles * 50):
         tries += 1
@@ -213,14 +223,19 @@ def _place_solid_particles(v_proj: np.ndarray, label: np.ndarray, pixel_size_a: 
         v_proj[y0:y1, x0:x1] += (d_excess * chord_a).astype(np.float32)
         label[y0:y1, x0:x1] = np.maximum(label[y0:y1, x0:x1], chord_a)
         placed.append((cy, cx, r_px))
+        records.append({"cy_px": float(cy), "cx_px": float(cx),
+                        "diameter_nm": float(2.0 * r_px * pixel_size_a / 10.0),
+                        "ecd_nm": float(2.0 * r_px * pixel_size_a / 10.0)})
+    return records
 
 
-def _place_lipid_vesicles(v_proj: np.ndarray, label: np.ndarray, pixel_size_a: float, specimen: Specimen, rng, layers: int) -> None:
+def _place_lipid_vesicles(v_proj: np.ndarray, label: np.ndarray, pixel_size_a: float, specimen: Specimen, rng, layers: int) -> list[dict]:
     d_excess = specimen.lipid_mip_v - specimen.ice_mip_v
     thickness_px = max(1.0, specimen.membrane_thickness_nm * 10.0 / pixel_size_a)
     spacing_px = max(thickness_px * 2.5, 7.0 * 10.0 / pixel_size_a)
     yy, xx = np.mgrid[0:v_proj.shape[0], 0:v_proj.shape[1]].astype(np.float32)
     placed: list[tuple[float, float, float]] = []
+    records: list[dict] = []
     tries = 0
     while len(placed) < specimen.n_particles and tries < max(1, specimen.n_particles * 60):
         tries += 1
@@ -248,6 +263,20 @@ def _place_lipid_vesicles(v_proj: np.ndarray, label: np.ndarray, pixel_size_a: f
             v_proj += (d_excess * shell_a).astype(np.float32)
             label[:] = np.maximum(label, shell_a)
         placed.append((cy, cx, r_outer))
+        # Three edge conventions, all present in the model. A vesicle has no
+        # single diameter: the outer leaflet, the bilayer midplane and the
+        # inner leaflet differ by the membrane thickness, and which one a
+        # method reports is a choice rather than an error. Recorded separately
+        # so that bias can be scored against each.
+        _nm = pixel_size_a / 10.0
+        records.append({"cy_px": float(cy), "cx_px": float(cx),
+                        "d_outer_leaflet_nm": float(2.0 * r_outer * _nm),
+                        "d_bilayer_mid_nm": float(2.0 * (r_outer - 0.5 * thickness_px) * _nm),
+                        "d_inner_leaflet_nm": float(2.0 * (r_outer - thickness_px) * _nm),
+                        "membrane_thickness_nm": float(thickness_px * _nm),
+                        "n_lamellae": int(layers),
+                        "ecd_nm": float(2.0 * r_outer * _nm)})
+    return records
 
 
 def _place_bacteria(v_proj: np.ndarray, label: np.ndarray, pixel_size_a: float, specimen: Specimen, rng) -> None:
@@ -540,12 +569,13 @@ def make_potential(shape: tuple[int, int], pixel_size_a: float, specimen: Specim
     v_proj = np.zeros(shape, dtype=np.float32)
     label = np.zeros(shape, dtype=np.float32)
     kind = specimen.kind.lower()
+    objects: list[dict] = []
     if kind in {"plga", "solid", "solid_particles"}:
-        _place_solid_particles(v_proj, label, pixel_size_a, specimen, rng)
+        objects = _place_solid_particles(v_proj, label, pixel_size_a, specimen, rng) or []
     elif kind in {"lipid_single", "single_lipid", "vesicle"}:
-        _place_lipid_vesicles(v_proj, label, pixel_size_a, specimen, rng, layers=1)
+        objects = _place_lipid_vesicles(v_proj, label, pixel_size_a, specimen, rng, layers=1) or []
     elif kind in {"lipid_multi", "multilamellar", "multi_lipid"}:
-        _place_lipid_vesicles(v_proj, label, pixel_size_a, specimen, rng, layers=3)
+        objects = _place_lipid_vesicles(v_proj, label, pixel_size_a, specimen, rng, layers=3) or []
     elif kind in {"protein", "pdb"}:
         _place_proteins(v_proj, label, pixel_size_a, specimen, rng)
     elif kind in {"bacteria", "cell"}:
@@ -564,7 +594,8 @@ def make_potential(shape: tuple[int, int], pixel_size_a: float, specimen: Specim
         v_proj = v_proj + amp * f_
 
     v_proj -= v_proj.mean()
-    return PotentialResult(v_proj=v_proj, label=label, specimen=specimen)
+    return PotentialResult(v_proj=v_proj, label=label, specimen=specimen,
+                           objects=tuple(objects))
 
 
 def make_volume(shape: tuple[int, int], pixel_size_a: float, specimen: Specimen) -> tuple[np.ndarray, np.ndarray]:

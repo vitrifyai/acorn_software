@@ -6,7 +6,7 @@ build-backend = "hatchling.build"
 name = "acorn-sim"
 version = "0.3.0"
 description = "Cryo-TEM, FIB-SEM and 4D-STEM image simulation for ACORN"
-requires-python = ">=3.10"
+requires-python = ">=3.12"
 authors = [{ name = "CNMS Low-Dose CryoEM Lab" }]
 dependencies = [
     "acorn>=0.3",

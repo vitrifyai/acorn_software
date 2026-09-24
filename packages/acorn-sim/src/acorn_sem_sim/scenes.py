@@ -53,6 +53,28 @@ class Scene:
         return int(label) in self.background_labels
 
 
+def _object_record(cy_px, cx_px, a_px, b_px, pixel_size_nm, angle_rad=0.0):
+    """The specified geometry of one placed object, in physical units.
+
+    Recorded at placement time, before the object is rasterised. This is the
+    value the generator was asked for, not one traced back out of the image:
+    a polygon recovered from the label map carries the rasterisation error of
+    the disc or ellipse it was drawn as, and connected-component labelling
+    merges objects that touch. Anything measuring boundary bias has to compare
+    against the specified value or it is comparing two estimates.
+
+    `a_px`/`b_px` are semi-axes in pixels; a disc has a == b. The equivalent
+    circular diameter is 2*sqrt(a*b)*pixel_size, which matches the quantity
+    ACORN reports for a measured region.
+    """
+    a = float(a_px); b = float(b_px); px = float(pixel_size_nm)
+    return {"cy_px": float(cy_px), "cx_px": float(cx_px),
+            "major_nm": 2.0 * a * px, "minor_nm": 2.0 * b * px,
+            "angle_rad": float(angle_rad),
+            "area_nm2": float(np.pi * a * b * px * px),
+            "ecd_nm": float(2.0 * np.sqrt(a * b) * px)}
+
+
 def _smooth_noise(shape, rng, sigma_px, amplitude=1.0):
     from scipy.ndimage import gaussian_filter
     n = rng.standard_normal(shape).astype(np.float32)
@@ -109,7 +131,9 @@ def nanoparticles_on_substrate(shape=(512, 512), pixel_size_nm=2.0, n_particles=
                  f"{len(placed)} {particle} particles on {substrate}",
                  meta={"n_particles_placed": len(placed), "relief": bool(relief),
                        "diameter_nm_mean": diameter_nm_mean,
-                       "n_particles_requested": int(n_particles)})
+                       "n_particles_requested": int(n_particles),
+                       "objects": [_object_record(cy, cx, r, r, pixel_size_nm)
+                                   for cy, cx, r in placed]})
 
 
 def two_phase_grains(shape=(512, 512), pixel_size_nm=5.0, n_grains=24,
@@ -436,6 +460,8 @@ def bacterial_spores(shape=(512, 512), pixel_size_nm=8.0, n_spores=25,
                  + (f", {coating_nm:g} nm {coating} coated" if coated else ", uncoated"),
                  meta={"n_spores_placed": len(placed),
                        "n_spores_requested": int(n_spores),
+                       "objects": [_object_record(cy, cx, a, b, pixel_size_nm, ang)
+                                   for cy, cx, a, b, ang in placed],
                        "size_clamped_to_field": bool(clamped),
                        "length_nm": float(length_nm), "width_nm": float(width_nm),
                        "coating_nm": float(coating_nm) if coated else 0.0,

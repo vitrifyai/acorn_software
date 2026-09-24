@@ -95,10 +95,10 @@ class TemSimulationPlugin(AcornPlugin):
         """Route to the advanced engine (plga/bacteria/contamination/scenes/advanced
         physics) or the legacy fast path (lipid/protein/PDB). Whichever TEM tool CLU
         picked, the specimen + params decide — so a wrong tool choice can't misroute."""
-        if _use_engine(params):
-            self._run_engine_action("generate_tem_advanced", params)
+        request = {**params, **_params_from_clu(params)}
+        if _use_engine(request):
+            self._run_engine_action("generate_tem_advanced", request)
         else:
-            request = _params_from_clu(params)
             if self._panel is not None:
                 self._panel.apply_params(request)
             self._on_generate_requested(request)

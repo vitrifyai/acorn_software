@@ -113,6 +113,7 @@ def generate_sem_dataset(output_dir: Path, count: int, params: dict, *,
         read_noise_e=float(params.get("read_noise_e", 3.0)),
         scan_jitter_px=float(params.get("scan_jitter_px", 0.0)),
         charging=float(params.get("charging", 0.0)),
+        shadowing=float(params.get("shadowing", 0.0)),
     )
 
     size = int(params.get("image_size_px", 512))
@@ -147,6 +148,11 @@ def generate_sem_dataset(output_dir: Path, count: int, params: dict, *,
             coating_nm=float(params.get("coating_nm", 10.0)),
             coating=str(params.get("coating", "gold")),
             clustering=float(params.get("clustering", 0.35)),
+            debris_clumps=int(params.get("debris_clumps", 0)),
+            debris_grain_nm=float(params.get("debris_grain_nm", 70.0)),
+            debris_spread_nm=float(params.get("debris_spread_nm", 1200.0)),
+            max_tilt_deg=float(params.get("max_tilt_deg", 0.0)),
+            stacking=float(params.get("stacking", 0.0)),
         )
 
         result = simulate(scene.material_index, scene.material_names,

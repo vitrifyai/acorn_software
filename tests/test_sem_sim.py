@@ -491,6 +491,80 @@ def test_clu_accepts_the_synonyms_a_model_will_reach_for():
     assert p["electrons_per_px"] == 250.0
 
 
+def test_clu_maps_sem_spore_detail_controls():
+    from acorn_sem_sim.plugin import _params_from_clu
+    p = _params_from_clu({
+        "scene": "spores",
+        "spore_tilt_deg": 35,
+        "stacking": 0.75,
+        "debris_clumps": 6,
+        "debris_grain_nm": 80,
+        "debris_spread_nm": 900,
+        "shadowing": 0.6,
+    })
+    assert p["max_tilt_deg"] == 35.0
+    assert p["stacking"] == 0.75
+    assert p["debris_clumps"] == 6
+    assert p["debris_grain_nm"] == 80.0
+    assert p["debris_spread_nm"] == 900.0
+    assert p["shadowing"] == 0.6
+
+
+def test_sem_dataset_forwards_spore_detail_controls(monkeypatch, tmp_path):
+    from acorn_sem_sim import imaging as im
+    from acorn_sem_sim import io as sem_io
+    from acorn_sem_sim import scenes as scenes
+
+    captured = {}
+
+    def fake_build(kind, **kwargs):
+        captured["kind"] = kind
+        captured["scene_kwargs"] = kwargs
+        shape = kwargs["shape"]
+        idx = np.zeros(shape, dtype=np.int32)
+        height = np.zeros(shape, dtype=np.float32)
+        return scenes.Scene(idx, ["carbon"], height, kwargs["pixel_size_nm"],
+                            "fake scene", meta=dict(kwargs))
+
+    def fake_simulate(material_index, material_names, **kwargs):
+        captured["detector"] = kwargs["detector"]
+        zeros = np.zeros(material_index.shape, dtype=np.float32)
+        return im.SEMImage(
+            image=zeros,
+            signal=zeros,
+            material_index=material_index,
+            material_names=material_names,
+            se=zeros,
+            bse=zeros,
+            tilt_deg=zeros,
+            meta={},
+        )
+
+    monkeypatch.setattr(sem_io._scenes, "build", fake_build)
+    monkeypatch.setattr(sem_io, "simulate", fake_simulate)
+
+    sem_io.generate_sem_dataset(tmp_path, 1, {
+        "scene": "spores",
+        "image_size_px": 16,
+        "pixel_size_nm": 8.0,
+        "shadowing": 0.6,
+        "max_tilt_deg": 35.0,
+        "stacking": 0.75,
+        "debris_clumps": 6,
+        "debris_grain_nm": 80.0,
+        "debris_spread_nm": 900.0,
+    }, save_layers=False)
+
+    assert captured["kind"] == "spores"
+    assert captured["detector"].shadowing == 0.6
+    scene_kwargs = captured["scene_kwargs"]
+    assert scene_kwargs["max_tilt_deg"] == 35.0
+    assert scene_kwargs["stacking"] == 0.75
+    assert scene_kwargs["debris_clumps"] == 6
+    assert scene_kwargs["debris_grain_nm"] == 80.0
+    assert scene_kwargs["debris_spread_nm"] == 900.0
+
+
 @pytest.mark.parametrize("text,expected", [
     ("in-lens", "TLD"), ("inlens", "TLD"), ("Z contrast", "ETD"),
     ("bse", "BSE"), ("backscattered", "BSE"), ("", "ETD"), (None, "ETD"),
