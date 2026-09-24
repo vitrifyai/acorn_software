@@ -143,6 +143,8 @@ class DoseSeriesDialog(QDialog):
         self._frames        = frames
         self._px_nm         = pixel_size_nm
         self._start_frame   = start_frame
+        self._aligned_frames = None
+        self._motion_shifts = None
 
         from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg
         from matplotlib.figure import Figure
@@ -185,6 +187,14 @@ class DoseSeriesDialog(QDialog):
         )
         ctrl.addWidget(self._diff_chk)
 
+        self._motion_chk = QCheckBox("Correct global drift before binning")
+        self._motion_chk.setChecked(False)
+        self._motion_chk.setToolTip(
+            "Rigidly align the selected frames before constructing dose bins. "
+            "Use a stable field or ROI for registration when specimen features move."
+        )
+        ctrl.addWidget(self._motion_chk)
+
         ctrl.addStretch()
 
         update_btn = QPushButton("Update")
@@ -211,18 +221,26 @@ class DoseSeriesDialog(QDialog):
         # Auto-update when controls change
         self._n_bins_spin.valueChanged.connect(self._update_figure)
         self._diff_chk.stateChanged.connect(self._update_figure)
+        self._motion_chk.stateChanged.connect(self._update_figure)
         self._update_figure()
 
     def _update_figure(self) -> None:
         import numpy as np
-        from acorn.core.frame_processor import dose_series
+        from acorn.core.frame_processor import align_frames, dose_series
 
         n_bins   = self._n_bins_spin.value()
         dose_pf  = self._dose_spin.value()
         show_diff = self._diff_chk.isChecked()
         n_total  = len(self._frames)
 
-        averages, ranges = dose_series(self._frames, n_bins)
+        motion_corrected = self._motion_chk.isChecked()
+        if motion_corrected:
+            if self._aligned_frames is None:
+                self._aligned_frames, self._motion_shifts = align_frames(self._frames)
+            source_frames = self._aligned_frames
+        else:
+            source_frames = self._frames
+        averages, ranges = dose_series(source_frames, n_bins)
 
         # Global contrast for the raw-average row (consistent across bins)
         all_vals = np.concatenate([a.ravel() for a in averages])
@@ -295,7 +313,8 @@ class DoseSeriesDialog(QDialog):
         # Row labels on the left edge
         if n_rows >= 1:
             self._fig.text(0.005, 0.75 if show_diff else 0.5,
-                           "Dose average", va="center", rotation=90,
+                           "Corrected dose average" if motion_corrected else "Dose average",
+                           va="center", rotation=90,
                            color="#4dbb78", fontsize=9)
         if show_diff:
             self._fig.text(0.005, 0.25,
@@ -307,7 +326,8 @@ class DoseSeriesDialog(QDialog):
         dose_total  = f"  |  Total dose: {n_total * dose_pf:.1f} e/Å²" if dose_pf > 0 else ""
         self._fig.text(
             0.5, 0.003,
-            f"{frame_range}  |  {n_bins} bins  ({n_total // n_bins} frames/bin approx){dose_total}",
+            f"{frame_range}  |  {n_bins} bins  ({n_total // n_bins} frames/bin approx)"
+            f"{dose_total}  |  {'global drift corrected' if motion_corrected else 'uncorrected'}",
             ha="center", color="#888", fontsize=8,
         )
 

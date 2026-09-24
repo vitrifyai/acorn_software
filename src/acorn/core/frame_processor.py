@@ -9,14 +9,14 @@ def mean_average(frames: np.ndarray) -> np.ndarray:
     return frames.mean(axis=0).astype(np.float32)
 
 
-def motion_correct_frames(frames: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+def align_frames(frames: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
     """
-    Two-pass motion correction via phase cross-correlation.
+    Align a frame stack using two-pass phase cross-correlation.
 
     Returns
     -------
-    averaged : (H, W) float32
-        Mean of all aligned frames.
+    aligned : (N, H, W) float32
+        Motion-corrected frames in the original frame order.
     shifts : (n_frames, 2) float32
         Total (dy, dx) offset applied to each frame to bring it into alignment.
         Negate these to get the sample drift trajectory relative to the aligned average.
@@ -42,6 +42,18 @@ def motion_correct_frames(frames: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
         total_shifts[i] += s
         aligned[i] = nd_shift(aligned[i], s)
 
+    return aligned, total_shifts
+
+
+def motion_correct_frames(frames: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    """
+    Two-pass rigid motion correction via phase cross-correlation.
+
+    This backward-compatible entry point returns the aligned mean and the
+    per-frame shifts. Use align_frames when downstream processing, including
+    dose binning or tracking, needs the corrected frame stack.
+    """
+    aligned, total_shifts = align_frames(frames)
     return aligned.mean(axis=0).astype(np.float32), total_shifts
 
 
@@ -74,6 +86,22 @@ def dose_series(
         averages.append(frames[s:e].mean(axis=0).astype(np.float32))
         ranges.append((s, e))
     return averages, ranges
+
+
+def motion_corrected_dose_series(
+    frames: np.ndarray,
+    n_bins: int,
+) -> tuple[list[np.ndarray], list[tuple[int, int]], np.ndarray, np.ndarray]:
+    """
+    Align frames before constructing equal-frame (equal-dose) averages.
+
+    Returns the per-bin means, frame ranges, applied rigid shifts, and complete
+    aligned frame stack. The aligned stack supports tracking and other
+    downstream analyses without estimating motion a second time.
+    """
+    aligned, shifts = align_frames(frames)
+    averages, ranges = dose_series(aligned, n_bins)
+    return averages, ranges, shifts, aligned
 
 
 def dose_weighted_average(
