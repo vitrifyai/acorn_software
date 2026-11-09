@@ -14,6 +14,8 @@ Center for Nanophase Materials Sciences, Oak Ridge National Laboratory.
 
 > Expert user or hate instructions? See [QUICKSTART.md](QUICKSTART.md).
 
+> Papers, preprints, trained models, datasets and related repositories: **[PUBLICATIONS.md](PUBLICATIONS.md)**. The ACORN QR code points here.
+
 ---
 
 ## Workspaces
