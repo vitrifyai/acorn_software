@@ -5,7 +5,7 @@ build-backend = "hatchling.build"
 [project]
 name = "acorn-3d"
 version = "0.3.0"
-description = "Volume viewer for ACORN"
+description = "Tomogram viewer, SAM 3 slice annotation and z propagation, label volumes and 3D movies for ACORN"
 requires-python = ">=3.12"
 authors = [{ name = "CNMS Low-Dose CryoEM Lab" }]
 dependencies = [
@@ -13,7 +13,15 @@ dependencies = [
     "numpy>=1.24",
     "mrcfile>=1.4",
     "tifffile>=2023.1",
+    "scipy>=1.10",
+    "scikit-image>=0.21",
+    "opencv-python-headless>=4.8",
+    "imageio>=2.31",
+    "imageio-ffmpeg>=0.4.9",   # bundled ffmpeg for the mp4 writer
+    "trimesh>=4.0",
+    "pyrender>=0.1.45",        # headless EGL rendering of the label surfaces
 ]
+# SAM 3 (text prompts and z propagation) comes from the root "annotate" extra; it is imported lazily.
 
 [project.entry-points."acorn.plugins"]
 acorn_3d = "acorn_3d.plugin:VolumePlugin"

@@ -51,6 +51,28 @@ outside the current workspace and it will switch first, then do it.
 - Manual annotation: ROI polygons, rectangles, arrows, circles, text, scale bars, distance and angle measurements
 - RELION .star file import: particle picks loaded as circular ROI annotations
 
+### CZI and light microscopy
+
+Install the CZI reader in the ACORN environment with `pip install -r requirements-czi.txt`.
+Open a CZI with **File → Open File(s)**. ACORN selects the GFP channel when
+exactly one is identified, otherwise the first channel. Choose another under
+**Microscopy → Choose CZI channel** before annotating. The first scene, time
+point and Z plane are used; Z navigation is not yet available. The selected
+indices are kept in image metadata and saved with annotations. Mosaic
+images and images with incompatible scene sizes must be prepared separately.
+An isotropic pixel size is read from the CZI header when present.
+
+For bright objects, **Microscopy → Annotate bright objects (Otsu + watershed)**
+suggests editable ROIs using Gaussian smoothing, Otsu thresholding, and a
+distance watershed, following common [ImageJ workflows](https://imagej.net/tutorials/batch-processing-with-ij-macro).
+Review the ROIs before using the Measure tab. The automatic ROIs record their
+threshold, settings and CZI plane. Results depend on image contrast and object
+separation; this is not a validated cell counter. Keep the original image,
+annotations and exported measurements together.
+The dialog permits changing minimum area and separation in pixels. To avoid
+overloading the interface, a run suggesting more than 2,000 objects is not
+added; adjust the settings and inspect the image before trying again.
+
 ### AI-assisted segmentation
 - **SAM 3 / SAM 2** (Meta): point, box, scribble, automatic mask generation
 - **micro-SAM**: SAM checkpoints fine-tuned for electron and light microscopy

@@ -38,7 +38,7 @@ from PyQt6.QtWidgets import (
     QDoubleSpinBox, QFormLayout, QGroupBox, QLabel, QLineEdit, QListWidget, QListWidgetItem,
     QMainWindow, QMessageBox,
     QHBoxLayout, QPushButton, QSpinBox, QSplitter, QStatusBar,
-    QTabWidget, QVBoxLayout, QWidget,
+    QTabWidget, QTextEdit, QVBoxLayout, QWidget,
 )
 
 from acorn.core.dm4_loader import DM4Image, scan_folder, EM_EXTS, DEFAULT_EM_CONTRAST
@@ -572,6 +572,10 @@ class MainWindow(
         self._last_distance_px: float = 0.0        # last measured distance in pixels
         self._contrast_states: dict[int, ContrastParams] = {}
         self._ann_states: dict[int, list] = {}   # per-image annotation snapshots
+        self._image_metadata: dict[int, dict] = {}
+        self._czi_channels: dict[int, int] = {}
+        self._czi_z_planes: dict[int, int] = {}
+        self._czi_time_points: dict[int, int] = {}
         self._image_load_thread: Optional[ImageLoadThread] = None  # active background load
         self._frame_proc_thread: Optional[FrameProcessThread] = None
         self._last_motion_shifts = None    # (n_frames, 2) shifts from last motion correction
@@ -1617,6 +1621,19 @@ class MainWindow(
         quit_a.setShortcut("Ctrl+Q")
         quit_a.triggered.connect(QApplication.quit)
 
+        microscopy_menu = mb.addMenu("Microscopy")
+        channel_a = microscopy_menu.addAction("Choose CZI channel…")
+        channel_a.triggered.connect(self._choose_czi_channel)
+        z_a = microscopy_menu.addAction("Choose CZI Z plane…")
+        z_a.triggered.connect(lambda _checked=False: self._choose_czi_axis("Z"))
+        time_a = microscopy_menu.addAction("Choose CZI time point…")
+        time_a.triggered.connect(lambda _checked=False: self._choose_czi_axis("T"))
+        fluorescence_a = microscopy_menu.addAction("Annotate bright objects (Otsu + watershed)")
+        fluorescence_a.triggered.connect(self._annotate_fluorescence)
+        microscopy_menu.addSeparator()
+        metadata_a = microscopy_menu.addAction("Image metadata and review notes…")
+        metadata_a.triggered.connect(self._edit_image_metadata)
+
         # View
         view_menu = mb.addMenu("View")
 
@@ -1672,11 +1689,190 @@ class MainWindow(
 
     # ── file opening ──────────────────────────────────────────────────────────
 
+    def _choose_czi_channel(self) -> None:
+        from PyQt6.QtWidgets import QInputDialog
+        canvas = self._canvas_widget.canvas
+        img = canvas.dm4
+        if img is None or img.filepath.suffix.lower() != ".czi":
+            QMessageBox.information(self, "CZI channel", "Open a CZI image first.")
+            return
+        tags = img.meta.all_tags
+        start = tags.get("czi_channel_start", 0)
+        count = tags.get("czi_channel_count", 1)
+        names = tags.get("czi_channels", [])
+        labels = [f"{i+1}: {names[i]}" if i < len(names) else f"Channel {start+i}" for i in range(count)]
+        current = tags.get("czi_selection", {}).get("C", start) - start
+        choice, ok = QInputDialog.getItem(self, "CZI channel", "Select channel:",
+                                          labels, max(0, min(current, count-1)), False)
+        if not ok:
+            return
+        channel = start + labels.index(choice)
+        if channel == current + start:
+            return
+        if list(canvas.store):
+            QMessageBox.information(self, "CZI channel",
+                "Choose the channel before adding annotations. Save your work and open the image in a separate session to analyze another channel.")
+            return
+        self._czi_channels[self._img_idx] = channel
+        self._image_cache.pop(self._img_idx, None)
+        self._image_cache_fingerprints.pop(self._img_idx, None)
+        self._switch_to(self._img_idx)
+
+    def _choose_czi_axis(self, axis: str) -> None:
+        """Choose a CZI Z plane or time point, then reload the current image."""
+        from PyQt6.QtWidgets import QInputDialog
+        canvas = self._canvas_widget.canvas
+        img = canvas.dm4
+        title = "CZI Z plane" if axis == "Z" else "CZI time point"
+        if img is None or not img.filepath or img.filepath.suffix.lower() != ".czi":
+            QMessageBox.information(self, title, "Open a CZI image first.")
+            return
+        tags = img.meta.all_tags
+        start_key, count_key = (("czi_z_start", "czi_z_count") if axis == "Z"
+                                else ("czi_time_start", "czi_time_count"))
+        start, count = int(tags.get(start_key, 0)), int(tags.get(count_key, 1))
+        if count <= 1:
+            QMessageBox.information(self, title, f"This CZI has only one {('Z plane' if axis == 'Z' else 'time point')}.")
+            return
+        current = int(tags.get("czi_selection", {}).get(axis, start))
+        labels = [str(i + 1) for i in range(count)]
+        choice, ok = QInputDialog.getItem(self, title, "Select " + ("Z plane:" if axis == "Z" else "time point:"),
+                                          labels, max(0, min(current - start, count - 1)), False)
+        if not ok:
+            return
+        selected = start + labels.index(choice)
+        if selected == current:
+            return
+        if list(canvas.store):
+            QMessageBox.information(self, title,
+                "Choose the plane or time point before adding annotations. Save your work and open the image in a separate session to analyze another selection.")
+            return
+        attr = "_czi_z_planes" if axis == "Z" else "_czi_time_points"
+        getattr(self, attr)[self._img_idx] = selected
+        self._image_cache.pop(self._img_idx, None)
+        self._image_cache_fingerprints.pop(self._img_idx, None)
+        self._switch_to(self._img_idx)
+
+    def _edit_image_metadata(self) -> None:
+        """Record sample context and flag difficult images for later review."""
+        from PyQt6.QtWidgets import QLineEdit
+        img = self._canvas_widget.canvas.dm4
+        if img is None:
+            QMessageBox.information(self, "Image metadata", "Open an image first.")
+            return
+        idx = self._img_idx
+        saved = dict(self._image_metadata.get(idx, {}))
+        dialog = QDialog(self)
+        dialog.setWindowTitle(f"Image metadata — {img.meta.filename or 'image'}")
+        layout = QVBoxLayout(dialog)
+        form = QFormLayout()
+        fields = {}
+        for key, label, tip in (
+            ("sample_id", "Sample ID:", "Use the same ID for related images in one sample."),
+            ("preparation_id", "Preparation / replicate ID:", "Use the same ID for images from the same biological preparation or replicate."),
+            ("imaging_method", "Imaging method:", "For example: SEM, TEM, confocal, phase contrast."),
+            ("difficulty_tags", "Review tags (comma separated):", "Flag challenging cases, such as low contrast, crowded, debris, blur, or unusual morphology."),
+        ):
+            field = QLineEdit(str(saved.get(key, "")))
+            field.setToolTip(tip)
+            fields[key] = field
+            form.addRow(label, field)
+        layout.addLayout(form)
+        notes = QTextEdit(str(saved.get("review_notes", "")))
+        notes.setPlaceholderText("What makes this image useful, unusual, or difficult to annotate?")
+        notes.setMaximumHeight(100)
+        layout.addWidget(QLabel("Review notes:"))
+        layout.addWidget(notes)
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Save | QDialogButtonBox.StandardButton.Cancel)
+        buttons.accepted.connect(dialog.accept)
+        buttons.rejected.connect(dialog.reject)
+        layout.addWidget(buttons)
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+        metadata = {key: field.text().strip() for key, field in fields.items()}
+        metadata["difficulty_tags"] = [tag.strip() for tag in metadata["difficulty_tags"].split(",") if tag.strip()]
+        metadata["review_notes"] = notes.toPlainText().strip()
+        metadata = {key: value for key, value in metadata.items() if value}
+        self._image_metadata[idx] = metadata
+        img.meta.all_tags["acorn_user_metadata"] = metadata
+        self._do_autosave()
+        self._statusbar.showMessage("Image metadata saved with its ACORN annotations.", 5000)
+
+    def _annotate_fluorescence(self) -> None:
+        """Suggest editable ROIs from bright 2D fluorescence objects."""
+        canvas = self._canvas_widget.canvas
+        img = canvas.dm4
+        if img is None or img.raw is None:
+            QMessageBox.information(self, "Light microscopy", "Open an image first.")
+            return
+        if getattr(self, "_fluorescence_thread", None) is not None and self._fluorescence_thread.isRunning():
+            self._statusbar.showMessage("Light microscopy annotation is already running.", 5000)
+            return
+        from acorn.core.fluorescence import segment_bright
+
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Suggest bright objects")
+        layout = QVBoxLayout(dialog)
+        layout.addWidget(QLabel("Review suggestions before measuring. Set the object size for this image."))
+        form = QFormLayout()
+        area = QSpinBox()
+        area.setRange(1, 10000000)
+        separation = QSpinBox()
+        separation.setRange(1, 10000)
+        calibrated = img.meta.pixel_size_from_header and img.pixel_size > 0
+        area.setValue(max(20, round(100000 / img.pixel_size**2)) if calibrated else 20)
+        separation.setValue(max(3, round(600 / img.pixel_size)) if calibrated else 5)
+        form.addRow("Minimum area (pixels²):", area)
+        form.addRow("Minimum separation (pixels):", separation)
+        layout.addLayout(form)
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+        buttons.accepted.connect(dialog.accept)
+        buttons.rejected.connect(dialog.reject)
+        layout.addWidget(buttons)
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+        min_area, min_distance = area.value(), separation.value()
+
+        def done(result):
+            if canvas.dm4 is not img:
+                self._statusbar.showMessage("Image changed; suggested objects were not added.", 10000)
+                return
+            polygons, settings = result
+            if len(polygons) > 2000:
+                QMessageBox.warning(self, "Light microscopy",
+                    f"Found {len(polygons)} objects. Increase the minimum area or separation and try again; no ROIs were added.")
+                return
+            canvas._loading = True
+            try:
+                with self._pred_context("threshold_watershed"):
+                    for vertices in polygons:
+                        roi = self._roi_from_sam(vertices, "object")
+                        roi.stats["segmentation"] = {"method": "otsu_watershed", **settings}
+                        roi.stats["image_selection"] = img.meta.all_tags.get("czi_selection")
+                        canvas.store.add(roi)
+            finally:
+                canvas._loading = False
+            if canvas.renderer is not None:
+                canvas.renderer.render_noblit(canvas.store, canvas)
+            else:
+                canvas.fig.canvas.draw_idle()
+            self._statusbar.showMessage(
+                f"{len(polygons)} suggested objects. Review the outlines before measuring.", 15000)
+
+        self._fluorescence_thread = SAMThread(
+            lambda: segment_bright(img.raw, min_area=min_area, min_distance=min_distance), self)
+        self._fluorescence_thread.finished.connect(done)
+        self._fluorescence_thread.error.connect(
+            lambda msg: QMessageBox.warning(self, "Light microscopy", msg))
+        self._statusbar.showMessage("Finding bright objects…")
+        self._fluorescence_thread.start()
+
     def _open_files_dialog(self) -> None:
         dlg = QFileDialog(self, "Open image file(s)", str(Path.home()))
         dlg.setFileMode(QFileDialog.FileMode.ExistingFiles)
         dlg.setNameFilters([
-            "All supported (*.dm4 *.tif *.tiff *.mrc *.mrcs *.emd *.h5 *.hdf5 *.png *.jpg *.jpeg)",
+            "All supported (*.czi *.dm4 *.tif *.tiff *.mrc *.mrcs *.emd *.h5 *.hdf5 *.png *.jpg *.jpeg)",
+            "Zeiss CZI (*.czi)",
             "DM4 (*.dm4)",
             "TIFF (*.tif *.tiff)",
             "MRC (*.mrc *.mrcs)",
@@ -1780,6 +1976,10 @@ class MainWindow(
             return False
         if data.get("exclude_zone") or data.get("crop_region"):
             return False
+        if data.get("image_metadata"):
+            return False
+        if data.get("czi_selection_changed"):
+            return False
         return data.get("pixel_size_nm") is None
 
     def _do_autosave(self) -> None:
@@ -1805,7 +2005,14 @@ class MainWindow(
                 "pixel_size_nm": self._px_overrides.get(idx),
                 "exclude_zone": list(ez) if ez else None,
                 "crop_region": list(cr) if cr else None,
+                "image_metadata": self._image_metadata.get(idx, {}),
             }
+            img = self._canvas_widget.canvas.dm4
+            if img is not None and img.filepath.suffix.lower() == ".czi":
+                data["czi_selection"] = img.meta.all_tags.get("czi_selection")
+                data["czi_selection_changed"] = (
+                    data["czi_selection"] != img.meta.all_tags.get("czi_default_selection", {})
+                )
             # Nothing worth recording? Do not leave a file behind saying so.
             # Clicking through a folder used to drop a hidden 99-byte sidecar
             # beside every image, in what is often someone's raw data directory
@@ -1902,6 +2109,7 @@ class MainWindow(
                 px_nm = None
                 ez = None
                 cr = None
+                image_metadata = {}
             else:
                 ann_data = raw.get("annotations", [])
                 px_nm = raw.get("pixel_size_nm")
@@ -1909,8 +2117,11 @@ class MainWindow(
                 cr_raw = raw.get("crop_region")
                 ez = tuple(ez_raw) if ez_raw else None
                 cr = tuple(cr_raw) if cr_raw else None
+                image_metadata = raw.get("image_metadata", {})
+                if not isinstance(image_metadata, dict):
+                    image_metadata = {}
             store = AnnotationStore.from_json(json.dumps(ann_data))
-            return (list(store), px_nm, ez, cr)
+            return (list(store), px_nm, ez, cr, image_metadata)
         except Exception:
             return None
 
@@ -1938,6 +2149,7 @@ class MainWindow(
             data["images"][str(img_path)] = {
                 "annotations": [asdict(a) for a in anns],
                 "pixel_size_nm": self._px_overrides.get(idx),
+                "image_metadata": self._image_metadata.get(idx, {}),
             }
         try:
             _atomic_write_text(Path(path), json.dumps(data, indent=2))
@@ -1981,6 +2193,10 @@ class MainWindow(
                 else:
                     ann_list = entry.get("annotations", [])
                     px_nm = entry.get("pixel_size_nm")
+                    self._image_metadata[idx] = entry.get("image_metadata", {})
+                    cached = self._image_cache.get(idx)
+                    if cached is not None:
+                        cached.meta.all_tags["acorn_user_metadata"] = self._image_metadata[idx]
                 store = AnnotationStore.from_json(json.dumps(ann_list))
                 self._ann_states[idx] = list(store)
                 if px_nm is not None:
@@ -2050,6 +2266,10 @@ class MainWindow(
             self._statusbar.showMessage("No images loaded.")
             return
         self._image_paths = paths
+        self._czi_channels = {}
+        self._czi_z_planes = {}
+        self._czi_time_points = {}
+        self._image_metadata = {}
         self._image_cache.clear()
         self._image_cache_fingerprints.clear()
         self._img_idx = -1           # sentinel so _switch_to doesn't save stale data
@@ -2132,6 +2352,21 @@ class MainWindow(
             self._image_cache_fingerprints.pop(idx, None)
 
         path = self._image_paths[idx]
+        if path.suffix.lower() == ".czi" and idx not in self._czi_channels:
+            sidecar = self._autosave_path(idx)
+            if sidecar and sidecar.exists():
+                try:
+                    saved = json.loads(sidecar.read_text())
+                    if isinstance(saved, dict):
+                        selection = saved.get("czi_selection", {})
+                        if "C" in selection:
+                            self._czi_channels[idx] = selection["C"]
+                        if "Z" in selection:
+                            self._czi_z_planes[idx] = selection["Z"]
+                        if "T" in selection:
+                            self._czi_time_points[idx] = selection["T"]
+                except (OSError, ValueError, TypeError, AttributeError):
+                    pass
         # Resolve contrast params now (before thread starts) so the
         # background thread can pre-compute the normalised image.
         # For cryo-EM formats with no saved state, default to bandpass so the
@@ -2143,7 +2378,10 @@ class MainWindow(
         self._statusbar.showMessage(f"Loading {path.name}…")
         self._image_load_thread = ImageLoadThread(
             idx, path, contrast_params, parent=self,
-            bin_factor=getattr(self, '_bin_factor', 1))
+            bin_factor=getattr(self, '_bin_factor', 1),
+            czi_channel=getattr(self, "_czi_channels", {}).get(idx),
+            czi_z=getattr(self, "_czi_z_planes", {}).get(idx),
+            czi_time=getattr(self, "_czi_time_points", {}).get(idx))
         self._image_load_thread.finished.connect(self._on_image_loaded)
         self._image_load_thread.error.connect(self._on_image_load_error)
         self._image_load_thread.start()
@@ -2166,6 +2404,18 @@ class MainWindow(
         # Only render if this is still the current image (user may not have switched).
         if idx == self._img_idx:
             self._finish_switch(idx, img, precomputed_norm=norm)
+            if img.filepath.suffix.lower() == ".czi":
+                tags = img.meta.all_tags
+                channel = tags.get("czi_selection", {}).get("C", 0)
+                names = tags.get("czi_channels", [])
+                offset = channel - tags.get("czi_channel_start", 0)
+                label = names[offset] if 0 <= offset < len(names) else str(channel)
+                selection = tags.get("czi_selection", {})
+                z_plane = selection.get("Z", tags.get("czi_z_start", 0)) - tags.get("czi_z_start", 0) + 1
+                time_point = selection.get("T", tags.get("czi_time_start", 0)) - tags.get("czi_time_start", 0) + 1
+                self._statusbar.showMessage(
+                    f"CZI channel: {label}; Z plane {z_plane}; time point {time_point}. "
+                    "Change these in the Microscopy menu.", 20000)
         else:
             self._canvas_widget.set_nav_enabled(len(self._image_paths) > 1)
 
@@ -2181,6 +2431,8 @@ class MainWindow(
         "_image_cache", "_image_cache_fingerprints", "_ann_states",
         "_contrast_states", "_px_overrides", "_px_effective",
         "_sam_exclude_zones", "_sam_crop_regions_saved",
+        "_czi_channels", "_czi_z_planes", "_czi_time_points",
+        "_image_metadata",
     )
 
     def _reindex_after_removal(self, row: int) -> None:
@@ -2252,6 +2504,7 @@ class MainWindow(
 
     def _finish_switch(self, idx: int, img: DM4Image, precomputed_norm=None) -> None:
         """Complete the image switch once the DM4Image is available."""
+        img.meta.all_tags["acorn_user_metadata"] = self._image_metadata.get(idx, {})
         # Reapply any manually set pixel size for this image (survives cache
         # eviction). Overrides are stored native, so scale to the binned grid --
         # assigning the native value straight onto a binned image would undo the
@@ -2274,8 +2527,10 @@ class MainWindow(
             if saved_anns is None:
                 sidecar = self._autoload_sidecar(idx)
                 if sidecar is not None:
-                    saved_anns, px_nm, ez, cr = sidecar
+                    saved_anns, px_nm, ez, cr, image_metadata = sidecar
                     self._ann_states[idx] = saved_anns
+                    self._image_metadata[idx] = image_metadata or {}
+                    img.meta.all_tags["acorn_user_metadata"] = self._image_metadata[idx]
                     if px_nm is not None and idx not in self._px_overrides:
                         # The sidecar stores the override on the file's own grid
                         # (it is divided by the bin factor when set), so it has

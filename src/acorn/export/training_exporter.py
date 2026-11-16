@@ -389,6 +389,7 @@ def add_image(
 
     # ── source image id (groups all tiles/augs from this raw file) ────────────
     source_image_id = (max((s.get("source_id", 0) for s in info["source_images"]), default=0)) + 1
+    image_metadata = dict(dm4img.meta.all_tags.get("acorn_user_metadata", {}))
 
     h, w = dm4img.shape[:2]
 
@@ -505,6 +506,7 @@ def add_image(
                 ds.attrs["aug"]             = aug_suffix
                 ds.attrs["source_image_id"] = source_image_id
                 ds.attrs["contrast_params"] = json.dumps(asdict(params))
+                ds.attrs["image_metadata"] = json.dumps(image_metadata, ensure_ascii=False)
 
                 # COCO image record
                 coco["images"].append({
@@ -517,6 +519,7 @@ def add_image(
                     "aug":             aug_suffix,
                     "source_image_id": source_image_id,
                     "contrast_params": asdict(params),
+                    "image_metadata": image_metadata,
                 })
 
                 # per-instance masks and COCO annotations
@@ -597,6 +600,7 @@ def add_image(
         "n_tiles":       len(tiles),
         "n_written":     n_written,
         "n_skipped":     n_skipped,
+        "image_metadata": image_metadata,
     })
     _atomic_write_text(info_path, json.dumps(info, indent=2))
     _atomic_write_text(ann_path, json.dumps(coco, indent=2))

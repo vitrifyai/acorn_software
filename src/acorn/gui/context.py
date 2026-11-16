@@ -344,6 +344,11 @@ class AcornContext(QObject):
             state["image_name"] = img.filepath.name if img.filepath else "untitled"
             state["image_shape"] = list(img.raw.shape) if img.raw is not None else []
             state["pixel_size_nm"] = self.pixel_size_for_index(w._img_idx)
+            state["image_metadata"] = w._image_metadata.get(w._img_idx, {})
+            if img.filepath and img.filepath.suffix.lower() == ".czi":
+                state["czi_selection"] = img.meta.all_tags.get("czi_selection", {})
+                state["czi_channels"] = img.meta.all_tags.get("czi_channels", [])
+                state["czi_channel_start"] = img.meta.all_tags.get("czi_channel_start", 0)
             state["is_movie"]  = img.is_movie
             state["n_frames"]  = img.n_frames
         state["image_count"]         = len(self.image_paths)

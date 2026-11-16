@@ -13,6 +13,25 @@ from typing import Optional
 import numpy as np
 
 
+def open_mrc_memmap(path: "str | Path"):
+    """
+    Memory-map an MRC file's data without mrcfile.mmap, which overflows a 32-bit
+    offset on files over 2 GB with current numpy.  Returns (array[Z,H,W], voxel_size_A_xyz).
+    """
+    import mrcfile
+    with mrcfile.open(str(path), permissive=True, header_only=True) as mrc:
+        h = mrc.header
+        nx, ny, nz = int(h.nx), int(h.ny), int(h.nz)
+        mode = int(h.mode)
+        offset = 1024 + int(h.nsymbt)
+        vox = (float(mrc.voxel_size.x), float(mrc.voxel_size.y), float(mrc.voxel_size.z))
+    dtype = {0: np.int8, 1: np.int16, 2: np.float32, 6: np.uint16, 12: np.float16, 101: np.uint8}.get(mode)
+    if dtype is None:
+        raise ValueError(f"unsupported MRC mode {mode}")
+    shape = (nz, ny, nx) if nz > 1 else (ny, nx)
+    return np.memmap(str(path), dtype=dtype, mode="r", offset=offset, shape=shape), vox
+
+
 @dataclass
 class VolumeMeta:
     pixel_size: float = 1.0
@@ -43,8 +62,11 @@ class VolumeImage:
     def __init__(self) -> None:
         self._path: Optional[Path] = None
         self._data: Optional[np.ndarray] = None   # (Z, H, W) float32 if fully loaded
+        self._mm = None                            # np.memmap for large MRC files
         self._shape_3d: tuple[int, int, int] = (0, 0, 0)
         self._current_z: int = 0
+        self.slab: int = 1          # number of slices averaged around the current z for display
+        self.smooth_px: float = 0.0 # Gaussian sigma (px) applied to the displayed slice
         self.meta: VolumeMeta = VolumeMeta()
 
     @classmethod
@@ -70,9 +92,8 @@ class VolumeImage:
             return False
         if ext in cls.MRC_EXTS:
             try:
-                import mrcfile
-                with mrcfile.mmap(str(p), mode="r") as mrc:
-                    return mrc.data.ndim == 3 and mrc.data.shape[0] > 1
+                data, _ = open_mrc_memmap(p)
+                return data.ndim == 3 and data.shape[0] > 1
             except Exception:
                 return False
         else:
@@ -84,21 +105,20 @@ class VolumeImage:
                 return False
 
     def _probe_mrc(self, filepath: Path) -> None:
-        import mrcfile
-        with mrcfile.mmap(str(filepath), mode="r") as mrc:
-            data = mrc.data
-            if data.ndim == 2:
-                self._shape_3d = (1, data.shape[0], data.shape[1])
-            else:
-                self._shape_3d = tuple(data.shape)
-            nbytes = data.nbytes
-            if nbytes < self.LAZY_THRESHOLD_BYTES:
-                self._data = np.array(data, dtype=np.float32)
-            voxel = mrc.voxel_size
-            if hasattr(voxel, "x") and float(voxel.x) > 0:
-                self.meta.pixel_size = float(voxel.x) * 0.1  # Angstrom -> nm
-                self.meta.pixel_size_from_header = True
-                self.meta.voxel_depth_nm = float(voxel.z) * 0.1 if float(voxel.z) > 0 else self.meta.pixel_size
+        data, voxel = open_mrc_memmap(filepath)
+        if data.ndim == 2:
+            self._shape_3d = (1, data.shape[0], data.shape[1])
+        else:
+            self._shape_3d = tuple(data.shape)
+        nbytes = data.size * 4
+        if nbytes < self.LAZY_THRESHOLD_BYTES:
+            self._data = np.array(data, dtype=np.float32)
+        else:
+            self._mm = data          # keep the memmap for per-slice reads
+        if voxel[0] > 0:
+            self.meta.pixel_size = voxel[0] * 0.1  # Angstrom -> nm
+            self.meta.pixel_size_from_header = True
+            self.meta.voxel_depth_nm = voxel[2] * 0.1 if voxel[2] > 0 else self.meta.pixel_size
         self.meta.filepath = filepath
         self.meta.filename = filepath.stem
         self.meta.shape    = self._shape_3d[1:]  # (H, W) for 2D compatibility
@@ -156,18 +176,44 @@ class VolumeImage:
 
     # ── DM4Image compatibility shim ───────────────────────────────────────────
 
+    def _read_slice(self, z: int) -> np.ndarray:
+        z = max(0, min(int(z), self.n_slices - 1))
+        if self._data is not None:
+            return np.asarray(self._data[z], dtype=np.float32)
+        ext = self._path.suffix.lower()
+        if ext in self.MRC_EXTS:
+            mm = getattr(self, "_mm", None)
+            if mm is None:
+                mm, _ = open_mrc_memmap(self._path)
+                self._mm = mm
+            return np.array(mm if mm.ndim == 2 else mm[z], dtype=np.float32)
+        import tifffile
+        with tifffile.TiffFile(str(self._path)) as tf:
+            page = tf.pages[0] if len(tf.pages) == 1 else tf.pages[z]
+            return page.asarray().astype(np.float32)
+
     @property
     def raw(self) -> np.ndarray:
-        """Return current 2D slice as float32."""
+        """The displayed 2D image: the current slice, or the mean of `slab` slices around it, optionally smoothed."""
+        k = max(1, int(self.slab))
+        if k > 1 or self.smooth_px > 0:
+            lo = max(0, self._current_z - k // 2); hi = min(self.n_slices, self._current_z + k // 2 + 1)
+            img = np.mean([self._read_slice(z) for z in range(lo, hi)], axis=0, dtype=np.float32)
+            if self.smooth_px > 0:
+                from scipy.ndimage import gaussian_filter
+                img = gaussian_filter(img, self.smooth_px)
+            return img
         if self._data is not None:
             return self._data[self._current_z]
         ext = self._path.suffix.lower()
         if ext in self.MRC_EXTS:
-            import mrcfile
-            with mrcfile.mmap(str(self._path), mode="r") as mrc:
-                if mrc.data.ndim == 2:
-                    return mrc.data.astype(np.float32)
-                return np.array(mrc.data[self._current_z], dtype=np.float32)
+            mm = getattr(self, "_mm", None)
+            if mm is None:
+                mm, _ = open_mrc_memmap(self._path)
+                self._mm = mm
+            if mm.ndim == 2:
+                return np.array(mm, dtype=np.float32)
+            return np.array(mm[self._current_z], dtype=np.float32)
         else:
             import tifffile
             with tifffile.TiffFile(str(self._path)) as tf:
@@ -192,6 +238,34 @@ class VolumeImage:
             return stack.min(axis=0)
         else:  # mean
             return stack.mean(axis=0)
+
+    # ── DM4Image API the canvas and panels probe ──────────────────────────────
+    @property
+    def is_color(self) -> bool:
+        return False
+
+    @property
+    def is_movie(self) -> bool:
+        return False          # z is navigated by the 3D panel, not the movie controls
+
+    @property
+    def n_frames(self) -> int:
+        return 0
+
+    @property
+    def frames(self):
+        return None
+
+    def get_frame(self, i: int) -> np.ndarray:
+        self.set_slice(i)
+        return self.raw
+
+    def summary(self) -> str:
+        z, h, w = self._shape_3d
+        return f"{self.filename}: volume {z} x {h} x {w}, {self.meta.pixel_size:.3f} nm/px"
+
+    def apply_binning(self, *a, **k):
+        raise NotImplementedError("bin the volume on disk; the viewer shows it as stored")
 
     @property
     def pixel_size(self) -> float:

@@ -106,6 +106,8 @@ def generate_nanoparticle_dataset(
     pixel_sizes_a: Iterable[float] = (15.0, 22.0),
     densities: Iterable[str] = ("sparse", "medium", "dense"),
     doses: Iterable[str] = ("low", "medium", "high"),
+    diameter_cv: float = 0.18,
+    defocus_range_um: tuple[float, float] = (-1.0, -2.5),
     splits: tuple[str, ...] = ("train", "val", "test"),
     split_fractions: tuple[float, ...] = (0.7, 0.15, 0.15),
 ) -> list[Path]:
@@ -142,8 +144,8 @@ def generate_nanoparticle_dataset(
             condition = conditions[int(rng.integers(0, len(conditions)))]
             image_seed = seed + index * 2 + 1
             specimen_seed = seed + index * 2 + 2
-            cfg = _config_for_condition(condition, image_size_px)
-            specimen = _specimen_for_condition(condition, rng, seed=specimen_seed)
+            cfg = _config_for_condition(condition, image_size_px, defocus_range_um)
+            specimen = _specimen_for_condition(condition, rng, seed=specimen_seed, diameter_cv=diameter_cv)
             sim = simulate_nanoparticle_micrograph(cfg, specimen, seed=image_seed)
             stem = f"nano_{split}_{local_index:05d}"
             image_path = output_dir / "images" / split / f"{stem}.tif"
@@ -169,6 +171,8 @@ def generate_nanoparticle_dataset(
                 micrograph=sim.micrograph,
                 objects=objects,
             )
+            truth["condition"]["diameter_cv"] = float(diameter_cv)
+            truth["condition"]["defocus_range_um"] = [float(v) for v in defocus_range_um]
             truth_path.write_text(json.dumps(truth, indent=2), encoding="utf-8")
 
             item = {
@@ -212,15 +216,15 @@ def generate_nanoparticle_dataset(
     return written
 
 
-def _config_for_condition(condition: NanoparticleCondition, image_size_px: int) -> dict:
+def _config_for_condition(condition: NanoparticleCondition, image_size_px: int, defocus_range_um: tuple[float, float] = (-1.0, -2.5)) -> dict:
     return resolve(
         {
             "simulation_path": "fast",
             "image_size_px": int(image_size_px),
             "pixel_size_a": float(condition.pixel_size_a),
             "total_dose_e_per_a2": DOSE_SETTINGS[condition.dose],
-            "defocus_min_um": -1.0,
-            "defocus_max_um": -2.5,
+            "defocus_min_um": float(defocus_range_um[0]),
+            "defocus_max_um": float(defocus_range_um[1]),
         }
     )
 
@@ -230,6 +234,7 @@ def _specimen_for_condition(
     rng: np.random.Generator,
     *,
     seed: int,
+    diameter_cv: float = 0.18,
 ) -> Specimen:
     lo, hi = DENSITY_PARTICLE_RANGES[condition.density]
     n_particles = int(rng.integers(lo, hi + 1))
@@ -238,7 +243,7 @@ def _specimen_for_condition(
         ice_thickness_nm=60.0,
         n_particles=n_particles,
         diameter_nm_mean=float(condition.diameter_nm),
-        diameter_nm_sd=max(1.0, float(condition.diameter_nm) * 0.18),
+        diameter_nm_sd=max(0.0, float(condition.diameter_nm) * float(diameter_cv)),
         solvent_noise=5.0,
         solvent_corr_a=3.5,
         allow_overlap=False,
@@ -391,6 +396,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--pixel-sizes-a", type=float, nargs="+", default=(15.0, 22.0))
     parser.add_argument("--densities", nargs="+", default=("sparse", "medium", "dense"))
     parser.add_argument("--doses", nargs="+", default=("low", "medium", "high"))
+    parser.add_argument("--diameter-cv", type=float, default=0.18, help="Coefficient of variation of the true diameter distribution.")
+    parser.add_argument("--defocus-range-um", type=float, nargs=2, default=(-1.0, -2.5))
     args = parser.parse_args(argv)
 
     paths = generate_nanoparticle_dataset(
@@ -402,6 +409,8 @@ def main(argv: list[str] | None = None) -> int:
         pixel_sizes_a=args.pixel_sizes_a,
         densities=args.densities,
         doses=args.doses,
+        diameter_cv=args.diameter_cv,
+        defocus_range_um=tuple(args.defocus_range_um),
     )
     print(f"Wrote {len(paths)} nanoparticle images plus labels, truth, and manifests to {args.output}")
     return 0

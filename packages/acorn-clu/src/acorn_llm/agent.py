@@ -1205,6 +1205,12 @@ def build_system_prompt(state: dict) -> str:
             img_info += f" ({shape[-1]}×{shape[-2]} px)"
         if px and px > 0:
             img_info += f", {px:.4f} nm/px"
+        if "czi_selection" in state:
+            selection = state["czi_selection"]
+            channels = state.get("czi_channels", [])
+            offset = selection.get("C", 0) - state.get("czi_channel_start", 0)
+            name = channels[offset] if 0 <= offset < len(channels) else str(selection.get("C", 0))
+            img_info += f", CZI channel {name}, selected axes {selection}"
 
     workspace = state.get("workspace")
     if workspace:
@@ -1434,6 +1440,7 @@ You are proactive: if a prerequisite is missing (model not loaded, no image open
 - Export dataset dir and train dataset dir must be the same path.
 
 ## Common multi-step workflows
+**CZI / fluorescence microscopy**: ACORN opens CZI directly and chooses the GFP channel if exactly one is named, otherwise the first. Users can choose another via Microscopy → Choose CZI channel before annotating. It selects the first scene, time point and Z plane; do not claim all channels or Z planes were analyzed. For bright objects the user can choose Microscopy → Annotate bright objects (Otsu + watershed), then review and edit the suggested ROIs before measuring. These menu actions are not CLU tools: explain how to run them rather than claiming you ran them. Check pixel calibration before reporting physical sizes. Use manual annotations or a fluorescence-validated segmentation model; an SEM-trained detector is not validated for fluorescence. Retain the original CZI, annotations and exported measurements.
 **"Run CryoBLOB / cryoblob" or "detect blobs/particles/nanoparticles/vesicles/filaments"**: call run_cryoblob directly. This is classical JAX/GPU detection — do NOT call load_sam for CryoBLOB; they are different tools (CryoBLOB needs no SAM model and no ~30s load). Choosing mode: if the user just generated TEM/FIB simulation images and wants CryoBLOB on "them"/"those"/"all", pass mode="folder" with folder=<the images/ subfolder of the generation output dir> (you know it from the generate_* result) — this works even if the images aren't currently loaded. Use mode="loaded" only when images are already open in the app, and mode="current" for just the open image. If run_cryoblob reports no images found, retry with mode="folder" and the correct folder path.
 
 **"Find / segment X"**: load_sam if needed → run_sam_auto(label=X) → accept_annotations → report count

@@ -115,6 +115,10 @@ acorn-gui = "acorn.gui.main_window:launch"
 # takes them from packages/ instead, which makes `uv pip install ".[lab]"` work from
 # a checkout. Plain pip ignores it — install those with an explicit path:
 #     pip install -e . -e packages/acorn-analysis -e packages/acorn-plotting  ...
+[tool.uv]
+# pyrender pins PyOpenGL==3.1.0 but runs fine on current releases; napari needs >=3.1.10.
+override-dependencies = ["pyopengl>=3.1.10"]
+
 [tool.uv.sources]
 acorn-analysis = { path = "packages/acorn-analysis", editable = true }
 acorn-spatial  = { path = "packages/acorn-spatial",  editable = true }

@@ -63,6 +63,8 @@ def generate_spore_dataset(
     seed: int = 0,
     image_size_px: int = 640,
     conditions: Iterable[SporeCondition] | None = None,
+    coating: str = "random",
+    charging: float | None = None,
     splits: tuple[str, ...] = ("train", "val", "test"),
     split_fractions: tuple[float, ...] = (0.7, 0.15, 0.15),
 ) -> list[Path]:
@@ -76,6 +78,8 @@ def generate_spore_dataset(
     if not condition_list:
         raise ValueError("at least one spore condition is required")
     _validate_conditions(condition_list)
+    if coating not in ("random", "none", "gold"):
+        raise ValueError(f"coating must be 'random', 'none' or 'gold', got {coating!r}")
 
     rng = np.random.default_rng(seed)
     split_counts = _split_counts(count, splits, split_fractions)
@@ -92,7 +96,7 @@ def generate_spore_dataset(
         split_manifest: list[dict] = []
         for local_index in range(split_counts[split]):
             condition = condition_list[int(rng.integers(0, len(condition_list)))]
-            params = _params_for_condition(condition, rng, image_size_px)
+            params = _params_for_condition(condition, rng, image_size_px, coating=coating, charging=charging)
             scene_seed = seed + index * 2 + 1
             image_seed = seed + index * 2 + 2
             scene = SC.build("spores", seed=scene_seed, **params["scene"])
@@ -169,12 +173,21 @@ def _params_for_condition(
     condition: SporeCondition,
     rng: np.random.Generator,
     image_size_px: int,
+    *,
+    coating: str = "random",
+    charging: float | None = None,
 ) -> dict:
+    """Scene, beam and detector for one image.
+
+    ``coating="random"`` and ``charging=None`` keep the original mixed
+    benchmark, image for image. A controlled study fixes both.
+    """
     length_nm, width_nm = SIZE_CLASSES_NM[condition.size_class]
     fov_um = image_size_px * condition.pixel_size_nm / 1000.0
     density = float(rng.uniform(0.28, 0.85))
     n_spores = int(np.clip(round(density * fov_um * fov_um), 4, 120))
-    coated = bool(rng.random() < 0.45)
+    draw = rng.random()
+    coated = bool(draw < 0.45) if coating == "random" else coating == "gold"
     beam = I.Beam(
         E0_kev=float(rng.uniform(3.0, 6.0)) if coated else float(rng.uniform(0.8, 1.5)),
         pixel_size_nm=float(condition.pixel_size_nm),
@@ -183,7 +196,7 @@ def _params_for_condition(
     )
     detector = I.Detector(
         "TLD",
-        charging=0.0 if coated else float(rng.choice([0.0, 0.0, 0.4, 0.8])),
+        charging=_charging(coated, rng, charging),
         shadowing=float(rng.uniform(0.25, 0.7)),
         azimuth_deg=float(rng.uniform(0, 360)),
         elevation_deg=float(rng.uniform(15, 40)),
@@ -206,6 +219,11 @@ def _params_for_condition(
         "stacking": float(rng.uniform(0.4, 1.0)),
     }
     return {"scene": scene, "beam": beam, "detector": detector, "n_electrons": 9000}
+
+
+def _charging(coated: bool, rng: np.random.Generator, fixed: float | None) -> float:
+    drawn = 0.0 if coated else float(rng.choice([0.0, 0.0, 0.4, 0.8]))
+    return drawn if fixed is None else float(fixed)
 
 
 def _truth_payload(
@@ -375,6 +393,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--count", type=int, default=30)
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--image-size", type=int, default=640)
+    parser.add_argument("--coating", choices=("random", "none", "gold"), default="random")
+    parser.add_argument("--charging", type=float, default=None, help="Fixed charging strength; omit for the random mix.")
     args = parser.parse_args(argv)
 
     paths = generate_spore_dataset(
@@ -382,6 +402,8 @@ def main(argv: list[str] | None = None) -> int:
         args.count,
         seed=args.seed,
         image_size_px=args.image_size,
+        coating=args.coating,
+        charging=args.charging,
     )
     print(f"Wrote {len(paths)} spore images plus labels, truth, and manifests to {args.output}")
     return 0

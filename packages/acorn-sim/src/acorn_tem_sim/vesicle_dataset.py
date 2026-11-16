@@ -123,6 +123,9 @@ def generate_vesicle_dataset(
     pixel_sizes_a: Iterable[float] = (10.0, 20.0),
     densities: Iterable[str] = ("sparse", "medium", "dense"),
     contrasts: Iterable[str] = ("low", "high"),
+    diameter_cv: float = 0.08,
+    defocus_range_um: tuple[float, float] = (-1.0, -2.5),
+    lamellae: int = 1,
     splits: tuple[str, ...] = ("train", "val", "test"),
     split_fractions: tuple[float, ...] = (0.7, 0.15, 0.15),
 ) -> list[Path]:
@@ -148,6 +151,8 @@ def generate_vesicle_dataset(
     if not conditions:
         raise ValueError("at least one vesicle condition is required")
     _validate_conditions(conditions)
+    if lamellae not in (1, 3):
+        raise ValueError("lamellae must be 1 (unilamellar) or 3 (multilamellar, every vesicle with all three bilayers)")
 
     rng = np.random.default_rng(seed)
     split_counts = _split_counts(count, splits, split_fractions)
@@ -166,12 +171,14 @@ def generate_vesicle_dataset(
             condition = conditions[int(rng.integers(0, len(conditions)))]
             image_seed = seed + index * 2 + 1
             specimen_seed = seed + index * 2 + 2
-            cfg = _config_for_condition(condition, image_size_px)
+            cfg = _config_for_condition(condition, image_size_px, defocus_range_um)
             specimen = _specimen_for_condition(
                 condition,
                 rng,
                 seed=specimen_seed,
                 membrane_thickness_nm=membrane_thickness_nm,
+                diameter_cv=diameter_cv,
+                lamellae=lamellae,
             )
             sim = simulate_vesicle_micrograph(cfg, specimen, seed=image_seed)
             stem = f"vesicle_{split}_{local_index:05d}"
@@ -198,6 +205,8 @@ def generate_vesicle_dataset(
                 micrograph=sim.micrograph,
                 objects=objects,
             )
+            truth["condition"]["diameter_cv"] = float(diameter_cv)
+            truth["condition"]["defocus_range_um"] = [float(v) for v in defocus_range_um]
             truth_path.write_text(json.dumps(truth, indent=2), encoding="utf-8")
 
             item = {
@@ -245,7 +254,7 @@ def generate_vesicle_dataset(
     return written
 
 
-def _config_for_condition(condition: VesicleCondition, image_size_px: int) -> dict:
+def _config_for_condition(condition: VesicleCondition, image_size_px: int, defocus_range_um: tuple[float, float] = (-1.0, -2.5)) -> dict:
     contrast = CONTRAST_SETTINGS[condition.contrast]
     return resolve(
         {
@@ -253,8 +262,8 @@ def _config_for_condition(condition: VesicleCondition, image_size_px: int) -> di
             "image_size_px": int(image_size_px),
             "pixel_size_a": float(condition.pixel_size_a),
             "total_dose_e_per_a2": contrast["dose_e_per_a2"],
-            "defocus_min_um": -1.0,
-            "defocus_max_um": -2.5,
+            "defocus_min_um": float(defocus_range_um[0]),
+            "defocus_max_um": float(defocus_range_um[1]),
         }
     )
 
@@ -275,16 +284,19 @@ def _specimen_for_condition(
     *,
     seed: int,
     membrane_thickness_nm: float,
+    diameter_cv: float = 0.08,
+    lamellae: int = 1,
 ) -> Specimen:
     lo, hi = DENSITY_PARTICLE_RANGES[condition.density]
     contrast = CONTRAST_SETTINGS[condition.contrast]
     n_particles = int(rng.integers(lo, hi + 1))
     return Specimen(
-        kind="lipid_single",
+        kind="lipid_single" if lamellae == 1 else "lipid_multi",
+        min_lamellae=int(lamellae),
         ice_thickness_nm=40.0,
         n_particles=n_particles,
         diameter_nm_mean=float(condition.outer_diameter_nm),
-        diameter_nm_sd=max(1.0, float(condition.outer_diameter_nm) * 0.08),
+        diameter_nm_sd=max(0.0, float(condition.outer_diameter_nm) * float(diameter_cv)),
         membrane_thickness_nm=float(membrane_thickness_nm),
         solvent_noise=contrast["solvent_noise"],
         solvent_corr_a=3.5,
@@ -464,6 +476,10 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--pixel-sizes-a", type=float, nargs="+", default=(10.0, 20.0))
     parser.add_argument("--densities", nargs="+", default=("sparse", "medium", "dense"))
     parser.add_argument("--contrasts", nargs="+", default=("low", "high"))
+    parser.add_argument("--lamellae", type=int, choices=(1, 3), default=1,
+                        help="3 places only vesicles with all three bilayers drawn.")
+    parser.add_argument("--diameter-cv", type=float, default=0.08, help="Coefficient of variation of the true diameter distribution.")
+    parser.add_argument("--defocus-range-um", type=float, nargs=2, default=(-1.0, -2.5))
     args = parser.parse_args(argv)
 
     paths = generate_vesicle_dataset(
@@ -476,6 +492,9 @@ def main(argv: list[str] | None = None) -> int:
         pixel_sizes_a=args.pixel_sizes_a,
         densities=args.densities,
         contrasts=args.contrasts,
+        lamellae=args.lamellae,
+        diameter_cv=args.diameter_cv,
+        defocus_range_um=tuple(args.defocus_range_um),
     )
     print(f"Wrote {len(paths)} vesicle images plus labels, truth, and manifests to {args.output}")
     return 0

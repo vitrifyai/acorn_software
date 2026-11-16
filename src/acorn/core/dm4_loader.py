@@ -276,7 +276,8 @@ class DM4Image:
         self.meta.shape = self.raw.shape
 
     @classmethod
-    def from_file(cls, filepath: str | Path, bin_factor: int = 1) -> "DM4Image":
+    def from_file(cls, filepath: str | Path, bin_factor: int = 1, *, czi_channel: int | None = None,
+                  czi_z: int | None = None, czi_time: int | None = None) -> "DM4Image":
         """Load any supported format. Dispatches by file extension.
 
         `bin_factor` bins for ANALYSIS, not for display: the returned array is
@@ -296,6 +297,8 @@ class DM4Image:
             obj._load_hdf5(p)
         elif ext in IMAGE_EXTS:
             obj._load_image(p)
+        elif ext == ".czi":
+            obj._load_czi(p, channel=czi_channel, z=czi_z, time=czi_time)
         else:
             raise ValueError(
                 f"Unsupported file format: {ext!r}\n"
@@ -316,6 +319,78 @@ class DM4Image:
         pass
 
     # ── format loaders ────────────────────────────────────────────────────────
+
+    def _load_czi(self, filepath: Path, *, channel: int | None = None,
+                  z: int | None = None, time: int | None = None) -> None:
+        """Open one CZI channel, time point and Z plane in the first scene."""
+        try:
+            from aicspylibczi import CziFile
+        except ImportError as exc:
+            raise ImportError("CZI support requires aicspylibczi") from exc
+        czi = CziFile(str(filepath))
+        shapes = czi.get_dims_shape()
+        if len(shapes) != 1:
+            raise ValueError("CZI has multiple scenes with different dimensions; select a scene before analysis")
+        shape = shapes[0]
+        if "M" in shape and shape["M"][1] - shape["M"][0] > 1:
+            raise ValueError("Mosaic CZI images require stitching before analysis")
+        selections = {axis: bounds[0] for axis, bounds in shape.items()
+                      if axis not in {"X", "Y", "A"}}
+        default_selections = dict(selections)
+        for axis, requested in (("Z", z), ("T", time)):
+            if axis in shape and requested is not None:
+                start, end = shape[axis]
+                if not start <= requested < end:
+                    raise ValueError(f"CZI {axis} selection {requested} is out of range")
+                selections[axis] = requested
+        channels = [ch.get("Name") or ch.get("Id") or f"Channel {i+1}"
+                    for i, ch in enumerate(czi.meta.findall(
+                        ".//Information/Image/Dimensions/Channels/Channel"))]
+        if "C" in shape:
+            start, end = shape["C"]
+            if channel is None:
+                matches = [i for i, name in enumerate(channels) if "gfp" in name.lower()]
+                channel = start + matches[0] if len(matches) == 1 else start
+            if not start <= channel < end:
+                raise ValueError(f"CZI channel {channel} is out of range")
+            selections["C"] = channel
+            default_selections["C"] = channel
+        pixels, dims = czi.read_image(**selections)
+        axes = [axis for axis, _ in dims]
+        for axis in reversed(range(len(axes))):
+            if axes[axis] not in {"X", "Y"}:
+                if pixels.shape[axis] != 1:
+                    raise ValueError(f"Unsupported CZI dimension {axes[axis]}")
+                pixels = np.take(pixels, 0, axis=axis)
+                axes.pop(axis)
+        if axes == ["X", "Y"]:
+            pixels = pixels.T
+        elif axes != ["Y", "X"]:
+            raise ValueError(f"Unsupported CZI axes: {axes}")
+        self.raw = pixels.astype(np.float32)
+        self.meta.filepath = filepath
+        self.meta.filename = filepath.stem
+        self.meta.shape = self.raw.shape
+        self.meta.raw_dtype = str(pixels.dtype)
+        self.meta.all_tags = {"czi_dimensions": str(shape), "czi_selection": selections,
+                              "czi_default_selection": default_selections,
+                              "czi_channels": channels,
+                              "czi_channel_start": shape.get("C", (0, 1))[0],
+                              "czi_channel_count": shape.get("C", (0, 1))[1] - shape.get("C", (0, 1))[0],
+                              "czi_z_start": shape.get("Z", (0, 1))[0],
+                              "czi_z_count": shape.get("Z", (0, 1))[1] - shape.get("Z", (0, 1))[0],
+                              "czi_time_start": shape.get("T", (0, 1))[0],
+                              "czi_time_count": shape.get("T", (0, 1))[1] - shape.get("T", (0, 1))[0]}
+        scales = []
+        for axis in ("X", "Y"):
+            node = czi.meta.find(f'.//Scaling/Items/Distance[@Id="{axis}"]/Value')
+            try:
+                scales.append(float(node.text) * 1e9 if node is not None else None)
+            except (TypeError, ValueError):
+                scales.append(None)
+        if all(x is not None and x > 0 for x in scales) and np.isclose(scales[0], scales[1], rtol=0.001):
+            self.meta.pixel_size = scales[0]
+            self.meta.pixel_size_from_header = True
 
     def _load_dm4(self, filepath: Path) -> None:
         import ncempy.io as nio

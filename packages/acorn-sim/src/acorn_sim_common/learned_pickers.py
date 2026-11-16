@@ -13,7 +13,7 @@ import tifffile
 import yaml
 from PIL import Image
 
-from acorn_sim_common.classical_pickers import _dataset_items
+from acorn_sim_common.classical_pickers import _dataset_items, mask_outline
 
 
 def train_yolo(
@@ -73,9 +73,19 @@ def predict_yolo(
     model = YOLO(str(weights))
     written: list[Path] = []
     for item in items:
+        rgb = _read_rgb(item.image_path)
+        size = int(imgsz)
+        if size <= 0:
+            # Native resolution: pad bottom/right to the network stride so the
+            # letterbox scale is exactly 1 and objects keep the pixel size the
+            # model was trained at. Padding adds no image content.
+            h, w = rgb.shape[:2]
+            ph, pw = (-h) % 32, (-w) % 32
+            rgb = np.pad(rgb, ((0, ph), (0, pw), (0, 0)), mode="edge")
+            size = [h + ph, w + pw]
         results = model.predict(
-            source=_read_rgb(item.image_path),
-            imgsz=int(imgsz),
+            source=rgb,
+            imgsz=size,
             conf=float(conf),
             iou=float(iou),
             device=str(device),
@@ -151,11 +161,18 @@ def predict_sam_points(
     model_type: str = "vit_h",
     device: str = "cpu",
     splits: tuple[str, ...] | None = None,
+    max_area_fraction: float = 0.05,
 ) -> list[Path]:
     """Prompt SAM once at each simulated truth center.
 
     This intentionally measures SAM boundary behavior given a correct object
-    prompt. It is not an independent detection score.
+    prompt, so B_det is zero by construction and the bias is all delineation.
+    It is not an independent detection score.
+
+    SAM returns three nested candidates per point and its own score usually
+    favours the largest, which on a sparse field is the whole image. The
+    candidate is chosen by score among those covering at most
+    ``max_area_fraction`` of the image; the rule uses no truth size.
     """
 
     import torch
@@ -185,7 +202,7 @@ def predict_sam_points(
                         point_labels=labels,
                         multimask_output=True,
                     )
-                idx = int(np.argmax(scores))
+                idx = _choose_point_mask(masks, scores, max_area_fraction=max_area_fraction, point_xy=point[0])
                 pred = _prediction_from_mask(
                     masks[idx].astype(bool),
                     item.pixel_size_nm,
@@ -219,6 +236,88 @@ def predict_sam_points(
             torch.cuda.empty_cache()
     _write_manifest(output_dir, "sam-point-truth-center", class_name, dataset_dir, written)
     return written
+
+
+def predict_sam3_text(
+    dataset_dir: Path,
+    output_dir: Path,
+    *,
+    class_name: str,
+    prompt: str,
+    confidence: float = 0.5,
+    checkpoint: Path | None = None,
+    device: str = "cuda",
+    splits: tuple[str, ...] | None = None,
+) -> list[Path]:
+    """Segment every image with one literal SAM 3 text prompt.
+
+    The prompt is fixed in advance and sent without vocabulary remapping, so
+    it is a stated method parameter rather than something tuned per image.
+    """
+
+    import torch
+    from PIL import Image as _Image
+
+    from acorn.core.sam_predictor import SAMPredictor
+
+    dataset_dir = Path(dataset_dir)
+    output_dir = Path(output_dir)
+    predictor = SAMPredictor(backend="sam3", checkpoint_path=checkpoint, device=device)
+    predictor.load_model()
+    proc = predictor._sam3_processor
+    proc.set_confidence_threshold(float(confidence))
+    written: list[Path] = []
+    for item in _dataset_items(dataset_dir, splits=splits):
+        rgb = _read_rgb(item.image_path)
+        with torch.inference_mode():
+            state = proc.set_image(_Image.fromarray(rgb))
+            out = proc.set_text_prompt(prompt, state)
+        predictions = []
+        masks = out.get("masks")
+        scores = out.get("scores")
+        for k, m in enumerate([] if masks is None else masks):
+            mask = np.asarray(m.squeeze().float().cpu().numpy() > 0.5, dtype=bool)
+            score = None if scores is None else float(scores[k])
+            pred = _prediction_from_mask(mask, item.pixel_size_nm, class_name=class_name, score=score, source="sam3-text")
+            if pred is not None:
+                predictions.append(pred)
+        payload = {
+            "stem": item.stem,
+            "method": "sam3-text",
+            "class_name": class_name,
+            "prompt": prompt,
+            "confidence": float(confidence),
+            "pixel_size_nm": item.pixel_size_nm,
+            "source_image": str(item.image_path),
+            "predictions": predictions,
+        }
+        out_path = output_dir / item.split / f"{item.stem}.json"
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        out_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+        written.append(out_path)
+    _write_manifest(output_dir, "sam3-text", class_name, dataset_dir, written)
+    return written
+
+
+def _choose_point_mask(
+    masks: np.ndarray,
+    scores: np.ndarray,
+    *,
+    max_area_fraction: float,
+    point_xy: np.ndarray | None = None,
+) -> int:
+    areas = np.asarray([np.count_nonzero(m) for m in masks], dtype=float)
+    allowed = areas <= max_area_fraction * masks[0].size
+    if point_xy is not None:
+        x, y = (int(round(float(v))) for v in point_xy)
+        h, w = masks[0].shape
+        if 0 <= y < h and 0 <= x < w:
+            covers = np.asarray([bool(m[y, x]) for m in masks])
+            if (allowed & covers).any():
+                allowed = allowed & covers
+    if not allowed.any():
+        return int(np.argmin(areas))
+    return int(np.flatnonzero(allowed)[np.argmax(np.asarray(scores)[allowed])])
 
 
 def _predictions_from_yolo_result(result, pixel_size_nm: float, class_name: str, *, class_id: int = 0) -> list[dict]:
@@ -263,6 +362,7 @@ def _prediction_from_mask(
         "cy_px": float(ys.mean()),
         "diameter_nm": float(2.0 * math.sqrt(area_px / math.pi) * pixel_size_nm),
         "area_px": area_px,
+        "polygon": mask_outline(mask),
         "score": score,
         "source": source,
     }
@@ -333,7 +433,7 @@ def main(argv: list[str] | None = None) -> int:
     ypred.add_argument("--weights", required=True, type=Path)
     ypred.add_argument("--output", required=True, type=Path)
     ypred.add_argument("--class-name", required=True)
-    ypred.add_argument("--imgsz", type=int, default=256)
+    ypred.add_argument("--imgsz", type=int, default=256, help="0 = native resolution (no rescaling).")
     ypred.add_argument("--conf", type=float, default=0.15)
     ypred.add_argument("--iou", type=float, default=0.50)
     ypred.add_argument("--device", default="cpu")
@@ -348,6 +448,17 @@ def main(argv: list[str] | None = None) -> int:
     sam.add_argument("--model-type", default="vit_h")
     sam.add_argument("--device", default="cpu")
     sam.add_argument("--splits", nargs="+", default=None)
+    sam.add_argument("--max-area-fraction", type=float, default=0.05)
+
+    sam3 = sub.add_parser("predict-sam3-text")
+    sam3.add_argument("--dataset", required=True, type=Path)
+    sam3.add_argument("--output", required=True, type=Path)
+    sam3.add_argument("--class-name", required=True)
+    sam3.add_argument("--prompt", required=True, help="Literal text prompt, sent unchanged.")
+    sam3.add_argument("--confidence", type=float, default=0.5)
+    sam3.add_argument("--checkpoint", type=Path, default=None)
+    sam3.add_argument("--device", default="cuda")
+    sam3.add_argument("--splits", nargs="+", default=None)
 
     args = parser.parse_args(argv)
     if args.cmd == "train-yolo":
@@ -388,8 +499,22 @@ def main(argv: list[str] | None = None) -> int:
             model_type=args.model_type,
             device=args.device,
             splits=None if args.splits is None else tuple(args.splits),
+            max_area_fraction=args.max_area_fraction,
         )
         print(f"Wrote {len(paths)} SAM point-prompt prediction files to {args.output}")
+        return 0
+    if args.cmd == "predict-sam3-text":
+        paths = predict_sam3_text(
+            args.dataset,
+            args.output,
+            class_name=args.class_name,
+            prompt=args.prompt,
+            confidence=args.confidence,
+            checkpoint=args.checkpoint,
+            device=args.device,
+            splits=None if args.splits is None else tuple(args.splits),
+        )
+        print(f"Wrote {len(paths)} SAM 3 text-prompt prediction files to {args.output}")
         return 0
     raise AssertionError(args.cmd)
 

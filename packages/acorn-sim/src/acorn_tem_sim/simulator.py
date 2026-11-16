@@ -137,6 +137,9 @@ class Specimen:
     protein_mip_v: float = MIP_PROTEIN
     bacteria_mip_v: float = MIP_BACTERIA
     membrane_thickness_nm: float = 4.0
+    # Lipid vesicles drawn with fewer complete bilayers than this are not
+    # placed, so a multilamellar specimen holds only truly multilamellar objects.
+    min_lamellae: int = 1
     oligomer_count: int = 1
     pdb_path: str = ""
     solvent_noise: float = 6.0
@@ -246,11 +249,16 @@ def _place_lipid_vesicles(v_proj: np.ndarray, label: np.ndarray, pixel_size_a: f
         cy, cx = rng.uniform(0, v_proj.shape[0]), rng.uniform(0, v_proj.shape[1])
         if not specimen.allow_overlap and any(np.hypot(cy - py, cx - px) < (r_outer + pr) for py, px, pr in placed):
             continue
-        for layer in range(layers):
+        # A bilayer is drawn only if its inner edge stays above 2 px, so count
+        # what will actually appear before placing anything. A vesicle with no
+        # drawable bilayer used to be recorded in the truth while nothing was
+        # drawn, which charged every method with missing an invisible object.
+        drawn = sum(1 for layer in range(layers) if r_outer - layer * spacing_px - thickness_px > 2)
+        if drawn < max(1, int(specimen.min_lamellae)):
+            continue
+        for layer in range(drawn):
             r1 = r_outer - layer * spacing_px
             r0 = r1 - thickness_px
-            if r0 <= 2:
-                break
             dist2 = (yy - cy) ** 2 + (xx - cx) ** 2
             outer = np.zeros(v_proj.shape, dtype=np.float32)
             inner = np.zeros(v_proj.shape, dtype=np.float32)
@@ -274,7 +282,7 @@ def _place_lipid_vesicles(v_proj: np.ndarray, label: np.ndarray, pixel_size_a: f
                         "d_bilayer_mid_nm": float(2.0 * (r_outer - 0.5 * thickness_px) * _nm),
                         "d_inner_leaflet_nm": float(2.0 * (r_outer - thickness_px) * _nm),
                         "membrane_thickness_nm": float(thickness_px * _nm),
-                        "n_lamellae": int(layers),
+                        "n_lamellae": int(drawn),
                         "ecd_nm": float(2.0 * r_outer * _nm)})
     return records
 

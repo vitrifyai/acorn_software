@@ -13,7 +13,7 @@ import tifffile
 from scipy import ndimage
 from skimage.feature import blob_log, peak_local_max
 from skimage.filters import gaussian, threshold_otsu
-from skimage.measure import regionprops
+from skimage.measure import find_contours, regionprops
 from skimage.morphology import remove_small_holes, remove_small_objects
 from skimage.segmentation import watershed
 
@@ -41,7 +41,15 @@ def run_picker(
     threshold_rel: float = 0.08,
     max_detections: int = 300,
     splits: tuple[str, ...] | None = None,
+    smooth_fraction: float | None = None,
 ) -> list[Path]:
+    """Run one classical picker over a dataset.
+
+    ``smooth_fraction`` sets the pre-detection Gaussian blur to that fraction
+    of the nominal diameter (the geometric centre of the size window), so the
+    same rule suits 30 nm particles at 1 nm/px and micrometre spores. ``None``
+    keeps the original fixed blur (sigma 1 px threshold, 2 px CryoBLOB).
+    """
     dataset_dir = Path(dataset_dir)
     output_dir = Path(output_dir)
     items = _dataset_items(dataset_dir, splits=splits)
@@ -59,6 +67,7 @@ def run_picker(
                 max_detections=max_detections,
                 class_name=class_name,
                 polarity=polarity,
+                gblur_px=_smooth_px(lo_nm, hi_nm, item.pixel_size_nm, smooth_fraction, default=2.0),
             )
         elif method == "log":
             predictions = _predict_log(
@@ -80,6 +89,7 @@ def run_picker(
                 max_detections=max_detections,
                 class_name=class_name,
                 polarity=polarity,
+                smooth_sigma_px=_smooth_px(lo_nm, hi_nm, item.pixel_size_nm, smooth_fraction, default=1.0),
             )
         else:
             raise ValueError(f"unknown method {method!r}")
@@ -192,6 +202,12 @@ def _diameter_window(
     )
 
 
+def _smooth_px(lo_nm: float, hi_nm: float, pixel_size_nm: float, fraction: float | None, *, default: float) -> float:
+    if fraction is None:
+        return default
+    return max(default, fraction * math.sqrt(lo_nm * hi_nm) / pixel_size_nm)
+
+
 def _predict_cryoblob_log(
     *,
     image_path: Path,
@@ -202,6 +218,7 @@ def _predict_cryoblob_log(
     max_detections: int,
     class_name: str,
     polarity: str,
+    gblur_px: float = 2.0,
 ) -> list[dict]:
     from acorn_cryoblob.thread import _process_single_file
 
@@ -228,7 +245,7 @@ def _predict_cryoblob_log(
         stream_large_files=False,
         exponential=False,
         logarizer=False,
-        gblur=2,
+        gblur=gblur_px,
         background=0,
         apply_filter=0,
         cache_results=False,
@@ -300,12 +317,13 @@ def _predict_threshold_watershed(
     max_detections: int,
     class_name: str,
     polarity: str,
+    smooth_sigma_px: float = 1.0,
 ) -> list[dict]:
     min_area_px = math.pi * (min_diameter_nm / (2.0 * pixel_size_nm)) ** 2
     max_area_px = math.pi * (max_diameter_nm / (2.0 * pixel_size_nm)) ** 2
     candidates = []
     for use_polarity in _polarities(polarity):
-        work = gaussian(_polarity_image(image, use_polarity), sigma=1.0, preserve_range=True)
+        work = gaussian(_polarity_image(image, use_polarity), sigma=smooth_sigma_px, preserve_range=True)
         try:
             thresh = threshold_otsu(work)
         except ValueError:
@@ -341,6 +359,7 @@ def _predict_threshold_watershed(
                     "cx_px": float(cx),
                     "cy_px": float(cy),
                     "diameter_nm": float(diameter_nm),
+                    "polygon": mask_outline(labels == prop.label),
                     "score": None,
                     "source": f"threshold-watershed-{use_polarity}",
                 }
@@ -359,6 +378,20 @@ def _diameter_nm_to_sigma_px(
     min_sigma = max(0.8, min_diameter_nm / (2.0 * math.sqrt(2.0) * pixel_size_nm))
     max_sigma = max(min_sigma + 0.1, max_diameter_nm / (2.0 * math.sqrt(2.0) * pixel_size_nm))
     return min_sigma, max_sigma
+
+
+def mask_outline(mask: np.ndarray) -> list[list[float]]:
+    """Outer boundary of a binary mask as (x, y) points.
+
+    The contour runs half a pixel outside the outermost pixel centres, so its
+    enclosed area equals the pixel count to within the corner rounding.
+    """
+
+    contours = find_contours(np.pad(mask, 1).astype(np.float32), 0.5)
+    if not contours:
+        return []
+    outline = max(contours, key=len) - 1.0
+    return [[float(x), float(y)] for y, x in outline]
 
 
 def _polarities(polarity: str) -> tuple[str, ...]:
@@ -387,6 +420,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--threshold-rel", type=float, default=0.08)
     parser.add_argument("--max-detections", type=int, default=300)
     parser.add_argument("--splits", nargs="+", default=None)
+    parser.add_argument("--smooth-fraction", type=float, default=None,
+                        help="Gaussian blur as a fraction of the nominal diameter; omit for the original fixed blur.")
     args = parser.parse_args(argv)
 
     paths = run_picker(
@@ -400,6 +435,7 @@ def main(argv: list[str] | None = None) -> int:
         threshold_rel=args.threshold_rel,
         max_detections=args.max_detections,
         splits=None if args.splits is None else tuple(args.splits),
+        smooth_fraction=args.smooth_fraction,
     )
     print(f"Wrote {len(paths)} {args.method} prediction files to {args.output}")
     return 0
