@@ -472,15 +472,31 @@ The editable dev install means changes to `.py` files are live immediately with 
 
 ## AI models
 
-### SAM 3, SAM 2, and micro-SAM
+### SAM 3, SAM 2, micro-SAM, and micro-SAM 2
 
-ACORN supports three SAM backends, selected automatically at load time:
+ACORN offers separate SAM backends in the Annotate workspace. The existing
+SAM 3, SAM 2, and micro-SAM options remain available; micro-SAM 2 is an
+additional selectable microscopy-tuned SAM2 backend:
 
 | Backend | Package | Notes |
 |---------|---------|-------|
 | **SAM 3** | `pip install sam3` | Recommended: fastest, best cryo-EM accuracy |
 | **SAM 2** | `pip install sam2` | Fallback if SAM 3 is not installed; same HF checkpoints |
-| **micro-SAM** | bundled | Fine-tuned for EM/LM; no HF login required |
+| **micro-SAM (SAM1)** | `uv pip install ".[usam]"` | Fine-tuned EM/LM SAM1 checkpoints |
+| **micro-SAM 2** | `uv pip install ".[microsam2]"` | Microscopy-tuned SAM2 models, including EM mitochondria and nuclei |
+
+To install all annotation models, including micro-SAM 2, use
+`uv sync --extra annotate` or the normal full ACORN installer. In the Annotate
+panel choose **micro-SAM 2 (μSAM2)** and select a model such as
+`hvit_t_cells` (general microscopy), `hvit_s_em_mito` (EM mitochondria), or
+`hvit_s_em_nuclei` (EM nuclei). Model weights download on first use and are
+cached under `MICROSAM_CACHEDIR`; on the shared install this is
+`/opt/acorn/models/micro_sam`.
+
+The official micro-SAM 2 package uses PyTorch 2.5 or newer. For GPU operation,
+install a PyTorch build compatible with the machine's GPU before installing
+the extra; CPU inference remains available but is slower. ACORN's full install
+selects its configured PyTorch CUDA index on Linux and Windows.
 
 SAM 3 and SAM 2 checkpoints are hosted on HuggingFace and require accepting Meta's license
 agreement before the first download. Log in at [huggingface.co](https://huggingface.co),
@@ -518,6 +534,9 @@ python download_models.py --list                 # show status without downloadi
 
 | Model | Backend | Size | Notes |
 |-------|---------|------|-------|
+| hvit_t_cells | micro-SAM 2 | On first use | Default microscopy-tuned model |
+| hvit_s_em_mito | micro-SAM 2 | On first use | Mitochondria in EM |
+| hvit_s_em_nuclei | micro-SAM 2 | On first use | Nuclei in EM |
 | vit_b_em_organelles | micro-SAM | 375 MB | EM organelles; recommended for cryo-EM |
 | vit_l_em_organelles | micro-SAM | 760 MB | EM organelles, larger / more accurate |
 | vit_b_lm | micro-SAM | 375 MB | Light microscopy |
@@ -543,7 +562,8 @@ src/
                 annotations.py       annotation store and types
                 measurements.py      distance / angle / area engine
                 sam_predictor.py     SAM 3 / SAM 2 wrapper
-                usam_predictor.py    micro-SAM wrapper
+                usam_predictor.py    micro-SAM (SAM1) wrapper
+                microsam2_predictor.py  micro-SAM 2 (SAM2) wrapper
                 yolo_predictor.py    YOLO detection / segmentation wrapper
                 unet_predictor.py    UNet inference wrapper
                 star_loader.py       RELION .star file parser
@@ -649,7 +669,7 @@ uv pip install -e "packages/acorn-sim[gpu]"    # CUDA 12 multislice / 4D-STEM
 ```
 
 Narrower extras still exist if you want exactly one piece:
-`[gui]`, `[mrc]`, `[sam]`, `[sam2]`, `[usam]`, `[yolo]`, `[unet]`, `[hub]`, `[dev]`.
+`[gui]`, `[mrc]`, `[sam]`, `[sam2]`, `[usam]`, `[microsam2]`, `[yolo]`, `[unet]`, `[hub]`, `[dev]`.
 
 ---
 

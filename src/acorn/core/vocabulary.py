@@ -284,6 +284,7 @@ _BACKEND_NOTE = {
               "Use a point, box or scribble prompt, or switch to SAM 3.",
     "sam":    "SAM 1 has no text input; the word is used as the annotation label only.",
     "usam":   "micro-SAM has no text input; the word is used as the annotation label only.",
+    "microsam2": "micro-SAM 2 has no text input; the word is used as the annotation label only.",
     "yolo":   "A trained YOLO detects only the classes it was trained on. The word is "
               "used as the annotation label; train a model on this class to detect it.",
     "unet":   "UNet segments the classes it was trained on. The word names the output, "

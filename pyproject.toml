@@ -37,7 +37,7 @@ dependencies = [
 # jobs you actually do:
 #
 #   pip install "acorn[viewer]"     open, contrast, navigate, measure
-#   pip install "acorn[annotate]"   the above + SAM / YOLO / UNet
+#   pip install "acorn[annotate]"   the above + SAM 2/3, micro-SAM, YOLO / UNet
 #   pip install "acorn[lab]"        the above + measurements, stats, plots, 3D
 #   pip install "acorn[sim]"        the above + TEM / FIB / 4D-STEM simulation
 #
@@ -56,7 +56,7 @@ denoise = [
 annotate = [
     "acorn[viewer]",
     "sam3>=0.1",                              # SAM 3 (recommended)
-    "micro-sam>=1.7",                         # checkpoints tuned for microscopy
+    "micro-sam>=2.0",                         # micro-SAM 2 microscopy-tuned SAM2 models
     "ultralytics>=8.0",                       # YOLO 11 / v8 / v9 / v10
     "segmentation-models-pytorch>=0.3",       # UNet family
     "torch==2.12.1",
@@ -91,9 +91,10 @@ hub = ["datasets>=2.18", "huggingface_hub>=0.22"]
 # — narrower pieces, for people who want exactly one thing —
 gui   = ["PyQt6>=6.5", "PyQt6-Qt6>=6.5"]
 mrc   = ["mrcfile>=1.4"]
-sam   = ["sam3>=0.1", "micro-sam>=1.7"]
+sam   = ["sam3>=0.1", "micro-sam>=2.0"]
 sam2  = ["sam2>=1.0"]                         # fallback if sam3 is unavailable
 usam  = ["micro-sam>=1.7"]
+microsam2 = ["micro-sam>=2.0"]                # microscopy-tuned SAM2 models
 yolo  = ["ultralytics>=8.0"]
 unet  = ["segmentation-models-pytorch>=0.3", "torch==2.12.1", "torchvision==0.27.1"]
 

@@ -231,6 +231,14 @@ class SAMControllerMixin:
                 checkpoint_path=ckpt_arg,
             )
             label = f"micro-SAM ({model_type})"
+        elif backend == "microsam2":
+            from acorn.core.microsam2_predictor import MicroSAM2Predictor
+            model_type = self._sam_panel.microsam2_model_type
+            predictor = MicroSAM2Predictor(
+                model_type=model_type,
+                checkpoint_path=ckpt_arg,
+            )
+            label = f"micro-SAM 2 ({model_type})"
         else:
             from acorn.core.sam_predictor import SAMPredictor
             predictor = SAMPredictor(
@@ -241,16 +249,17 @@ class SAMControllerMixin:
         self._sam_panel.set_model_status("Loading model…", loaded=False)
         self._seg_panel.set_loaded("sam", False)
 
-        # For usam, emit download progress through the thread's status signal.
+        # Emit weight download/load progress through the thread's status signal.
         # _emit is filled after the thread is constructed (thread-safe via Qt signal queue).
         _emit: list = [None]
 
         def _run():
-            if backend == "usam":
+            if backend in {"usam", "microsam2"}:
                 def _progress(pct):
                     fn = _emit[0]
                     if fn:
-                        fn(f"Downloading {model_type}… {pct}%")
+                        action = "Loading" if backend == "microsam2" else "Downloading"
+                        fn(f"{action} {model_type}… {pct}%")
                 predictor.load_model(progress_cb=_progress)
             else:
                 predictor.load_model()
@@ -272,7 +281,7 @@ class SAMControllerMixin:
                 "Check that the model file exists and you have read access to it.")
 
         self._sam_thread = SAMThread(_run, self)
-        if backend == "usam":
+        if backend in {"usam", "microsam2"}:
             _emit[0] = self._sam_thread.status.emit
             self._sam_thread.status.connect(
                 lambda msg: self._sam_panel.set_model_status(msg, loaded=False)

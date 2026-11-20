@@ -1,4 +1,4 @@
-"""SAM 3 / SAM 2 / micro-SAM semi-automatic annotation panel."""
+"""SAM 3 / SAM 2 / micro-SAM 2 / micro-SAM semi-automatic annotation panel."""
 
 from __future__ import annotations
 
@@ -18,6 +18,10 @@ from PyQt6.QtWidgets import (
 
 _SAM3_AVAILABLE = importlib.util.find_spec("sam3") is not None
 _USAM_AVAILABLE = importlib.util.find_spec("micro_sam") is not None
+try:
+    _MICROSAM2_AVAILABLE = importlib.util.find_spec("micro_sam.v2") is not None
+except (ImportError, ModuleNotFoundError, ValueError):
+    _MICROSAM2_AVAILABLE = False
 
 
 def _checkpoint_roots() -> list[Path]:
@@ -195,10 +199,14 @@ class SAMPanel(QWidget):
             self._backend_combo.addItem("SAM 2", "sam2")
         if _USAM_AVAILABLE:
             self._backend_combo.addItem("micro-SAM (\u03bcSAM)", "usam")
+        if _MICROSAM2_AVAILABLE:
+            self._backend_combo.addItem("micro-SAM 2 (\u03bcSAM2)", "microsam2")
         self._backend_combo.setToolTip(
             "Which model backend to use.\n"
             "micro-SAM uses SAM1 checkpoints fine-tuned on microscopy data\n"
-            "(light microscopy and electron microscopy organelle models)."
+            "(light microscopy and electron microscopy organelle models).\n"
+            "micro-SAM 2 uses microscopy-tuned SAM2 models, including EM nuclei\n"
+            "and mitochondria models."
         )
         self._backend_combo.currentIndexChanged.connect(self._on_backend_changed)
         model_layout.addRow("Backend:", self._backend_combo)
@@ -224,6 +232,17 @@ class SAMPanel(QWidget):
         model_layout.addRow(self._usam_model_label, self._usam_model_combo)
         self._usam_model_label.hide()
         self._usam_model_combo.hide()
+
+        # micro-SAM 2 registered microscopy-specific SAM2 models.
+        self._microsam2_model_combo = QComboBox()
+        if _MICROSAM2_AVAILABLE:
+            from acorn.core.microsam2_predictor import available_models
+            for model_type, display in available_models():
+                self._microsam2_model_combo.addItem(display, model_type)
+        self._microsam2_model_label = QLabel("micro-SAM 2 model:")
+        model_layout.addRow(self._microsam2_model_label, self._microsam2_model_combo)
+        self._microsam2_model_label.hide()
+        self._microsam2_model_combo.hide()
 
         ckpt_row = QHBoxLayout()
         self._ckpt_combo = QComboBox()
@@ -262,6 +281,8 @@ class SAMPanel(QWidget):
 
         if _SAM3_AVAILABLE:
             default_status = "SAM 3 installed — model not loaded yet"
+        elif _MICROSAM2_AVAILABLE:
+            default_status = "micro-SAM 2 installed — model not loaded yet"
         else:
             default_status = "Model not loaded"
         self._model_status = QLabel(default_status)
@@ -650,10 +671,23 @@ class SAMPanel(QWidget):
         backend = self._backend_combo.itemData(index)
         sam2_visible = (backend == "sam2")
         usam_visible = (backend == "usam")
+        microsam2_visible = (backend == "microsam2")
         self._cfg_label.setVisible(sam2_visible)
         self._model_cfg.setVisible(sam2_visible)
         self._usam_model_label.setVisible(usam_visible)
         self._usam_model_combo.setVisible(usam_visible)
+        self._microsam2_model_label.setVisible(microsam2_visible)
+        self._microsam2_model_combo.setVisible(microsam2_visible)
+        if backend == "usam":
+            auto_label = "Auto (download micro-SAM checkpoint)"
+        elif microsam2_visible:
+            auto_label = "Auto (download micro-SAM 2 model)"
+        else:
+            auto_label = "Auto (download from HuggingFace Hub)"
+        self._ckpt_combo.setItemText(0, auto_label)
+        self._ckpt_combo.setToolTip(
+            "Select a local checkpoint or let the selected model backend download its weights."
+        )
         # Checkpoints are not interchangeable across backends — reset to Auto
         self._ckpt_combo.setCurrentIndex(0)
 
@@ -668,6 +702,11 @@ class SAMPanel(QWidget):
     def usam_model_type(self) -> str:
         """Currently selected micro-SAM model type key (e.g. 'vit_b_lm')."""
         return self._usam_model_combo.currentData() or "vit_b_lm"
+
+    @property
+    def microsam2_model_type(self) -> str:
+        """Selected micro-SAM 2 registry ID (defaults to ``hvit_t_cells``)."""
+        return self._microsam2_model_combo.currentData() or "hvit_t_cells"
 
     def _make_label_btn(self, name: str, color: str) -> QPushButton:
         btn = QPushButton(name)
